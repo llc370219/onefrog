@@ -11,6 +11,9 @@
 #                            (if unset, the public IPv4 is looked up via https://ifconfig.me;
 #                             set OF_PUBLIC_URL to skip that external request)
 #   OF_ADMIN_USER=admin      initial username (must be changed on first login)
+#   OF_APPROVAL_MODE=        preset the command approval mode for headless installs:
+#                            off | smart | manual | plan. Applies only while no mode has
+#                            been chosen; otherwise the first login asks you to choose.
 #   OF_INSTALL_DIR=/opt/onefrog
 #   OF_INSTALL_DOCKER=1      set to 0 to abort instead of installing Docker
 #   OF_BUILD_FROM_SOURCE=0   set to 1 to build the image on this server instead of pulling it
@@ -53,6 +56,11 @@ main() {
   mkdir -p "$install_dir"
   chmod 700 "$install_dir"
 
+  case "${OF_APPROVAL_MODE:-}" in
+    ""|off|smart|manual|plan) ;;
+    *) die "OF_APPROVAL_MODE 只能是 off、smart、manual 或 plan。" ;;
+  esac
+
   # ---- credentials (reused on re-run) ----
   if [ ! -f "$env_file" ]; then
     local port="${OF_PUBLISH_PORT:-8080}"
@@ -86,6 +94,7 @@ OF_COOKIE_SECURE=${secure}
 OF_PUBLISH_PORT=${port}
 OF_BIND_ADDR=${bind}
 ENV
+      if [ -n "${OF_APPROVAL_MODE:-}" ]; then echo "OF_APPROVAL_MODE=${OF_APPROVAL_MODE}" >> "$env_file"; fi
     )
     chmod 600 "$env_file"
     say "已生成初始账号，保存在 ${env_file}（权限 600）。"
@@ -93,7 +102,7 @@ ENV
     say "沿用已有的 ${env_file}，不会重置已经创建的账号。"
     # Allow changing port / bind address on re-run without touching credentials.
     local k
-    for k in OF_PUBLISH_PORT OF_BIND_ADDR OF_PUBLIC_URL; do
+    for k in OF_PUBLISH_PORT OF_BIND_ADDR OF_PUBLIC_URL OF_APPROVAL_MODE; do
       if [ -n "${!k:-}" ]; then
         local v="${!k}"
         [ "$k" = "OF_PUBLIC_URL" ] && v="${v%/}"

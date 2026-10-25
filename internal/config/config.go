@@ -24,6 +24,9 @@ type Config struct {
 	ModelName            string
 	DataDir              string
 	ModelAPIKey          string
+	// ApprovalMode (OF_APPROVAL_MODE) presets the approval mode for headless
+	// installs. It only applies while no mode has been chosen.
+	ApprovalMode string
 }
 
 func Load() (Config, error) {
@@ -43,6 +46,7 @@ func Load() (Config, error) {
 		ModelBaseURL:         strings.TrimSpace(os.Getenv("OF_MODEL_BASE_URL")),
 		ModelName:            strings.TrimSpace(os.Getenv("OF_MODEL_NAME")),
 		ModelAPIKey:          strings.TrimSpace(os.Getenv("OF_MODEL_API_KEY")),
+		ApprovalMode:         strings.ToLower(strings.TrimSpace(os.Getenv("OF_APPROVAL_MODE"))),
 	}
 	if cfg.DatabaseURL == "" && cfg.Driver == "postgres" {
 		cfg.DatabaseURL = "postgres://onefrog:onefrog@127.0.0.1:5432/onefrog?sslmode=disable"

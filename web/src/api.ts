@@ -1,4 +1,4 @@
-export type Profile = {id:string;username:string;display_name:string;avatar:string;must_change_credentials?:boolean};
+export type Profile = {id:string;username:string;display_name:string;avatar:string;must_change_credentials?:boolean;approval_choice_required?:boolean};
 export type ChatSession = {id:string;bot_id:string;title:string;preview:string;updated_at:string;options?:ChatOptions};
 export type Host = {
   id: string;
@@ -132,6 +132,8 @@ export const api = {
   async profile(body:{username:string;display_name:string;avatar:string;current_password:string;new_password:string}):Promise<Profile>{return call("/api/auth/profile",{method:"PUT",body:JSON.stringify(body)});},
   async sessions():Promise<ChatSession[]>{return (await call("/api/sessions"))||[];},
   async messages(id:string):Promise<{role:string;content:string;attachments?:Attachment[]}[]>{return (await call("/api/sessions/"+encodeURIComponent(id)+"/messages"))||[];},
+  async approvalMode():Promise<{mode:ApprovalMode;effective_mode:ApprovalMode;choice_required:boolean}>{return call("/api/settings/approval");},
+  async setApprovalMode(mode:ApprovalMode):Promise<{mode:ApprovalMode}>{return call("/api/settings/approval",{method:"PUT",body:JSON.stringify({mode})});},
   async me():Promise<Profile> {
     return call("/api/auth/me");
   },
@@ -241,8 +243,12 @@ function toStep(raw: NonNullable<ChatReply["steps"]>[number]): ChatStep {
   return { kind: "tool", bot: raw.bot, server: raw.server_id, command: raw.command, ok: raw.ok, output: raw.output };
 }
 
-/** A command the agent wants to run that needs the operator's decision (manual approval mode). */
-export type ApprovalPrompt = { id: string; bot: string; server_id: string; server_name: string; command: string; warning?: string; timeout_seconds: number };
+/** One server-side rule hit from the command classifier. */
+export type RiskFinding = { category: string; label: string; detail: string };
+/** A command the agent wants to run that needs the operator's decision (smart or manual approval mode). */
+export type ApprovalPrompt = { id: string; bot: string; server_id: string; server_name: string; command: string; warning?: string; mode?: string; risk?: 'low'|'medium'|'high'; reasons?: string[]; findings?: RiskFinding[]; model_risk?: string; model_reason?: string; untrusted?: string; timeout_seconds: number };
+/** Approval modes. "" = not chosen yet (behaves like smart). */
+export type ApprovalMode = ''|'off'|'smart'|'manual'|'model'|'plan';
 let approvalHandler: ((req: ApprovalPrompt) => Promise<boolean>) | null = null;
 /** Registers the UI that asks the operator to allow or deny a command. */
 export function setApprovalHandler(fn: ((req: ApprovalPrompt) => Promise<boolean>) | null) { approvalHandler = fn; }
@@ -291,7 +297,7 @@ function liveChat(body: ChatRequest, onStep: (step: ChatStep) => void) {
       if (msg.type === "approval_request") {
         const req = msg as ApprovalPrompt;
         arm((req.timeout_seconds || 300) * 1000 + 180000);
-        const ask = approvalHandler ? approvalHandler(req) : Promise.resolve(window.confirm("允许执行以下命令？\n" + req.command + (req.warning ? "\n⚠ " + req.warning : "")));
+        const ask = approvalHandler ? approvalHandler(req) : Promise.resolve(window.confirm("允许执行以下命令？\n" + req.command + ((req.reasons || []).length ? "\n⚠ " + (req.reasons || []).join("\n⚠ ") : req.warning ? "\n⚠ " + req.warning : "")));
         ask.then((allow) => { if (!settled) { ws.send(JSON.stringify({ type: "approval", id: req.id, allow })); arm(180000); } }, () => { if (!settled) ws.send(JSON.stringify({ type: "approval", id: req.id, allow: false })); });
         return;
       }
@@ -329,10 +335,10 @@ export type SettingsState = {
  default:ModelRoute;
  worker:ModelRoute;
  bot_routes:Record<string,ModelRoute>;
- approval:{mode:"manual"|"rules"|"model"|"plan";route:ModelRoute;instructions:string};
+ approval:{mode:ApprovalMode;route:ModelRoute;instructions:string};
  execution:{timeout_seconds:number;command_timeout_seconds:number;max_steps:number;context_messages:number};
 };
-export type ApprovalRow = {id:string;created_at:string;bot_name:string;server_name:string;command:string;status:string;review:{allow:boolean;reason:string;risk:string;model:string;provider_id:string;mode:string}};
+export type ApprovalRow = {id:string;created_at:string;bot_name:string;server_name:string;command:string;status:string;review:{allow:boolean;reason:string;risk:string;model:string;provider_id:string;mode:string;findings?:RiskFinding[];model_reason?:string;untrusted?:string}};
 
 export type PingMetric={name:string;target:string;latency_ms:number|null;loss_percent:number|null;samples:number};
 export type ProbeSample={received_at:string;hostname:string;os:string;arch:string;cpu_model:string;cpu_cores:number;cpu_percent:number;memory_used:number;memory_total:number;swap_used:number;swap_total:number;disk_used:number;disk_total:number;rx_bytes:number;tx_bytes:number;rx_rate:number;tx_rate:number;uptime_seconds:number;load:number[];tcp_connections:number;processes:number;pings:PingMetric[]};

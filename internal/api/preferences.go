@@ -248,3 +248,31 @@ func (s *Server) testProvider(c *gin.Context) {
 	}
 	c.JSON(200, gin.H{"ok": true, "latency_ms": time.Since(started).Milliseconds(), "model": req.Model})
 }
+
+// getApproval returns the approval mode. An empty mode means the operator has
+// not chosen yet; commands are then handled like smart approval.
+func (s *Server) getApproval(c *gin.Context) {
+	mode := s.Settings.Snapshot().Approval.Mode
+	effective := mode
+	if effective == preferences.ModeUnset {
+		effective = preferences.ModeSmart
+	}
+	c.JSON(http.StatusOK, gin.H{"mode": mode, "effective_mode": effective, "choice_required": mode == preferences.ModeUnset})
+}
+
+// putApproval stores the approval mode: off, smart, manual, model or plan.
+func (s *Server) putApproval(c *gin.Context) {
+	var req struct {
+		Mode string `json:"mode"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, "请求无效")
+		return
+	}
+	state, err := s.Settings.SetApprovalMode(req.Mode)
+	if err != nil {
+		fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"mode": state.Approval.Mode, "effective_mode": state.Approval.Mode, "choice_required": false})
+}

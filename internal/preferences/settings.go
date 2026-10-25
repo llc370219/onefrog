@@ -37,6 +37,32 @@ type Route struct {
 	ProviderID string `json:"provider_id"`
 	Model      string `json:"model"`
 }
+
+// Approval modes. ModeUnset means the operator has not chosen yet; the agent
+// then behaves like ModeSmart and the web UI asks for a choice.
+const (
+	ModeUnset  = ""
+	ModeOff    = "off"    // run commands without asking (catastrophic keywords still blocked)
+	ModeSmart  = "smart"  // read-only commands run, risky ones wait for the operator
+	ModeManual = "manual" // advanced: confirm every command
+	ModeModel  = "model"  // advanced: an independent model approves or rejects
+	ModePlan   = "plan"   // advanced: plan only, never run remote commands
+)
+
+// NormalizeMode maps legacy names ("rules" was the original no-prompt mode)
+// and reports whether the mode is known.
+func NormalizeMode(mode string) (string, bool) {
+	mode = strings.TrimSpace(mode)
+	if mode == "rules" {
+		mode = ModeOff
+	}
+	switch mode {
+	case ModeUnset, ModeOff, ModeSmart, ModeManual, ModeModel, ModePlan:
+		return mode, true
+	}
+	return mode, false
+}
+
 type Approval struct {
 	Mode         string `json:"mode"`
 	Route        Route  `json:"route"`
@@ -99,10 +125,11 @@ func New(path string, box *secret.Box) (*Manager, error) {
 	if m.data.Keys == nil {
 		m.data.Keys = map[string]string{}
 	}
+	m.data.State.Approval.Mode, _ = NormalizeMode(m.data.State.Approval.Mode)
 	return m, nil
 }
 func Defaults() State {
-	return State{Providers: []Provider{}, BotRoutes: map[string]Route{}, Approval: Approval{Mode: "manual"}, Execution: Execution{TimeoutSeconds: 60, CommandTimeoutSeconds: 30, MaxSteps: 6, ContextMessages: 24}}
+	return State{Providers: []Provider{}, BotRoutes: map[string]Route{}, Approval: Approval{Mode: ModeUnset}, Execution: Execution{TimeoutSeconds: 60, CommandTimeoutSeconds: 30, MaxSteps: 6, ContextMessages: 24}}
 }
 func clone(s State) State {
 	raw, _ := json.Marshal(s)
@@ -230,9 +257,11 @@ func (m *Manager) Save(in Input) (State, error) {
 			return State{}, err
 		}
 	}
-	if in.Approval.Mode != "manual" && in.Approval.Mode != "rules" && in.Approval.Mode != "model" && in.Approval.Mode != "plan" {
+	mode, ok := NormalizeMode(in.Approval.Mode)
+	if !ok {
 		return State{}, errors.New("无效的审批模式")
 	}
+	next.State.Approval.Mode = mode
 	e := in.Execution
 	if e.TimeoutSeconds < 5 || e.TimeoutSeconds > 180 || e.CommandTimeoutSeconds < 5 || e.CommandTimeoutSeconds > 300 || e.MaxSteps < 1 || e.MaxSteps > 12 || e.ContextMessages < 2 || e.ContextMessages > 100 {
 		return State{}, errors.New("执行参数超出范围")
@@ -243,6 +272,33 @@ func (m *Manager) Save(in Input) (State, error) {
 	m.data = next
 	return clone(next.State), nil
 }
+
+// SetApprovalMode stores only the approval mode, keeping every other setting.
+// It is used by the first-login choice, the API and OF_APPROVAL_MODE.
+func (m *Manager) SetApprovalMode(mode string) (State, error) {
+	mode, ok := NormalizeMode(mode)
+	if !ok || mode == ModeUnset {
+		return State{}, errors.New("无效的审批模式")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	next := diskState{State: clone(m.data.State), Keys: map[string]string{}}
+	for k, v := range m.data.Keys {
+		next.Keys[k] = v
+	}
+	if mode == ModeModel {
+		if err := validateRoute(next.State, next.State.Approval.Route, true); err != nil {
+			return State{}, fmt.Errorf("替我审批需要先选择独立审批模型：%w", err)
+		}
+	}
+	next.State.Approval.Mode = mode
+	if err := m.persist(next); err != nil {
+		return State{}, err
+	}
+	m.data = next
+	return clone(next.State), nil
+}
+
 func validateRoute(s State, r Route, required bool) error {
 	if r.ProviderID == "" && r.Model == "" && !required {
 		return nil

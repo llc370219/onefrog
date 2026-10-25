@@ -28,7 +28,9 @@ export function HostKeyDialog({ serverID, result, onClose, onDone }: { serverID:
   return <Modal title="确认 SSH 主机指纹" note="首次连接：核对一致后才会发送登录凭据并保存指纹。" onClose={onClose} onSubmit={confirm} busy={busy} error={error} confirm="指纹一致，信任并连接"><div className="oauth-risk"><ShieldCheck size={21}/><div>服务器出示的 SSH 主机指纹：<p><code>{state.fingerprint}</code></p></div></div><p className="model-hidden-note">{verifyHint}不一致请勿继续。</p></Modal>;
 }
 
-/** Shows each command the agent wants to run (manual approval mode) and returns the operator's decision. */
+const riskText: Record<string, string> = { low: '低', medium: '中', high: '高' };
+
+/** Shows a command that needs the operator's decision (smart or manual approval) with the reasons, and returns the decision. */
 export function ApprovalDialog() {
   const [queue, setQueue] = useState<{ req: ApprovalPrompt; resolve: (allow: boolean) => void }[]>([]);
   useEffect(() => {
@@ -40,10 +42,15 @@ export function ApprovalDialog() {
   if (!head) return null;
   const decide = (allow: boolean) => { head.resolve(allow); setQueue(q => q.slice(1)); };
   const { req } = head;
-  return <Modal title="批准执行这条命令？" note={`${req.bot || 'Bot'} 想在 ${req.server_name || req.server_id} 上执行，未批准不会执行。`} onClose={() => decide(false)} onSubmit={() => decide(true)} confirm="允许执行">
+  const reasons = req.reasons?.length ? req.reasons : req.warning ? [req.warning] : [];
+  const high = req.risk === 'high';
+  return <Modal title={req.mode === 'manual' ? '批准执行这条命令？' : '这条命令需要你确认'} note={`${req.bot || 'Bot'} 想在服务器「${req.server_name || req.server_id}」上执行，未批准不会执行。`} onClose={() => decide(false)} onSubmit={() => decide(true)} confirm="批准执行">
     <div className="rollback-detail"><Terminal size={18} /><code>{req.command}</code></div>
-    {req.warning && <div className="oauth-risk"><TriangleAlert size={21} /><div><strong>{req.warning}</strong>。请确认你真的要执行它。</div></div>}
-    <p className="model-hidden-note">{Math.round((req.timeout_seconds || 300) / 60)} 分钟内未处理将自动拒绝。</p>
+    {req.model_reason && <p className="approval-purpose"><strong>AI 说明的目的：</strong>{req.model_reason}</p>}
+    {req.risk && <p className={'approval-level ' + req.risk}>风险等级：{riskText[req.risk] || req.risk}</p>}
+    {reasons.length > 0 && <div className="oauth-risk">{high ? <ShieldAlert size={21} /> : <TriangleAlert size={21} />}<div><strong>为什么需要确认</strong><ul className="approval-risks">{reasons.map(r => <li key={r}>{r}</li>)}</ul></div></div>}
+    {req.untrusted && <p className="model-hidden-note">这条命令可能是 AI 从服务器输出或附件里读到的，不是你直接要求的。如果你没有让它这么做，请拒绝。</p>}
+    <p className="model-hidden-note">请看清命令的影响范围和能否回滚再批准。{Math.round((req.timeout_seconds || 300) / 60)} 分钟内未处理将自动拒绝。</p>
     <Button variant="ghost" onClick={() => decide(false)}>拒绝</Button>
   </Modal>;
 }

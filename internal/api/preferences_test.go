@@ -90,3 +90,41 @@ func TestCreateBotWithCatalogModel(t *testing.T) {
 		t.Fatal("existing bot was unbound when model hidden")
 	}
 }
+
+func TestApprovalModeChoice(t *testing.T) {
+	client, srv, _ := testClient(t)
+	defer srv.Close()
+	login(t, client, srv, "admin", "admin", 200)
+	var me map[string]any
+	getJSON(t, client, srv.URL+"/api/auth/me", &me)
+	if me["approval_choice_required"] != true {
+		t.Fatalf("fresh install must ask for an approval mode: %v", me)
+	}
+	var got struct {
+		Mode           string `json:"mode"`
+		EffectiveMode  string `json:"effective_mode"`
+		ChoiceRequired bool   `json:"choice_required"`
+	}
+	getJSON(t, client, srv.URL+"/api/settings/approval", &got)
+	if got.Mode != "" || got.EffectiveMode != "smart" || !got.ChoiceRequired {
+		t.Fatalf("unchosen mode: %+v", got)
+	}
+	putJSON(t, client, srv.URL+"/api/settings/approval", map[string]string{"mode": "bogus"}, 400, nil)
+	putJSON(t, client, srv.URL+"/api/settings/approval", map[string]string{"mode": ""}, 400, nil)
+	putJSON(t, client, srv.URL+"/api/settings/approval", map[string]string{"mode": "model"}, 400, nil)
+	putJSON(t, client, srv.URL+"/api/settings/approval", map[string]string{"mode": "off"}, 200, &got)
+	if got.Mode != "off" {
+		t.Fatalf("mode not saved: %+v", got)
+	}
+	me = nil
+	getJSON(t, client, srv.URL+"/api/auth/me", &me)
+	if me["approval_choice_required"] != false || me["username"] == nil {
+		t.Fatalf("choice still required or user fields lost: %v", me)
+	}
+	putJSON(t, client, srv.URL+"/api/settings/approval", map[string]string{"mode": "smart"}, 200, &got)
+	var state preferences.State
+	getJSON(t, client, srv.URL+"/api/settings", &state)
+	if state.Approval.Mode != "smart" {
+		t.Fatalf("settings disagree: %q", state.Approval.Mode)
+	}
+}

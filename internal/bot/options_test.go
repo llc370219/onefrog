@@ -123,7 +123,7 @@ func TestManualServerAndReviewOverride(t *testing.T) {
 	if e != nil || ssh.command != "" || !strings.Contains(strings.Join(models, ","), "review") {
 		t.Fatal("review override failed", e, models)
 	}
-	if a.Settings.Snapshot().Approval.Mode != "rules" || a.Usage.ForBot("main").TotalTokens != 5 {
+	if a.Settings.Snapshot().Approval.Mode != "off" || a.Usage.ForBot("main").TotalTokens != 5 {
 		t.Fatal("review config or usage wrong")
 	}
 }

@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
@@ -126,6 +127,8 @@ func (s *Server) Handler() http.Handler {
 	authed.POST("/oauth/login/:id/cancel", s.oauthCancel)
 	authed.POST("/oauth/:kind/disconnect", s.oauthDisconnect)
 	authed.PUT("/settings", s.putSettings)
+	authed.GET("/settings/approval", s.getApproval)
+	authed.PUT("/settings/approval", s.putApproval)
 	authed.POST("/settings/providers/models", s.providerModels)
 	authed.POST("/settings/providers/test", s.testProvider)
 	authed.GET("/approvals", s.listApprovals)
@@ -221,7 +224,7 @@ func (s *Server) login(c *gin.Context) {
 		return
 	}
 	http.SetCookie(c.Writer, &http.Cookie{Name: "of_session", Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: s.Secure, Expires: time.Now().Add(7 * 24 * time.Hour)})
-	c.JSON(http.StatusOK, user)
+	c.JSON(http.StatusOK, s.profileJSON(user))
 }
 
 func (s *Server) logout(c *gin.Context) {
@@ -234,7 +237,17 @@ func (s *Server) logout(c *gin.Context) {
 
 func (s *Server) me(c *gin.Context) {
 	user, _ := c.Get("user")
-	c.JSON(http.StatusOK, user)
+	c.JSON(http.StatusOK, s.profileJSON(user))
+}
+
+// profileJSON is the user plus approval_choice_required, which tells the web
+// UI to ask the operator to pick an approval mode once.
+func (s *Server) profileJSON(user any) map[string]any {
+	out := map[string]any{}
+	raw, _ := json.Marshal(user)
+	_ = json.Unmarshal(raw, &out)
+	out["approval_choice_required"] = s.Settings.Snapshot().Approval.Mode == preferences.ModeUnset
+	return out
 }
 
 func hashToken(token string) string {

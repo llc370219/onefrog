@@ -23,7 +23,7 @@ OneFrog 是独立的开源项目，与 OpenAI、Google 或任何模型、云服�
 
 OneFrog 会让大语言模型生成并通过 SSH 在你的服务器上执行命令。模型可能出错、误解指令或被输入内容（日志、网页、附件等）误导。
 
-- 默认模式下每条命令都需要你在网页上逐条确认；关键字规则只是提示，**不能**识别所有危险写法。「替我审批」由另一个模型判断，同样不是安全沙盒。
+- 是否开启命令审批由你选择。「智能审批」用规则和模型自评判断哪些命令需要你确认，能减少但**不能消除**风险，可能漏判；「关闭审批」时 AI 会直接执行命令。「替我审批」由另一个模型判断，同样不是安全沙盒。
 - 建议为 OneFrog 创建权限受限的专用 SSH 用户，不要使用 root；先在非生产环境试用；保持备份。
 - 你需要自行确认使用方式符合所在地法律法规、所在单位的规定，以及服务器、云服务和模型提供方的条款。
 
@@ -52,7 +52,7 @@ Before a login starts, the UI shows a risk notice and you must tick "I understan
 
 OneFrog lets large language models generate commands and run them on your servers over SSH. Models can be wrong, misunderstand instructions, or be manipulated by the content they read (logs, web pages, attachments).
 
-- By default every command must be approved by you in the web UI. The keyword rules are only a warning and **cannot** catch every dangerous command. "Approve for me" mode relies on another model and is not a sandbox either.
+- You choose whether commands need approval. "Smart approval" uses rules plus the model's own risk rating to decide which commands you must confirm; it reduces risk but **cannot** eliminate it and may miss dangerous commands. With approval turned off, the AI runs commands without asking. "Approve for me" mode relies on another model and is not a sandbox either.
 - Use a dedicated SSH user with limited privileges instead of root, try OneFrog on non-production machines first, and keep backups.
 - You are responsible for complying with applicable laws, your organization's policies, and the terms of your server, cloud and model providers.
 

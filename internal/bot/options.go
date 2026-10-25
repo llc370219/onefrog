@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"onefrog/internal/attachment"
+	"onefrog/internal/audit"
 	"onefrog/internal/model"
 	"onefrog/internal/preferences"
 	"strings"
@@ -19,7 +20,7 @@ type Options struct {
 	AttachmentIDs   []string           `json:"attachment_ids,omitempty"`
 	OwnerID         string             `json:"-"`
 	RestrictServers bool               `json:"-"`
-	// Approver asks a human to allow one command (manual approval mode). It is
+	// Approver asks a human to allow one command (smart or manual mode). It is
 	// set by interactive transports such as the WebSocket chat.
 	Approver Approver `json:"-"`
 }
@@ -31,8 +32,19 @@ type ApprovalRequest struct {
 	ServerID   string `json:"server_id"`
 	ServerName string `json:"server_name"`
 	Command    string `json:"command"`
-	// Warning is set when the command matches the built-in dangerous keyword list.
+	// Warning is the first rule finding, kept for simple clients.
 	Warning string `json:"warning,omitempty"`
+	// Mode is "smart" or "manual".
+	Mode string `json:"mode,omitempty"`
+	// Risk is the final level (low/medium/high): the higher of the rule
+	// classifier and the level the model declared.
+	Risk string `json:"risk,omitempty"`
+	// Reasons are human-readable lines explaining why confirmation is needed.
+	Reasons     []string        `json:"reasons,omitempty"`
+	Findings    []audit.Finding `json:"findings,omitempty"`
+	ModelRisk   string          `json:"model_risk,omitempty"`
+	ModelReason string          `json:"model_reason,omitempty"`
+	Untrusted   string          `json:"untrusted,omitempty"`
 }
 
 // Approver returns whether the operator allowed the command.
@@ -73,10 +85,12 @@ func (a *Agent) ReplyWithOptions(ctx context.Context, botID, serverID, sessionID
 			return Result{}, err
 		}
 	}
-	switch opt.ApprovalMode {
-	case "", "default", "manual", "rules", "model", "plan":
-	default:
-		return Result{}, errors.New("审核方式无效")
+	if opt.ApprovalMode != "default" {
+		mode, ok := preferences.NormalizeMode(opt.ApprovalMode)
+		if !ok {
+			return Result{}, errors.New("审核方式无效")
+		}
+		opt.ApprovalMode = mode
 	}
 	if opt.ApprovalMode == "model" {
 		if a.Settings == nil {
@@ -147,7 +161,9 @@ func (a *Agent) messageContent(ctx context.Context, item model.Message) (any, er
 		} else if f.Mime == "application/pdf" {
 			parts = append(parts, map[string]any{"type": "file", "file": map[string]string{"filename": f.Name, "file_data": "data:application/pdf;base64," + base64.StdEncoding.EncodeToString(f.Data)}})
 		} else {
-			text += "\n\n<attachment name=" + fmt.Sprintf("%q", f.Name) + ">\n" + a.redact(ctx, string(f.Data)) + "\n</attachment>"
+			body := a.redact(ctx, string(f.Data))
+			addUntrusted(ctx, body)
+			text += "\n\n<attachment name=" + fmt.Sprintf("%q", f.Name) + ">\n" + body + "\n</attachment>"
 		}
 	}
 	if len(parts) == 0 {

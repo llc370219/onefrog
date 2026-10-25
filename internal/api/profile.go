@@ -95,7 +95,7 @@ func (s *Server) updateProfile(c *gin.Context) {
 	if mapStore(c, err) {
 		return
 	}
-	c.JSON(200, user)
+	c.JSON(200, s.profileJSON(user))
 }
 func (s *Server) listSessions(c *gin.Context) {
 	items, err := s.Store.ListChatSessions(c.Request.Context())

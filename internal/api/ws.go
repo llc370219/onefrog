@@ -35,7 +35,8 @@ type approvalReply struct {
 
 // wsChat streams agent steps. Client → server messages are either chat
 // requests or {"type":"approval","id":...,"allow":bool} answers to an
-// approval_request (manual approval mode).
+// approval_request (smart or manual approval mode). No answer within
+// manualApprovalTimeout counts as a rejection.
 func (s *Server) wsChat(c *gin.Context) {
 	if !sameOrigin(c.Request, s.PublicURL) {
 		fail(c, http.StatusForbidden, "来源不被允许")
@@ -100,7 +101,7 @@ func (s *Server) wsChat(c *gin.Context) {
 		pending[r.ID] = ch
 		pmu.Unlock()
 		defer func() { pmu.Lock(); delete(pending, r.ID); pmu.Unlock() }()
-		if err := out.send(gin.H{"type": "approval_request", "id": r.ID, "bot": r.BotID, "server_id": r.ServerID, "server_name": r.ServerName, "command": r.Command, "warning": r.Warning, "timeout_seconds": int(manualApprovalTimeout.Seconds())}); err != nil {
+		if err := out.send(gin.H{"type": "approval_request", "id": r.ID, "bot": r.BotID, "server_id": r.ServerID, "server_name": r.ServerName, "command": r.Command, "warning": r.Warning, "mode": r.Mode, "risk": r.Risk, "reasons": r.Reasons, "findings": r.Findings, "model_risk": r.ModelRisk, "model_reason": r.ModelReason, "untrusted": r.Untrusted, "timeout_seconds": int(manualApprovalTimeout.Seconds())}); err != nil {
 			return false, "连接已断开，未执行"
 		}
 		timer := time.NewTimer(manualApprovalTimeout)

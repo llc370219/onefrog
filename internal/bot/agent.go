@@ -45,6 +45,8 @@ type ToolEvent struct {
 	ServerID string `json:"server_id"`
 	OK       bool   `json:"ok"`
 	Output   string `json:"output"`
+	ran      bool   // the command reached the server; Output is untrusted
+	server   string // server name, for the untrusted-output wrapper
 }
 
 type Result struct {
@@ -78,6 +80,7 @@ func (a *Agent) replyTurn(ctx context.Context, botID, serverID, sessionID, conte
 		bot = resolved
 	}
 	ctx = context.WithValue(ctx, taskKey{}, content)
+	ctx = withTaint(ctx)
 	sess, err := a.Store.EnsureSession(ctx, sessionID, bot.ID, clip(content, 24))
 	if err != nil {
 		return Result{}, err
@@ -263,6 +266,9 @@ func (a *Agent) runTool(ctx context.Context, botID, fallbackServer string, call 
 	var args struct {
 		ServerID string `json:"server_id"`
 		Command  string `json:"command"`
+		Risk     string `json:"risk"`
+		Reason   string `json:"reason"`
+		Purpose  string `json:"purpose"`
 	}
 	_ = json.Unmarshal([]byte(call.Function.Arguments), &args)
 	if args.ServerID == "" {
@@ -295,27 +301,40 @@ func (a *Agent) runTool(ctx context.Context, botID, fallbackServer string, call 
 		return ev
 	}
 	mode := a.approvalMode(ctx)
-	hard := audit.Decide(expanded)
-	if !hard.Allow && mode != "manual" {
-		a.recordReview(ctx, botID, rec.ID, ev.Command, Review{Allow: false, Reason: hard.Reason, Risk: "high", Mode: "rules"})
-		ev.Output = "已拦截：" + hard.Reason
+	reason := args.Reason
+	if reason == "" {
+		reason = args.Purpose
+	}
+	gate := a.assess(ctx, args.Command, args.Risk, reason)
+	blocked := func(why string) ToolEvent {
+		ev.Output = "已拦截：" + why + "。不要换一种写法重试同一操作；请向用户说明情况并询问下一步。"
 		_, _ = a.Store.AddHistory(ctx, store.HistoryRec{History: model.History{BotID: botID, ServerID: rec.ID, Action: ev.Command, Command: ev.Command, Status: "blocked"}})
 		return ev
 	}
-	var decision Review
-	if mode == "manual" {
-		warning := ""
-		if !hard.Allow {
-			warning = "命中危险命令关键字：" + hard.Reason
+	switch mode {
+	case preferences.ModeSmart, preferences.ModeManual:
+		// The operator decides; catastrophic keyword hits are shown, not hard-blocked.
+		if mode == preferences.ModeSmart && !gate.Ask {
+			break
 		}
-		decision = a.manualApprove(ctx, botID, rec, ev.Command, warning)
-	} else {
-		decision = a.approve(ctx, botID, rec.ID, args.Command)
-	}
-	if !decision.Allow {
-		ev.Output = "已拦截：" + decision.Reason
-		_, _ = a.Store.AddHistory(ctx, store.HistoryRec{History: model.History{BotID: botID, ServerID: rec.ID, Action: ev.Command, Command: ev.Command, Status: "blocked"}})
-		return ev
+		if hard := audit.Decide(expanded); !hard.Allow {
+			gate.Reasons = append([]string{"命中内置危险命令清单：" + hard.Reason}, gate.Reasons...)
+			gate.Level = "high"
+		}
+		if decision := a.askOperator(ctx, botID, rec, ev.Command, mode, gate); !decision.Allow {
+			return blocked(decision.Reason)
+		}
+	default:
+		// off, model, plan: the built-in catastrophic list is a hard block.
+		if hard := audit.Decide(expanded); !hard.Allow {
+			a.recordReview(ctx, botID, rec.ID, ev.Command, Review{Allow: false, Reason: hard.Reason, Risk: "high", Mode: mode, Findings: gate.Findings})
+			return blocked(hard.Reason)
+		}
+		if mode != preferences.ModeOff {
+			if decision := a.approve(ctx, botID, rec.ID, args.Command, gate); !decision.Allow {
+				return blocked(decision.Reason)
+			}
+		}
 	}
 	plain := ""
 	if rec.EncryptedKey != "" {
@@ -344,6 +363,10 @@ func (a *Agent) runTool(ctx context.Context, botID, fallbackServer string, call 
 		ev.OK = true
 	}
 	ev.Output = clip(out, 2000)
+	ev.ran = true
+	ev.server = rec.Name
+	markRan(ctx, args.Command)
+	addUntrusted(ctx, out)
 	_, _ = a.Store.AddHistory(ctx, store.HistoryRec{History: model.History{BotID: botID, ServerID: rec.ID, Action: ev.Command, Command: ev.Command, Status: status}})
 	return ev
 }

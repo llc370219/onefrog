@@ -55,6 +55,17 @@ func main() {
 			log.Fatal(err)
 		}
 	}
+	if cfg.ApprovalMode != "" && settings.Snapshot().Approval.Mode == preferences.ModeUnset {
+		switch cfg.ApprovalMode {
+		case preferences.ModeOff, preferences.ModeSmart, preferences.ModeManual, preferences.ModePlan:
+			if _, err := settings.SetApprovalMode(cfg.ApprovalMode); err != nil {
+				log.Fatal(err)
+			}
+			log.Printf("approval mode preset from OF_APPROVAL_MODE: %s", cfg.ApprovalMode)
+		default:
+			log.Fatalf("OF_APPROVAL_MODE must be off, smart, manual or plan, got %q", cfg.ApprovalMode)
+		}
+	}
 	probe, err := monitor.New(filepath.Join(cfg.DataDir, "monitor.json"))
 	if err != nil {
 		log.Fatal(err)

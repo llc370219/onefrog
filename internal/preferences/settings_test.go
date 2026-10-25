@@ -120,3 +120,44 @@ func TestModelVisibilityAndBotBinding(t *testing.T) {
 		t.Fatal("catalog refresh changed toggles")
 	}
 }
+
+func TestApprovalModeChoiceAndLegacy(t *testing.T) {
+	box, _ := secret.New(bytes.Repeat([]byte{3}, 32))
+	path := filepath.Join(t.TempDir(), "settings.enc")
+	m, err := New(path, box)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Snapshot().Approval.Mode != ModeUnset {
+		t.Fatal("new installs must start without a chosen mode")
+	}
+	d := Defaults()
+	// Unchosen stays valid through a full save (used by Seed).
+	if _, err := m.Save(Input{Default: d.Default, Approval: d.Approval, Execution: d.Execution}); err != nil {
+		t.Fatal(err)
+	}
+	// The original no-prompt mode name is accepted and stored as "off".
+	if s, err := m.Save(Input{Default: d.Default, Approval: Approval{Mode: "rules"}, Execution: d.Execution}); err != nil || s.Approval.Mode != ModeOff {
+		t.Fatalf("legacy rules: %v %q", err, s.Approval.Mode)
+	}
+	if _, err := m.Save(Input{Default: d.Default, Approval: Approval{Mode: "everything"}, Execution: d.Execution}); err == nil {
+		t.Fatal("unknown mode accepted")
+	}
+	for _, bad := range []string{"", "bogus", "model"} {
+		if _, err := m.SetApprovalMode(bad); err == nil {
+			t.Fatalf("SetApprovalMode(%q) accepted", bad)
+		}
+	}
+	if _, err := m.SetApprovalMode("smart"); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := New(path, box)
+	if err != nil || reloaded.Snapshot().Approval.Mode != ModeSmart {
+		t.Fatalf("saved choice not kept: %v", err)
+	}
+	for in, want := range map[string]string{"rules": ModeOff, " smart ": ModeSmart, "": ModeUnset, "plan": ModePlan} {
+		if got, ok := NormalizeMode(in); !ok || got != want {
+			t.Fatalf("NormalizeMode(%q) = %q %v", in, got, ok)
+		}
+	}
+}

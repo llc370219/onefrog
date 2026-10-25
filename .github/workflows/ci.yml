@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          check-latest: true
+      - name: gofmt
+        run: test -z "$(gofmt -l . | tee /dev/stderr)"
+      - run: go vet ./...
+      - run: go test ./...
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm audit --audit-level=moderate
+      - run: npm run build
+
+  installer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck install.sh deploy/docker-entrypoint.sh
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: onefrog:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke test (non-root, health)
+        run: |
+          docker run -d --name of -p 127.0.0.1:18080:8080 \
+            -e OF_DRIVER=memory -e OF_ADMIN_PASSWORD=ci-only-password onefrog:ci
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:18080/api/health && break
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:18080/api/health
+          docker top of -o pid,user,args
+          user=$(docker top of -o pid,user,args | awk '/\/app\/server/ {print $2; exit}')
+          echo "server user: ${user}"
+          if [ -z "$user" ] || [ "$user" = "root" ] || [ "$user" = "0" ]; then
+            echo "server must run as a non-root user"; exit 1
+          fi
+          curl -fsS -D - -o /dev/null http://127.0.0.1:18080/ | grep -i 'content-security-policy'
+          docker rm -f of

@@ -1,0 +1,9 @@
+.git
+data
+.env
+.install.env
+web/node_modules
+web/dist
+docs
+*.md
+!DISCLAIMER.md

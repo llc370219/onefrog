@@ -1,0 +1,33 @@
+# DEV ONLY: local development stack with PostgreSQL and demo credentials (admin/admin).
+# Do NOT use in production and do not expose it: it binds to 127.0.0.1 only.
+# Production installs use install.sh, which pulls the prebuilt image and generates a random password.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: onefrog
+      POSTGRES_PASSWORD: onefrog
+      POSTGRES_DB: onefrog
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+  app:
+    build: .
+    depends_on:
+      - db
+    environment:
+      DATABASE_URL: postgres://onefrog:onefrog@db:5432/onefrog?sslmode=disable
+      OF_DRIVER: postgres
+      OF_HTTP_ADDR: :8080
+      OF_ADMIN_USER: admin
+      OF_ADMIN_PASSWORD: admin
+      OF_SEED: "1"
+      OF_WEB_DIR: /app/web/dist
+      OF_DATA_DIR: /app/data
+    volumes:
+      - appdata:/app/data
+    ports:
+      - "127.0.0.1:8080:8080"
+volumes:
+  pgdata:
+  appdata:
+

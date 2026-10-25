@@ -1,0 +1,25 @@
+# runtime data and secrets
+data/
+.env
+.env.*
+!configs/*.example.env
+.install.env
+*.db
+*.sqlite
+*.sqlite3
+*.pem
+*.key
+master.key
+
+# build output
+/server
+*.exe
+web/node_modules/
+web/dist/
+dist/
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

@@ -4,8 +4,10 @@ import { Fragment, type ReactNode } from 'react';
 // so anything that looks like a tag is shown as text. Unclosed code fences
 // render as code, which keeps partial (streaming) text readable.
 
+// Link targets may contain one level of balanced parentheses, so a dropped
+// target such as javascript:f(1) is consumed whole instead of leaving a stray ")".
 const SAFE_URL = /^(https?:\/\/|mailto:)/i;
-const INLINE = /(`[^`\n]+`)|(\*\*[^*\n]+?\*\*)|(\[[^\]\n]+\]\([^)\s]+\))|(https?:\/\/[^\s<>()\u3000-\u303f\uff00-\uffef]+)|(\*[^*\s][^*\n]*?\*)/g;
+const INLINE = /(`[^`\n]+`)|(\*\*[^*\n]+?\*\*)|(\[[^\]\n]+\]\((?:[^()\s]|\([^()\s]*\))+\))|(https?:\/\/[^\s<>()\u3000-\u303f\uff00-\uffef]+)|(\*[^*\s][^*\n]*?\*)/g;
 
 function link(href: string, children: ReactNode, key: number) {
   if (!SAFE_URL.test(href)) return <Fragment key={key}>{children}</Fragment>;

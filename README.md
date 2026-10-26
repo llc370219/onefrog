@@ -24,6 +24,8 @@ OneFrog 是一个自托管的 **AI 运维面板**：把你的 Linux 服务器通
 curl -fsSL https://raw.githubusercontent.com/llc370219/onefrog/main/install.sh | sudo bash
 ```
 
+需要 `curl`；没有 `curl` 时可以用 `wget -qO- https://raw.githubusercontent.com/llc370219/onefrog/main/install.sh | sudo bash`，脚本会先自动安装 `curl`。支持 Debian 12/13、Ubuntu 22.04/24.04 及更新版本、Rocky / AlmaLinux / CentOS Stream 9/10、Fedora；已停止维护的系统（如 Debian 11、CentOS 7）会给出明确提示。同一台机器装多个实例时用不同的 `OF_INSTALL_DIR` 和 `OF_PUBLISH_PORT`，见 [docs/安装.md](docs/安装.md#在同一台机器上安装多个实例)。
+
 安装完成后终端会打印访问链接、用户名 `admin` 和随机初始密码；第一次登录必须同时修改用户名和密码。脚本会在需要时安装 Docker（先提示，可取消），然后拉取预构建镜像 `ghcr.io/llc370219/onefrog`，目标服务器不需要 Go 或 Node。
 
 默认监听 `0.0.0.0:8080`、明文 HTTP，安装脚本会为此打印警告。**生产使用请放在 HTTPS 反向代理后面，并只绑定本机：**
@@ -33,7 +35,7 @@ curl -fsSL https://raw.githubusercontent.com/llc370219/onefrog/main/install.sh \
   | sudo OF_BIND_ADDR=127.0.0.1 OF_PUBLIC_URL=https://ops.example.com bash
 ```
 
-**升级**：重新运行上面的安装命令即可原地升级，账号、设置和数据都会保留。面板会定期检查 GitHub 上的新版本并在顶部提示（只读、不自动安装，可在「设置 → 关于与更新」关闭，或安装时设 `OF_UPDATE_CHECK=0`）。
+**升级**：重新运行上面的安装命令即可原地升级（改过 `OF_INSTALL_DIR` 的要带上同一个值），账号、设置、对话、密钥和登录状态都会保留。面板会定期检查 GitHub 上的新版本并在顶部提示（只读、不自动安装，可在「设置 → 关于与更新」关闭，或安装时设 `OF_UPDATE_CHECK=0`）。
 
 安装选项、反向代理示例、升级、备份、卸载和排错见 **[docs/安装.md](docs/安装.md)**。
 
@@ -42,7 +44,7 @@ curl -fsSL https://raw.githubusercontent.com/llc370219/onefrog/main/install.sh \
 - **使用 HTTPS。** 面板保存 SSH 凭据并能远程执行命令。Docker 发布的端口会绕过 ufw/firewalld，所以放在反向代理后面时务必设置 `OF_BIND_ADDR=127.0.0.1`。
 - **使用权限受限的 SSH 用户**，不要把 root 交给 OneFrog。AI 生成的命令可能出错或被日志、网页、附件中的内容误导。
 - **建议开启「智能审批」。** 它用服务端规则加 AI 自评判断风险，有风险的命令要你确认；能减少但不能消除风险，规则可能漏判少见的危险写法。选择「关闭审批」时 AI 会直接执行命令。服务器输出、文件和附件里的内容被当作不可信数据，由它们引出的命令会要求确认。详见 [docs/设置与模型配置.md](docs/设置与模型配置.md#命令审批)。
-- **核对 SSH 主机指纹**（`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`）。
+- **核对 SSH 主机指纹**：面板显示密钥类型和 SHA256，在服务器上运行 `for f in /etc/ssh/ssh_host_*_key.pub; do ssh-keygen -lf "$f"; done`，核对类型相同的那一行。
 - **探针上报请使用 HTTPS 主控地址**，否则上报凭据以明文传输。
 - **`master.key` 与加密数据在同一个数据卷中**，拿到整个数据卷或备份即可解密；需要分开保管时用 `OF_MASTER_KEY` 从外部提供。
 - 未指定 `OF_PUBLIC_URL` 时，安装脚本会请求 `https://ifconfig.me` 获取公网 IP，仅用于打印链接。
@@ -93,6 +95,8 @@ OneFrog is a self-hosted AI ops panel: connect your Linux servers over SSH and l
 curl -fsSL https://raw.githubusercontent.com/llc370219/onefrog/main/install.sh | sudo bash
 ```
 
+It needs `curl`; without it, `wget -qO- https://raw.githubusercontent.com/llc370219/onefrog/main/install.sh | sudo bash` runs the installer, which installs `curl` via apt/dnf/yum first. Supported: Debian 12/13, Ubuntu 22.04/24.04 and newer, Rocky/AlmaLinux/CentOS Stream 9/10, Fedora; end-of-life releases (e.g. Debian 11, CentOS 7) stop with a clear message.
+
 The installer installs Docker if missing (after a notice; `OF_INSTALL_DOCKER=0` aborts instead), pulls the prebuilt image and prints the URL, username and a random initial password; both must be changed on first login. It listens on plain HTTP on all interfaces by default and warns about it. For real use, put it behind an HTTPS reverse proxy and bind to localhost with `OF_BIND_ADDR=127.0.0.1 OF_PUBLIC_URL=https://your.domain`, because it stores SSH credentials and Docker-published ports bypass host firewalls.
 
 - On first login you choose how commands are approved. **Smart approval** (recommended) runs allowlisted read-only commands directly and asks you before anything the server-side rules or the AI consider risky; it reduces risk but cannot eliminate it. **Off** runs AI commands without asking. Commands derived from server output, files or attachments always ask in smart mode. Give OneFrog a dedicated, least-privilege SSH user, not root.
@@ -101,7 +105,7 @@ The installer installs Docker if missing (after a notice; `OF_INSTALL_DOCKER=0` 
 - `master.key` lives next to the encrypted data. Use `OF_MASTER_KEY` to keep them apart.
 - Without `OF_PUBLIC_URL`, the installer queries `https://ifconfig.me` to print a link.
 
-To upgrade, re-run the install command; the account, settings and data volume are kept. The panel checks GitHub for a newer release at startup and every 12 hours and shows a banner with the upgrade command (read-only, never installs anything). Turn it off under Settings → 关于与更新 or with `OF_UPDATE_CHECK=0`.
+To upgrade, re-run the install command (with the same `OF_INSTALL_DIR` if you changed it); the account, settings, chats, secrets and login sessions are kept, all encrypted on disk. To run a second instance on the same host, use a different `OF_INSTALL_DIR` and `OF_PUBLISH_PORT`; each install dir gets its own compose project and data volume. The SSH host key is shown with its type (ED25519 preferred); check it with `for f in /etc/ssh/ssh_host_*_key.pub; do ssh-keygen -lf "$f"; done`. Probes installed by the panel live in `/opt/onefrog-probe`; deleting a server in the panel can uninstall its probe, see docs/安装.md for manual removal. The panel checks GitHub for a newer release at startup and every 12 hours and shows a banner with the upgrade command (read-only, never installs anything). Turn it off under Settings → 关于与更新 or with `OF_UPDATE_CHECK=0`.
 
 See [DISCLAIMER.md](DISCLAIMER.md). OneFrog is not affiliated with OpenAI, Google or any other provider.
 

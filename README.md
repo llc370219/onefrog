@@ -46,7 +46,7 @@ curl -fsSL https://raw.githubusercontent.com/llc370219/onefrog/main/install.sh \
 - 未指定 `OF_PUBLIC_URL` 时，安装脚本会请求 `https://ifconfig.me` 获取公网 IP，仅用于打印链接。
 - 反向代理的地址默认按本机/内网信任 `X-Forwarded-For`，可用 `OF_TRUSTED_PROXIES` 调整（用于登录限流）。
 - 容器内服务以非 root 用户运行。浏览器端启用了 CSP、CSRF 请求头校验、WebSocket 来源校验和登录失败限流。
-- 发现安全问题请通过 GitHub 私下报告（Security → Report a vulnerability），不要公开提 issue。
+- 发现安全问题请通过 GitHub 私下报告（Security → Report a vulnerability），不要公开提 issue，见 [SECURITY.md](SECURITY.md)。
 
 ### 第三方账号登录（风险自负）
 
@@ -92,7 +92,8 @@ curl -fsSL https://raw.githubusercontent.com/llc370219/onefrog/main/install.sh |
 
 The installer installs Docker if missing (after a notice; `OF_INSTALL_DOCKER=0` aborts instead), pulls the prebuilt image and prints the URL, username and a random initial password; both must be changed on first login. It listens on plain HTTP on all interfaces by default and warns about it. For real use, put it behind an HTTPS reverse proxy and bind to localhost with `OF_BIND_ADDR=127.0.0.1 OF_PUBLIC_URL=https://your.domain`, because it stores SSH credentials and Docker-published ports bypass host firewalls.
 
-- Every command the AI wants to run needs your approval by default. The keyword list is only a warning. Give OneFrog a dedicated, least-privilege SSH user, not root.
+- On first login you choose how commands are approved. **Smart approval** (recommended) runs allowlisted read-only commands directly and asks you before anything the server-side rules or the AI consider risky; it reduces risk but cannot eliminate it. **Off** runs AI commands without asking. Commands derived from server output, files or attachments always ask in smart mode. Give OneFrog a dedicated, least-privilege SSH user, not root.
+- Report security issues privately via GitHub (Security → Report a vulnerability), see [SECURITY.md](SECURITY.md).
 - The optional ChatGPT/Codex and Google Antigravity logins reuse another product's official client identity and unofficial internal endpoints. They may violate the provider's terms and can get your account restricted or permanently banned. You must acknowledge this in a dialog before logging in. Google login needs your own `OF_GOOGLE_OAUTH_CLIENT_ID` / `OF_GOOGLE_OAUTH_CLIENT_SECRET`.
 - `master.key` lives next to the encrypted data. Use `OF_MASTER_KEY` to keep them apart.
 - Without `OF_PUBLIC_URL`, the installer queries `https://ifconfig.me` to print a link.

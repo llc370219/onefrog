@@ -82,6 +82,8 @@ type State struct {
 	BotRoutes    map[string]Route `json:"bot_routes"`
 	Approval     Approval         `json:"approval"`
 	Execution    Execution        `json:"execution"`
+	// UpdateCheckDisabled turns off the background release check (Settings → 关于).
+	UpdateCheckDisabled bool `json:"update_check_disabled,omitempty"`
 }
 type Input struct {
 	DisabledBots []string         `json:"disabled_bots"`
@@ -165,7 +167,7 @@ func (m *Manager) Save(in Input) (State, error) {
 	if disabled == nil {
 		disabled = m.data.State.DisabledBots
 	}
-	next := diskState{State: State{DisabledBots: disabled, Default: in.Default, Worker: in.Worker, BotRoutes: in.BotRoutes, Approval: in.Approval, Execution: in.Execution, Providers: []Provider{}}, Keys: map[string]string{}}
+	next := diskState{State: State{DisabledBots: disabled, Default: in.Default, Worker: in.Worker, BotRoutes: in.BotRoutes, Approval: in.Approval, Execution: in.Execution, Providers: []Provider{}, UpdateCheckDisabled: m.data.State.UpdateCheckDisabled}, Keys: map[string]string{}}
 	seen := map[string]bool{}
 	for _, req := range in.Providers {
 		p := req.Provider
@@ -482,6 +484,21 @@ func (m *Manager) BotEnabled(id string) bool {
 	}
 	return true
 }
+
+// SetUpdateCheck enables or disables the background update check, keeping
+// every other setting.
+func (m *Manager) SetUpdateCheck(enabled bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	next := diskState{State: clone(m.data.State), Keys: m.data.Keys}
+	next.State.UpdateCheckDisabled = !enabled
+	if err := m.persist(next); err != nil {
+		return err
+	}
+	m.data = next
+	return nil
+}
+
 func (m *Manager) SetBotEnabled(id string, enabled bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

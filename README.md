@@ -1,6 +1,6 @@
 # OneFrog
 
-<p align="center"><img src="web/public/assets/onefrog-logo.jpg" width="96" alt="OneFrog logo"></p>
+<p align="center"><img src="web/public/assets/onefrog-logo-readme.png" width="96" alt="OneFrog logo"></p>
 
 OneFrog 是一个自托管的 **AI 运维面板**：把你的 Linux 服务器通过 SSH 接进来，用对话让 Bot 查看状态、执行命令、汇总结果；同时提供服务器探针、密钥保险箱、资产与订阅记账等模块。
 
@@ -33,6 +33,8 @@ curl -fsSL https://raw.githubusercontent.com/llc370219/onefrog/main/install.sh \
   | sudo OF_BIND_ADDR=127.0.0.1 OF_PUBLIC_URL=https://ops.example.com bash
 ```
 
+**升级**：重新运行上面的安装命令即可原地升级，账号、设置和数据都会保留。面板会定期检查 GitHub 上的新版本并在顶部提示（只读、不自动安装，可在「设置 → 关于与更新」关闭，或安装时设 `OF_UPDATE_CHECK=0`）。
+
 安装选项、反向代理示例、升级、备份、卸载和排错见 **[docs/安装.md](docs/安装.md)**。
 
 ## 安全须知
@@ -44,6 +46,7 @@ curl -fsSL https://raw.githubusercontent.com/llc370219/onefrog/main/install.sh \
 - **探针上报请使用 HTTPS 主控地址**，否则上报凭据以明文传输。
 - **`master.key` 与加密数据在同一个数据卷中**，拿到整个数据卷或备份即可解密；需要分开保管时用 `OF_MASTER_KEY` 从外部提供。
 - 未指定 `OF_PUBLIC_URL` 时，安装脚本会请求 `https://ifconfig.me` 获取公网 IP，仅用于打印链接。
+- 面板默认定期请求 `https://api.github.com` 检查新版本（匿名、只读、不自动安装），可用 `OF_UPDATE_CHECK=0` 或在设置中关闭。
 - 反向代理的地址默认按本机/内网信任 `X-Forwarded-For`，可用 `OF_TRUSTED_PROXIES` 调整（用于登录限流）。
 - 容器内服务以非 root 用户运行。浏览器端启用了 CSP、CSRF 请求头校验、WebSocket 来源校验和登录失败限流。
 - 发现安全问题请通过 GitHub 私下报告（Security → Report a vulnerability），不要公开提 issue，见 [SECURITY.md](SECURITY.md)。
@@ -98,8 +101,12 @@ The installer installs Docker if missing (after a notice; `OF_INSTALL_DOCKER=0` 
 - `master.key` lives next to the encrypted data. Use `OF_MASTER_KEY` to keep them apart.
 - Without `OF_PUBLIC_URL`, the installer queries `https://ifconfig.me` to print a link.
 
+To upgrade, re-run the install command; the account, settings and data volume are kept. The panel checks GitHub for a newer release at startup and every 12 hours and shows a banner with the upgrade command (read-only, never installs anything). Turn it off under Settings → 关于与更新 or with `OF_UPDATE_CHECK=0`.
+
 See [DISCLAIMER.md](DISCLAIMER.md). OneFrog is not affiliated with OpenAI, Google or any other provider.
 
 ## 许可证 / License
 
 [GNU Affero General Public License v3.0](LICENSE)（AGPL-3.0）。如果你修改 OneFrog 并通过网络向他人提供服务，需要按 AGPL-3.0 公开相应源码。第三方组件的许可见 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES)。
+
+项目徽标（`web/public/` 下的猫咪图标）是本项目作者的原创手绘作品，随本仓库一同按 AGPL-3.0 提供。/ The logo (the cat icons under `web/public/`) is original artwork by the project author and is provided under the same AGPL-3.0 license as this repository.

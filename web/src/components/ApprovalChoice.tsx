@@ -16,7 +16,7 @@ export default function ApprovalChoice({ onDone, onLogout }: { onDone: (mode: Ap
     catch (err) { setError(err instanceof Error ? err.message : '保存失败'); }
     finally { setBusy(false); }
   }
-  return <div className="login-screen"><div className="login-brand"><span className="brand-icon"><img src="/assets/onefrog-logo.jpg" alt=""/></span><strong>OneFrog<span>FIRST SIGN IN</span></strong></div>
+  return <div className="login-screen"><div className="login-brand"><span className="brand-icon"><img src="/assets/onefrog-logo.png" alt=""/></span><strong>OneFrog<span>FIRST SIGN IN</span></strong></div>
     <form className="login-card setup-card approval-choice" onSubmit={e => { e.preventDefault(); save(); }}>
       <span className="eyebrow">COMMAND APPROVAL</span>
       <h1>AI 执行命令前要不要问你？</h1>

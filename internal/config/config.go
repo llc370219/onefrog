@@ -27,6 +27,10 @@ type Config struct {
 	// ApprovalMode (OF_APPROVAL_MODE) presets the approval mode for headless
 	// installs. It only applies while no mode has been chosen.
 	ApprovalMode string
+	// UpdateCheck is false when OF_UPDATE_CHECK=0 (no requests to GitHub).
+	UpdateCheck bool
+	// UpdateRepo (OF_UPDATE_REPO) is the owner/name whose releases are checked.
+	UpdateRepo string
 }
 
 func Load() (Config, error) {
@@ -47,6 +51,8 @@ func Load() (Config, error) {
 		ModelName:            strings.TrimSpace(os.Getenv("OF_MODEL_NAME")),
 		ModelAPIKey:          strings.TrimSpace(os.Getenv("OF_MODEL_API_KEY")),
 		ApprovalMode:         strings.ToLower(strings.TrimSpace(os.Getenv("OF_APPROVAL_MODE"))),
+		UpdateCheck:          !isOff(os.Getenv("OF_UPDATE_CHECK")),
+		UpdateRepo:           strings.TrimSpace(os.Getenv("OF_UPDATE_REPO")),
 	}
 	if cfg.DatabaseURL == "" && cfg.Driver == "postgres" {
 		cfg.DatabaseURL = "postgres://onefrog:onefrog@127.0.0.1:5432/onefrog?sslmode=disable"
@@ -57,6 +63,15 @@ func Load() (Config, error) {
 	}
 	cfg.MasterKey = key
 	return cfg, nil
+}
+
+// isOff reports whether an on/off environment value means off.
+func isOff(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "0", "false", "no", "off":
+		return true
+	}
+	return false
 }
 
 func env(key, fallback string) string {

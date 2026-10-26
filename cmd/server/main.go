@@ -17,7 +17,9 @@ import (
 	"onefrog/internal/remote"
 	"onefrog/internal/secret"
 	"onefrog/internal/store"
+	"onefrog/internal/update"
 	"onefrog/internal/usage"
+	"onefrog/internal/version"
 	"os"
 	"path/filepath"
 	"time"
@@ -86,7 +88,20 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	updates := &update.Checker{
+		Repo:             cfg.UpdateRepo,
+		Current:          version.Version,
+		EnvDisabled:      !cfg.UpdateCheck,
+		SettingsDisabled: func() bool { return settings.Snapshot().UpdateCheckDisabled },
+		HTTP:             &http.Client{Timeout: 15 * time.Second},
+	}
+	if !update.ValidRepo(updates.Repo) && updates.Repo != "" {
+		log.Fatalf("OF_UPDATE_REPO must look like owner/name, got %q", updates.Repo)
+	}
+	go updates.Run(ctx)
+	log.Printf("OneFrog %s", version.Version)
 	app := &api.Server{
+		Updates:    updates,
 		OAuth:      oauth,
 		Onboarding: onboard,
 		Assets:     ledger,

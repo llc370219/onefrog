@@ -71,6 +71,21 @@ type ServerJSON = {
 // Sent on every API request; the server rejects state-changing requests without it (CSRF defence).
 const CSRF_HEADER = "X-OneFrog-CSRF";
 
+/** Result of the GitHub release check (GET /api/update). */
+export type UpdateStatus = {
+  current: string;
+  latest?: string;
+  url?: string;
+  notes?: string;
+  published_at?: string;
+  available: boolean;
+  enabled: boolean;
+  disabled_by?: 'env' | 'settings' | 'dev' | 'repo';
+  repo: string;
+  checked_at?: string;
+  error?: string;
+};
+
 async function call(path: string, init?: RequestInit) {
   const res = await fetch(path, {
     credentials: "include",
@@ -132,6 +147,9 @@ export const api = {
   async profile(body:{username:string;display_name:string;avatar:string;current_password:string;new_password:string}):Promise<Profile>{return call("/api/auth/profile",{method:"PUT",body:JSON.stringify(body)});},
   async sessions():Promise<ChatSession[]>{return (await call("/api/sessions"))||[];},
   async messages(id:string):Promise<{role:string;content:string;attachments?:Attachment[]}[]>{return (await call("/api/sessions/"+encodeURIComponent(id)+"/messages"))||[];},
+  async updateStatus():Promise<UpdateStatus>{return call("/api/update");},
+  async checkUpdate():Promise<UpdateStatus>{return call("/api/update/check",{method:"POST",body:"{}"});},
+  async setUpdateCheck(enabled:boolean):Promise<UpdateStatus>{return call("/api/settings/update",{method:"PUT",body:JSON.stringify({enabled})});},
   async approvalMode():Promise<{mode:ApprovalMode;effective_mode:ApprovalMode;choice_required:boolean}>{return call("/api/settings/approval");},
   async setApprovalMode(mode:ApprovalMode):Promise<{mode:ApprovalMode}>{return call("/api/settings/approval",{method:"PUT",body:JSON.stringify({mode})});},
   async me():Promise<Profile> {

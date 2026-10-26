@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -23,7 +24,9 @@ import (
 	"onefrog/internal/providerlogin"
 	"onefrog/internal/secret"
 	"onefrog/internal/store"
+	"onefrog/internal/update"
 	"onefrog/internal/usage"
+	"onefrog/internal/version"
 )
 
 type Server struct {
@@ -40,6 +43,8 @@ type Server struct {
 	Settings   *preferences.Manager
 	Monitor    *monitor.Manager
 	Assets     *asset.Ledger
+	// Updates checks GitHub for newer releases; nil reports a dev build.
+	Updates *update.Checker
 	// TrustedProxies is OF_TRUSTED_PROXIES (comma separated CIDRs/IPs, or "none").
 	TrustedProxies string
 	limiter        *loginLimiter
@@ -57,6 +62,9 @@ func (s *Server) Handler() http.Handler {
 	}
 	if s.Usage == nil {
 		s.Usage, _ = usage.New("", s.Box)
+	}
+	if s.Updates == nil {
+		s.Updates = &update.Checker{Current: version.Version, EnvDisabled: true}
 	}
 	if s.Assets == nil {
 		s.Assets, _ = asset.New("", s.Box)
@@ -129,6 +137,9 @@ func (s *Server) Handler() http.Handler {
 	authed.PUT("/settings", s.putSettings)
 	authed.GET("/settings/approval", s.getApproval)
 	authed.PUT("/settings/approval", s.putApproval)
+	authed.GET("/update", s.updateStatus)
+	authed.POST("/update/check", s.updateCheck)
+	authed.PUT("/settings/update", s.putUpdateSetting)
 	authed.POST("/settings/providers/models", s.providerModels)
 	authed.POST("/settings/providers/test", s.testProvider)
 	authed.GET("/approvals", s.listApprovals)
@@ -151,6 +162,11 @@ func (s *Server) Handler() http.Handler {
 	if s.WebDir != "" {
 		if info, err := os.Stat(s.WebDir); err == nil && info.IsDir() {
 			r.Static("/assets", s.WebDir+"/assets")
+			for _, name := range rootFiles {
+				if _, err := os.Stat(filepath.Join(s.WebDir, name)); err == nil {
+					r.StaticFile("/"+name, filepath.Join(s.WebDir, name))
+				}
+			}
 			index := s.WebDir + "/index.html"
 			r.NoRoute(func(c *gin.Context) {
 				if strings.HasPrefix(c.Request.URL.Path, "/api") || strings.HasPrefix(c.Request.URL.Path, "/ws") {

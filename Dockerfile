@@ -9,13 +9,17 @@ RUN npm run build
 FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS api
 ARG TARGETOS
 ARG TARGETARCH
+# Release tag injected by the release workflow; local builds report "dev".
+ARG VERSION=dev
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w -X onefrog/internal/version.Version=${VERSION}" -o /out/server ./cmd/server
 
 FROM alpine:3.23
+ARG VERSION=dev
+LABEL org.opencontainers.image.version="${VERSION}"
 LABEL org.opencontainers.image.source="https://github.com/llc370219/onefrog" \
       org.opencontainers.image.licenses="AGPL-3.0-only" \
       org.opencontainers.image.description="OneFrog: self-hosted AI ops panel"

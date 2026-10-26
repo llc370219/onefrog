@@ -4,7 +4,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/llc370219/onefrog/main/install.sh | sudo bash
 #
 # Options (environment variables, pass them after sudo):
-#   OF_VERSION=latest        image tag to install, e.g. v0.1.0
+#   OF_VERSION=latest        image tag to install, e.g. v0.1.1
 #   OF_PUBLISH_PORT=8080     host port
 #   OF_BIND_ADDR=0.0.0.0     host address to bind; use 127.0.0.1 behind a reverse proxy
 #   OF_PUBLIC_URL=           link printed at the end, e.g. https://ops.example.com
@@ -14,11 +14,15 @@
 #   OF_APPROVAL_MODE=        preset the command approval mode for headless installs:
 #                            off | smart | manual | plan. Applies only while no mode has
 #                            been chosen; otherwise the first login asks you to choose.
+#   OF_UPDATE_CHECK=1        set to 0 to stop the panel from checking GitHub for new releases
 #   OF_INSTALL_DIR=/opt/onefrog
 #   OF_INSTALL_DOCKER=1      set to 0 to abort instead of installing Docker
 #   OF_BUILD_FROM_SOURCE=0   set to 1 to build the image on this server instead of pulling it
 #   OF_REPO=https://github.com/llc370219/onefrog.git   source repo used with OF_BUILD_FROM_SOURCE=1
 #   OF_IMAGE=ghcr.io/llc370219/onefrog                 image name
+#
+# Re-running the same command upgrades in place: the generated account, settings
+# and the data volume are kept; only the image and docker-compose.yml are replaced.
 #
 # The whole script is wrapped in main() so a partially downloaded file never runs.
 set -euo pipefail
@@ -60,9 +64,15 @@ main() {
     ""|off|smart|manual|plan) ;;
     *) die "OF_APPROVAL_MODE 只能是 off、smart、manual 或 plan。" ;;
   esac
+  case "${OF_UPDATE_CHECK:-}" in
+    ""|0|1) ;;
+    *) die "OF_UPDATE_CHECK 只能是 0 或 1。" ;;
+  esac
 
   # ---- credentials (reused on re-run) ----
+  local fresh=0
   if [ ! -f "$env_file" ]; then
+    fresh=1
     local port="${OF_PUBLISH_PORT:-8080}"
     local bind="${OF_BIND_ADDR:-0.0.0.0}"
     local admin_user="${OF_ADMIN_USER:-admin}"
@@ -95,14 +105,15 @@ OF_PUBLISH_PORT=${port}
 OF_BIND_ADDR=${bind}
 ENV
       if [ -n "${OF_APPROVAL_MODE:-}" ]; then echo "OF_APPROVAL_MODE=${OF_APPROVAL_MODE}" >> "$env_file"; fi
+      if [ -n "${OF_UPDATE_CHECK:-}" ]; then echo "OF_UPDATE_CHECK=${OF_UPDATE_CHECK}" >> "$env_file"; fi
     )
     chmod 600 "$env_file"
     say "已生成初始账号，保存在 ${env_file}（权限 600）。"
   else
-    say "沿用已有的 ${env_file}，不会重置已经创建的账号。"
+    say "检测到已有安装，将原地升级：沿用 ${env_file} 和数据卷，不会重置账号、设置或数据。"
     # Allow changing port / bind address on re-run without touching credentials.
     local k
-    for k in OF_PUBLISH_PORT OF_BIND_ADDR OF_PUBLIC_URL OF_APPROVAL_MODE; do
+    for k in OF_PUBLISH_PORT OF_BIND_ADDR OF_PUBLIC_URL OF_APPROVAL_MODE OF_UPDATE_CHECK; do
       if [ -n "${!k:-}" ]; then
         local v="${!k}"
         [ "$k" = "OF_PUBLIC_URL" ] && v="${v%/}"
@@ -188,15 +199,26 @@ YAML
     i=$((i + 1)); sleep 2
   done
 
+  local installed
+  installed=$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$ref" 2>/dev/null || true)
+  [ -n "$installed" ] && [ "$installed" != "<no value>" ] || installed="$ref"
+
   say ""
   say "========================================"
-  say "OneFrog 已安装"
-  say "链接: ${public}"
-  say "用户名: ${admin_user}"
-  say "初始密码: ${pass}"
-  say "========================================"
-  say "第一次登录必须修改用户名和密码，改完之前不能使用面板里的其他功能。"
-  say "初始密码也保存在 ${env_file}（仅 root 可读）。"
+  if [ "$fresh" = "1" ]; then
+    say "OneFrog 已安装（${installed}）"
+    say "链接: ${public}"
+    say "用户名: ${admin_user}"
+    say "初始密码: ${pass}"
+    say "========================================"
+    say "第一次登录必须修改用户名和密码，改完之前不能使用面板里的其他功能。"
+    say "初始密码也保存在 ${env_file}（仅 root 可读）。"
+  else
+    say "OneFrog 已升级到 ${installed}"
+    say "链接: ${public}"
+    say "========================================"
+    say "账号、设置和数据都已保留，请用你自己设置的用户名和密码登录。"
+  fi
   say ""
   case "${bind_addr}|${public}" in
     127.0.0.1\|*) ;;

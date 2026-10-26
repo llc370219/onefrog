@@ -151,6 +151,9 @@ func openStore(ctx context.Context, cfg config.Config, box *secret.Box) (store.S
 		if err = m.EnableBotPersistence(filepath.Join(cfg.DataDir, "bots.enc"), box); err != nil {
 			return nil, err
 		}
+		if err = m.EnablePersistence(cfg.DataDir, box); err != nil {
+			return nil, err
+		}
 		return m, nil
 	}
 	pg, err := store.NewPostgres(ctx, cfg.DatabaseURL)

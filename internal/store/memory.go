@@ -17,6 +17,8 @@ type Memory struct {
 	accountPath string
 	botPath     string
 	botBox      *secret.Box
+	dataDir     string
+	dataBox     *secret.Box
 	mu          sync.Mutex
 	users       map[string]userRow
 	byName      map[string]string
@@ -88,7 +90,16 @@ func (m *Memory) CountUsers(_ context.Context) (int, error) {
 func (m *Memory) CreateSession(_ context.Context, userID, tokenHash string, expires time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	old, existed := m.sessions[tokenHash]
 	m.sessions[tokenHash] = sessionRow{UserID: userID, Expires: expires}
+	if err := m.saveSessionsLocked(); err != nil {
+		if existed {
+			m.sessions[tokenHash] = old
+		} else {
+			delete(m.sessions, tokenHash)
+		}
+		return err
+	}
 	return nil
 }
 
@@ -109,7 +120,15 @@ func (m *Memory) UserBySession(_ context.Context, tokenHash string) (model.User,
 func (m *Memory) DeleteSession(_ context.Context, tokenHash string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	old, existed := m.sessions[tokenHash]
+	if !existed {
+		return nil
+	}
 	delete(m.sessions, tokenHash)
+	if err := m.saveSessionsLocked(); err != nil {
+		m.sessions[tokenHash] = old
+		return err
+	}
 	return nil
 }
 
@@ -328,6 +347,11 @@ func (m *Memory) CreateSecret(_ context.Context, rec SecretRec) (model.Secret, e
 	}
 	m.secrets[rec.ID] = rec
 	m.secretName[rec.Name] = rec.ID
+	if err := m.saveSecretsLocked(); err != nil {
+		delete(m.secrets, rec.ID)
+		delete(m.secretName, rec.Name)
+		return model.Secret{}, err
+	}
 	return rec.Secret, nil
 }
 
@@ -340,6 +364,11 @@ func (m *Memory) DeleteSecret(_ context.Context, idv string) error {
 	}
 	delete(m.secretName, rec.Name)
 	delete(m.secrets, idv)
+	if err := m.saveSecretsLocked(); err != nil {
+		m.secrets[idv] = rec
+		m.secretName[rec.Name] = idv
+		return err
+	}
 	return nil
 }
 
@@ -384,7 +413,16 @@ func (m *Memory) SaveModule(_ context.Context, item model.Module) (model.Module,
 			item.CreatedAt = time.Now().UTC()
 		}
 	}
+	old, existed := m.modules[item.ID]
 	m.modules[item.ID] = item
+	if err := m.saveModulesLocked(); err != nil {
+		if existed {
+			m.modules[item.ID] = old
+		} else {
+			delete(m.modules, item.ID)
+		}
+		return model.Module{}, err
+	}
 	return item, nil
 }
 
@@ -444,6 +482,10 @@ func (m *Memory) AddHistory(_ context.Context, rec HistoryRec) (model.History, e
 		rec.Snapshot = "{}"
 	}
 	m.history[rec.ID] = rec
+	if err := m.saveHistoryLocked(); err != nil {
+		delete(m.history, rec.ID)
+		return model.History{}, err
+	}
 	return rec.History, nil
 }
 
@@ -454,9 +496,14 @@ func (m *Memory) FinishRollback(_ context.Context, idv string) error {
 	if !ok {
 		return ErrNotFound
 	}
+	old := rec
 	rec.CanRollback = false
 	rec.Status = "rolled_back"
 	m.history[idv] = rec
+	if err := m.saveHistoryLocked(); err != nil {
+		m.history[idv] = old
+		return err
+	}
 	return nil
 }
 
@@ -475,6 +522,11 @@ func (m *Memory) EnsureSession(_ context.Context, idv, botID, title string) (mod
 	}
 	sess := model.Session{ID: idv, BotID: botID, Title: title, CreatedAt: time.Now().UTC()}
 	m.chats[idv] = sess
+	if err := m.saveChatLocked(idv); err != nil {
+		delete(m.chats, idv)
+		return model.Session{}, err
+	}
+	m.pruneChatsLocked(idv)
 	return sess, nil
 }
 
@@ -490,7 +542,12 @@ func (m *Memory) AddMessage(_ context.Context, msg model.Message) (model.Message
 	if msg.CreatedAt.IsZero() {
 		msg.CreatedAt = time.Now().UTC()
 	}
-	m.messages[msg.SessionID] = append(m.messages[msg.SessionID], msg)
+	prev := m.messages[msg.SessionID]
+	m.messages[msg.SessionID] = append(prev[:len(prev):len(prev)], msg)
+	if err := m.saveChatLocked(msg.SessionID); err != nil {
+		m.messages[msg.SessionID] = prev
+		return model.Message{}, err
+	}
 	return msg, nil
 }
 
@@ -532,6 +589,9 @@ func (m *Memory) UpdateUser(_ context.Context, user model.User, passwordHash, ke
 				delete(m.sessions, key)
 			}
 		}
+		if err := m.saveSessionsLocked(); err != nil {
+			return user, err
+		}
 	}
 	return user, nil
 }
@@ -567,7 +627,12 @@ func (m *Memory) SaveChatOptions(_ context.Context, id string, options json.RawM
 	if !ok {
 		return ErrNotFound
 	}
+	old := s
 	s.Options = append(json.RawMessage(nil), options...)
 	m.chats[id] = s
+	if err := m.saveChatLocked(id); err != nil {
+		m.chats[id] = old
+		return err
+	}
 	return nil
 }

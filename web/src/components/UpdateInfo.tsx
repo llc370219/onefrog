@@ -7,10 +7,12 @@ const DISMISS_KEY = 'onefrog.update.dismissed';
 const errorText = (e: unknown) => e instanceof Error ? e.message : '请求失败';
 
 /** Commands that upgrade an install made with install.sh; data and settings are kept. */
-export function upgradeCommands(repo: string) {
+export function upgradeCommands(repo: string, installDir = '', project = '') {
+  const dir = installDir || '/opt/onefrog', name = project || 'onefrog';
+  const env = dir === '/opt/onefrog' ? '' : ` OF_INSTALL_DIR=${dir}`;
   return [
-    { label: '重新运行安装命令（推荐）', cmd: `curl -fsSL https://raw.githubusercontent.com/${repo}/main/install.sh | sudo bash` },
-    { label: '或者只更新镜像', cmd: 'cd /opt/onefrog && sudo docker compose -p onefrog pull && sudo docker compose -p onefrog up -d' },
+    { label: '重新运行安装命令（推荐）', cmd: `curl -fsSL https://raw.githubusercontent.com/${repo}/main/install.sh | sudo${env} bash` },
+    { label: '或者只更新镜像', cmd: `cd ${dir} && sudo docker compose -p ${name} pull && sudo docker compose -p ${name} up -d` },
   ];
 }
 
@@ -31,7 +33,7 @@ function CommandLine({ label, cmd }: { label: string; cmd: string }) {
 }
 
 function UpgradeHelp({ status }: { status: UpdateStatus }) {
-  return <div className="update-help">{upgradeCommands(status.repo).map(c => <CommandLine key={c.cmd} {...c}/>)}<p>在安装 OneFrog 的服务器上以 root 执行。账号、设置和数据卷都会保留；升级会重启容器，进行中的对话会中断。默认数据库为内存模式时，对话记录在重启后不保留。</p></div>;
+  return <div className="update-help">{upgradeCommands(status.repo, status.install_dir, status.project).map(c => <CommandLine key={c.cmd} {...c}/>)}<p>在安装 OneFrog 的服务器上以 root 执行。{!status.install_dir && '如果安装时改过 OF_INSTALL_DIR，请换成你的安装目录。'}账号、设置、对话和数据卷都会保留；升级会重启容器，进行中的回复会中断，登录状态不受影响。</p></div>;
 }
 
 /** Dismissible banner shown above every page when a newer release exists. */

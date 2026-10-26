@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -56,6 +57,28 @@ type Status struct {
 	Repo       string     `json:"repo"`
 	CheckedAt  *time.Time `json:"checked_at,omitempty"`
 	Error      string     `json:"error,omitempty"`
+	// InstallDir and Project describe the install.sh deployment (set by the
+	// installer in docker-compose.yml) so the panel can show exact upgrade commands.
+	InstallDir string `json:"install_dir,omitempty"`
+	Project    string `json:"project,omitempty"`
+}
+
+var (
+	installDirPattern = regexp.MustCompile(`^/[A-Za-z0-9._/-]*$`)
+	projectPattern    = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+)
+
+// deployment returns the installer's install dir and compose project, or empty
+// strings when they are not set or not safe to show inside a shell command.
+func deployment() (dir, project string) {
+	dir, project = os.Getenv("OF_HOST_INSTALL_DIR"), os.Getenv("OF_PROJECT")
+	if !installDirPattern.MatchString(dir) {
+		dir = ""
+	}
+	if !projectPattern.MatchString(project) {
+		project = ""
+	}
+	return dir, project
 }
 
 type release struct {
@@ -122,6 +145,7 @@ func (c *Checker) Status() Status {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	s := Status{Current: c.Current, Repo: c.repo(), Error: c.lastErr}
+	s.InstallDir, s.Project = deployment()
 	if s.Current == "" {
 		s.Current = "dev"
 	}

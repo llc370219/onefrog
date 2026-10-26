@@ -8,7 +8,7 @@ OneFrog 是一个自托管的 **AI 运维面板**：把你的 Linux 服务器通
 
 ## 功能
 
-- **AI 助理与多 Bot 协作**：主控 Bot 理解需求、分派任务，协作 Bot 通过 SSH 在你手动选中的服务器上执行命令，过程和结果显示在对话里。
+- **AI 助理与多 Bot 协作**：主控 Bot 理解需求、分派任务，协作 Bot 通过 SSH 在你手动选中的服务器上执行命令，过程和结果显示在对话里。需要你拍板时（清理哪个目录、先重启还是先看日志），Bot 会给出选项卡片，点一下就继续。
 - **命令审批**：首次登录时由你选择「智能审批」（只读命令直接执行，有风险的命令弹窗等你确认）或「关闭审批」，之后可随时修改；另有逐条确认、替我审批、仅规划等高级模式。
 - **SSH 主机指纹校验**：首次连接显示指纹并由你确认；指纹变化时拒绝连接，不会自动覆盖。
 - **密钥保险箱**：Bot 只拿到密钥名称，命令里写 `{{secret:名称}}`，执行时才在服务端替换，输出中的明文会被打码。
@@ -89,7 +89,7 @@ docker build -t onefrog:dev .
 
 ## English
 
-OneFrog is a self-hosted AI ops panel: connect your Linux servers over SSH and let a team of LLM bots inspect and operate them through chat, with per-command approval, SSH host-key pinning, a secret vault, lightweight host probes and an asset/subscription ledger.
+OneFrog is a self-hosted AI ops panel: connect your Linux servers over SSH and let a team of LLM bots inspect and operate them through chat, with per-command approval, clickable choice cards when a bot needs your decision, SSH host-key pinning, a secret vault, lightweight host probes and an asset/subscription ledger.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/llc370219/onefrog/main/install.sh | sudo bash

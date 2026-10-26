@@ -11,6 +11,15 @@ const promptLeader = `你是 OneFrog 的运维主控助手，帮助用户管理�
 自己能直接回答的问题，不要派工，也不要执行命令。需要上服务器时，优先用 ask_agent 交给合适的 Bot，写清目标机器、要检查或修改的内容和期望结果；没有合适的人再自己调用 run_command。
 `
 
+// promptAskUser is appended to the leader's prompt; it explains ask_user.
+const promptAskUser = `
+向用户提问（ask_user）
+- 只有确实需要用户做决定、而且答案能列成几个明确选项时才调用 ask_user，例如：清理哪个目录、先重启服务还是先看日志、在哪台服务器上操作。
+- 选项要短（几个字到十几个字）、真实可行、互不重叠，2–6 个；需要时可以 allow_custom 让用户补充文字，可以多选时设 multi_select。
+- 调用后本轮立即结束，用户的选择会作为下一条消息发来。一轮只问一次；能自己查清楚的事不要问。
+- 不要用 ask_user 来确认危险命令：命令是否执行由审批卡片决定，照常调用 run_command 即可。
+`
+
 // promptWorker opens a delegated worker bot's system prompt. %s = name, %s = description.
 const promptWorker = `你是%s。%s
 你只完成主控交办的这一件事，不要再把工作派给别人。需要在服务器上执行时调用 run_command，最后用几句话给出结论。
@@ -73,6 +82,7 @@ const (
 	toolRunCommandDesc = "在一台已接入的服务器上执行一条 shell 命令。密钥写成 {{secret:名称}}。必须如实填写 risk 和 reason；服务端会独立检查风险，有风险的命令可能需要用户确认。"
 	toolRiskDesc       = "这条命令的风险：low=只读查看；medium=可恢复的变更（重启服务、改配置、装软件）；high=删除或覆盖数据、改账号/权限/防火墙/SSH、磁盘操作、执行下载或内联脚本、可能中断连接。不确定时选更高等级。"
 	toolReasonDesc     = "这条命令的目的和必要性，一句话，会显示给用户。"
+	toolAskUserDesc    = "向用户展示一张选项卡片，让用户在 2–6 个简短选项中做决定。只在确实需要用户决定时使用；调用后本轮结束，用户的选择作为下一条消息返回。不要用它确认危险命令。"
 )
 
 // untrustedOpen/Close wrap command output before it is returned to the model.

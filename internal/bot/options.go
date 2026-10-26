@@ -13,13 +13,15 @@ import (
 )
 
 type Options struct {
-	ApprovalRoute   *preferences.Route `json:"approval_route,omitempty"`
-	ModelRoute      *preferences.Route `json:"model_route,omitempty"`
-	ExcludedBotIDs  []string           `json:"excluded_bot_ids,omitempty"`
-	ApprovalMode    string             `json:"approval_mode,omitempty"`
-	AttachmentIDs   []string           `json:"attachment_ids,omitempty"`
-	OwnerID         string             `json:"-"`
-	RestrictServers bool               `json:"-"`
+	ApprovalRoute  *preferences.Route `json:"approval_route,omitempty"`
+	ModelRoute     *preferences.Route `json:"model_route,omitempty"`
+	ExcludedBotIDs []string           `json:"excluded_bot_ids,omitempty"`
+	ApprovalMode   string             `json:"approval_mode,omitempty"`
+	AttachmentIDs  []string           `json:"attachment_ids,omitempty"`
+	// ChoiceAnswer answers an ask_user card in this session; it replaces Content.
+	ChoiceAnswer    *ChoiceReply `json:"choice_answer,omitempty"`
+	OwnerID         string       `json:"-"`
+	RestrictServers bool         `json:"-"`
 	// Approver asks a human to allow one command (smart or manual mode). It is
 	// set by interactive transports such as the WebSocket chat.
 	Approver Approver `json:"-"`
@@ -29,6 +31,7 @@ type Options struct {
 type ApprovalRequest struct {
 	ID         string `json:"id"`
 	BotID      string `json:"bot_id"`
+	BotName    string `json:"bot_name,omitempty"`
 	ServerID   string `json:"server_id"`
 	ServerName string `json:"server_name"`
 	Command    string `json:"command"`
@@ -139,6 +142,9 @@ func (a *Agent) ReplyWithOptions(ctx context.Context, botID, serverID, sessionID
 	}
 	if size > attachment.MaxTotal {
 		return Result{}, errors.New("附件合计不能超过 12 MB")
+	}
+	if opt.ChoiceAnswer != nil && len(refs) > 0 {
+		return Result{}, errors.New("回答选项时不能附带附件")
 	}
 	if strings.TrimSpace(content) == "" && len(refs) > 0 {
 		content = "请分析这些附件。"

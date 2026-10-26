@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"onefrog/internal/model"
 	"onefrog/internal/secret"
 	"os"
@@ -213,5 +214,36 @@ func TestWrongKeyFailsLoudly(t *testing.T) {
 	other, _ := secret.New(bytes.Repeat([]byte{1}, 32))
 	if err := NewMemory().EnablePersistence(dir, other); err == nil {
 		t.Fatal("expected decrypt error with the wrong master key")
+	}
+}
+
+func TestChoiceCardSurvivesRestartAndAnswersOnce(t *testing.T) {
+	dir, box := t.TempDir(), persistBox(t)
+	ctx := context.Background()
+	m := reopen(t, dir, box)
+	sess, err := m.EnsureSession(ctx, "", "main", "清理")
+	if err != nil {
+		t.Fatal(err)
+	}
+	card := &model.Choice{Prompt: "清理哪个目录？", Options: []model.ChoiceOption{{Label: "/tmp", Value: "tmp"}, {Label: "/var/log", Value: "log"}}}
+	msg, err := m.AddMessage(ctx, model.Message{SessionID: sess.ID, Role: "assistant", Choice: card})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = reopen(t, dir, box)
+	msgs, err := m.ListMessages(ctx, sess.ID)
+	if err != nil || len(msgs) != 1 || msgs[0].Choice == nil || msgs[0].Choice.Options[1].Label != "/var/log" || msgs[0].Choice.Answer != nil {
+		t.Fatalf("card after restart: %+v %v", msgs, err)
+	}
+	if _, err = m.AnswerChoice(ctx, sess.ID, msg.ID, model.ChoiceAnswer{Values: []string{"log"}}); err != nil {
+		t.Fatal(err)
+	}
+	m = reopen(t, dir, box)
+	got, err := m.AnswerChoice(ctx, sess.ID, msg.ID, model.ChoiceAnswer{Values: []string{"tmp"}})
+	if !errors.Is(err, ErrConflict) || got.Choice == nil || got.Choice.Answer == nil || got.Choice.Answer.Values[0] != "log" {
+		t.Fatalf("second answer: %+v %v", got, err)
+	}
+	if _, err = m.AnswerChoice(ctx, sess.ID, "missing", model.ChoiceAnswer{Values: []string{"tmp"}}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown message: %v", err)
 	}
 }

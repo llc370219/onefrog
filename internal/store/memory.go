@@ -551,6 +551,39 @@ func (m *Memory) AddMessage(_ context.Context, msg model.Message) (model.Message
 	return msg, nil
 }
 
+func (m *Memory) AnswerChoice(_ context.Context, sessionID, messageID string, answer model.ChoiceAnswer) (model.Message, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	list := m.messages[sessionID]
+	for i, msg := range list {
+		if msg.ID != messageID {
+			continue
+		}
+		if msg.Choice == nil {
+			return model.Message{}, ErrNotFound
+		}
+		if msg.Choice.Answer != nil {
+			return msg, ErrConflict
+		}
+		if answer.AnsweredAt.IsZero() {
+			answer.AnsweredAt = time.Now().UTC()
+		}
+		choice := *msg.Choice
+		choice.Answer = &answer
+		updated := msg
+		updated.Choice = &choice
+		next := append([]model.Message(nil), list...)
+		next[i] = updated
+		m.messages[sessionID] = next
+		if err := m.saveChatLocked(sessionID); err != nil {
+			m.messages[sessionID] = list
+			return model.Message{}, err
+		}
+		return updated, nil
+	}
+	return model.Message{}, ErrNotFound
+}
+
 func (m *Memory) ListMessages(_ context.Context, sessionID string) ([]model.Message, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

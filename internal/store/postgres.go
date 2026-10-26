@@ -420,12 +420,41 @@ func (p *Postgres) AddMessage(ctx context.Context, msg model.Message) (model.Mes
 		msg.CreatedAt = time.Now().UTC()
 	}
 	attachments, _ := json.Marshal(msg.Attachments)
-	_, err := p.pool.Exec(ctx, "INSERT INTO messages (id, session_id, role, content, created_at,attachments) VALUES ($1,$2,$3,$4,$5,$6::jsonb)", msg.ID, msg.SessionID, msg.Role, msg.Content, msg.CreatedAt, string(attachments))
+	var choice any
+	if msg.Choice != nil {
+		raw, _ := json.Marshal(msg.Choice)
+		choice = string(raw)
+	}
+	_, err := p.pool.Exec(ctx, "INSERT INTO messages (id, session_id, role, content, created_at,attachments,choice) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb)", msg.ID, msg.SessionID, msg.Role, msg.Content, msg.CreatedAt, string(attachments), choice)
 	return msg, mapErr(err)
 }
 
+func (p *Postgres) AnswerChoice(ctx context.Context, sessionID, messageID string, answer model.ChoiceAnswer) (model.Message, error) {
+	if answer.AnsweredAt.IsZero() {
+		answer.AnsweredAt = time.Now().UTC()
+	}
+	raw, _ := json.Marshal(answer)
+	tag, err := p.pool.Exec(ctx, "UPDATE messages SET choice=jsonb_set(choice,'{answer}',$3::jsonb) WHERE session_id=$1 AND id=$2 AND choice IS NOT NULL AND (choice->'answer') IS NULL", sessionID, messageID, string(raw))
+	if err != nil {
+		return model.Message{}, err
+	}
+	msgs, err := p.ListMessages(ctx, sessionID)
+	if err != nil {
+		return model.Message{}, err
+	}
+	for _, msg := range msgs {
+		if msg.ID == messageID && msg.Choice != nil {
+			if tag.RowsAffected() == 0 {
+				return msg, ErrConflict
+			}
+			return msg, nil
+		}
+	}
+	return model.Message{}, ErrNotFound
+}
+
 func (p *Postgres) ListMessages(ctx context.Context, sessionID string) ([]model.Message, error) {
-	rows, err := p.pool.Query(ctx, "SELECT id, session_id, role, content, created_at, attachments FROM messages WHERE session_id=$1 ORDER BY created_at", sessionID)
+	rows, err := p.pool.Query(ctx, "SELECT id, session_id, role, content, created_at, attachments, choice FROM messages WHERE session_id=$1 ORDER BY created_at", sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -433,9 +462,15 @@ func (p *Postgres) ListMessages(ctx context.Context, sessionID string) ([]model.
 	var out []model.Message
 	for rows.Next() {
 		var msg model.Message
-		var attachments []byte
-		if err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &msg.Content, &msg.CreatedAt, &attachments); err != nil {
+		var attachments, choice []byte
+		if err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &msg.Content, &msg.CreatedAt, &attachments, &choice); err != nil {
 			return nil, err
+		}
+		if len(choice) > 0 {
+			msg.Choice = &model.Choice{}
+			if err := json.Unmarshal(choice, msg.Choice); err != nil {
+				return nil, err
+			}
 		}
 		if err := json.Unmarshal(attachments, &msg.Attachments); err != nil {
 			return nil, err

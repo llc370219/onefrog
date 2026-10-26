@@ -41,9 +41,16 @@ export type ChatStep = {
   ok?: boolean;
   output?: string;
 };
+export type ChoiceOption = { label: string; value: string };
+export type ChoiceAnswer = { values?: string[]; custom?: string; answered_at?: string };
+/** A question the bot asked with ask_user; answered once, then read-only. */
+export type Choice = { prompt: string; options: ChoiceOption[]; multi_select?: boolean; allow_custom?: boolean; answer?: ChoiceAnswer };
+export type ChoiceReply = { message_id: string; values?: string[]; custom?: string };
 export type ChatLine = {
   who: "user" | "bot";
   text: string;
+  id?: string;
+  choice?: Choice;
   pending?: boolean;
   steps?: ChatStep[];
   attachments?:Attachment[];
@@ -52,7 +59,8 @@ export type TokenUsage={requests:number;reported_calls:number;failed_calls:numbe
 export type UsageRow=TokenUsage&{bot_id:string;purpose:string;provider_id:string;model:string;updated_at:string};
 export type Attachment={id:string;name:string;mime:string;size:number};
 export type ChatOptions={approval_route?:ModelRoute;model_route?:ModelRoute;excluded_bot_ids?:string[];approval_mode?:string;attachment_ids?:string[]};
-export type ChatRequest=ChatOptions&{content:string;server_id?:string;bot_id?:string;session_id?:string};
+export type ChatRequest=ChatOptions&{content:string;server_id?:string;bot_id?:string;session_id?:string;choice_answer?:ChoiceReply};
+export type ChatResult={session_id:string;text:string;message_id?:string;choice?:Choice;answered?:boolean};
 export type BotRow = { id:string;name:string;description:string;system_prompt?:string;enabled:boolean;model_route:ModelRoute;effective_route:ModelRoute;usage:TokenUsage };
 
 type ServerJSON = {
@@ -148,7 +156,7 @@ export const api = {
   async probeToken(id:string):Promise<{token:string;server_id:string}>{return call("/api/servers/"+encodeURIComponent(id)+"/probe/token",{method:"POST",body:"{}"});},
   async profile(body:{username:string;display_name:string;avatar:string;current_password:string;new_password:string}):Promise<Profile>{return call("/api/auth/profile",{method:"PUT",body:JSON.stringify(body)});},
   async sessions():Promise<ChatSession[]>{return (await call("/api/sessions"))||[];},
-  async messages(id:string):Promise<{role:string;content:string;attachments?:Attachment[]}[]>{return (await call("/api/sessions/"+encodeURIComponent(id)+"/messages"))||[];},
+  async messages(id:string):Promise<{id:string;role:string;content:string;attachments?:Attachment[];choice?:Choice}[]>{return (await call("/api/sessions/"+encodeURIComponent(id)+"/messages"))||[];},
   async updateStatus():Promise<UpdateStatus>{return call("/api/update");},
   async checkUpdate():Promise<UpdateStatus>{return call("/api/update/check",{method:"POST",body:"{}"});},
   async setUpdateCheck(enabled:boolean):Promise<UpdateStatus>{return call("/api/settings/update",{method:"PUT",body:JSON.stringify({enabled})});},
@@ -244,9 +252,7 @@ export const api = {
   },
 };
 
-type ChatReply = {
-  session_id: string;
-  text: string;
+type ChatReply = ChatResult & {
   steps?: {
     kind?: string;
     bot?: string;
@@ -269,7 +275,7 @@ function toStep(raw: NonNullable<ChatReply["steps"]>[number]): ChatStep {
 /** One server-side rule hit from the command classifier. */
 export type RiskFinding = { category: string; label: string; detail: string };
 /** A command the agent wants to run that needs the operator's decision (smart or manual approval mode). */
-export type ApprovalPrompt = { id: string; bot: string; server_id: string; server_name: string; command: string; warning?: string; mode?: string; risk?: 'low'|'medium'|'high'; reasons?: string[]; findings?: RiskFinding[]; model_risk?: string; model_reason?: string; untrusted?: string; timeout_seconds: number };
+export type ApprovalPrompt = { id: string; bot: string; bot_name?: string; server_id: string; server_name: string; command: string; warning?: string; mode?: string; risk?: 'low'|'medium'|'high'; reasons?: string[]; findings?: RiskFinding[]; model_risk?: string; model_reason?: string; untrusted?: string; timeout_seconds: number };
 /** Approval modes. "" = not chosen yet (behaves like smart). */
 export type ApprovalMode = ''|'off'|'smart'|'manual'|'model'|'plan';
 let approvalHandler: ((req: ApprovalPrompt) => Promise<boolean>) | null = null;
@@ -277,11 +283,12 @@ let approvalHandler: ((req: ApprovalPrompt) => Promise<boolean>) | null = null;
 export function setApprovalHandler(fn: ((req: ApprovalPrompt) => Promise<boolean>) | null) { approvalHandler = fn; }
 
 function liveChat(body: ChatRequest, onStep: (step: ChatStep) => void) {
-  return new Promise<{ session_id: string; text: string }>((resolve, reject) => {
+  return new Promise<ChatResult>((resolve, reject) => {
     let opened = false;
     let settled = false;
     let session = "";
     let text = "";
+    let extra: Omit<ChatResult, "session_id" | "text"> = {};
     const proto = location.protocol === "https:" ? "wss" : "ws";
     const ws = new WebSocket(proto + "://" + location.host + "/ws/chat");
     let timer = 0;
@@ -294,7 +301,7 @@ function liveChat(body: ChatRequest, onStep: (step: ChatStep) => void) {
       if (!opened) {
         api.chat(body).then((res) => {
           for (const step of res.steps || []) onStep(toStep(step));
-          resolve({ session_id: res.session_id, text: res.text });
+          resolve({ session_id: res.session_id, text: res.text, message_id: res.message_id, choice: res.choice || undefined, answered: res.answered });
         }, reject);
         return;
       }
@@ -305,7 +312,7 @@ function liveChat(body: ChatRequest, onStep: (step: ChatStep) => void) {
       settled = true;
       window.clearTimeout(timer);
       ws.close();
-      resolve({ session_id: session, text });
+      resolve({ session_id: session, text, ...extra });
     };
     arm(180000);
     ws.onopen = () => {
@@ -336,7 +343,7 @@ function liveChat(body: ChatRequest, onStep: (step: ChatStep) => void) {
         ok: msg.ok,
         output: msg.output,
       }));
-      if (msg.type === "assistant") text = msg.content || "";
+      if (msg.type === "assistant") { text = msg.content || ""; extra = { message_id: msg.message_id || undefined, choice: msg.choice || undefined, answered: !!msg.answered }; }
       if (msg.type === "error") fail(new Error(msg.message || "发送失败"));
       if (msg.type === "done") ok();
     };

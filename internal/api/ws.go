@@ -101,7 +101,7 @@ func (s *Server) wsChat(c *gin.Context) {
 		pending[r.ID] = ch
 		pmu.Unlock()
 		defer func() { pmu.Lock(); delete(pending, r.ID); pmu.Unlock() }()
-		if err := out.send(gin.H{"type": "approval_request", "id": r.ID, "bot": r.BotID, "server_id": r.ServerID, "server_name": r.ServerName, "command": r.Command, "warning": r.Warning, "mode": r.Mode, "risk": r.Risk, "reasons": r.Reasons, "findings": r.Findings, "model_risk": r.ModelRisk, "model_reason": r.ModelReason, "untrusted": r.Untrusted, "timeout_seconds": int(manualApprovalTimeout.Seconds())}); err != nil {
+		if err := out.send(gin.H{"type": "approval_request", "id": r.ID, "bot": r.BotID, "bot_name": r.BotName, "server_id": r.ServerID, "server_name": r.ServerName, "command": r.Command, "warning": r.Warning, "mode": r.Mode, "risk": r.Risk, "reasons": r.Reasons, "findings": r.Findings, "model_risk": r.ModelRisk, "model_reason": r.ModelReason, "untrusted": r.Untrusted, "timeout_seconds": int(manualApprovalTimeout.Seconds())}); err != nil {
 			return false, "连接已断开，未执行"
 		}
 		timer := time.NewTimer(manualApprovalTimeout)
@@ -130,7 +130,7 @@ func (s *Server) wsChat(c *gin.Context) {
 			_ = out.send(gin.H{"type": "error", "message": err.Error()})
 			continue
 		}
-		_ = out.send(gin.H{"type": "assistant", "content": result.Text})
+		_ = out.send(gin.H{"type": "assistant", "content": result.Text, "message_id": result.MessageID, "choice": result.Choice, "answered": result.Answered})
 		_ = out.send(gin.H{"type": "done"})
 	}
 }

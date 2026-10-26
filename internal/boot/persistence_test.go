@@ -9,6 +9,7 @@ import (
 	"onefrog/internal/store"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestDemoSeedPreservesEditedBots(t *testing.T) {
@@ -32,5 +33,22 @@ func TestDemoSeedPreservesEditedBots(t *testing.T) {
 	b, e := again.GetBot(ctx, "main")
 	if e != nil || b.Name != "my assistant" {
 		t.Fatal("seed overwrote custom bot", b, e)
+	}
+}
+
+func TestDemoHistoryIsNotInTheFuture(t *testing.T) {
+	ctx := context.Background()
+	mem := store.NewMemory()
+	if e := boot.Prepare(ctx, mem, config.Config{AdminUser: "admin", AdminPassword: "test-password", Seed: true}); e != nil {
+		t.Fatal(e)
+	}
+	rows, e := mem.ListHistory(ctx, 10)
+	if e != nil || len(rows) == 0 {
+		t.Fatal("no demo history", e)
+	}
+	for _, r := range rows {
+		if r.CreatedAt.After(time.Now()) {
+			t.Fatalf("demo history %q is in the future: %s", r.Command, r.CreatedAt)
+		}
 	}
 }

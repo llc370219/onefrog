@@ -34,6 +34,9 @@ type trace struct {
 	sink  func(Step)
 	steps []Step
 	tools []ToolEvent
+	// choice is set when the leader asked the user with ask_user; the turn
+	// then ends and the card is stored with the reply.
+	choice *model.Choice
 }
 
 func (a *Agent) lead(ctx context.Context, leader model.Bot, serverID, sessionID string, sink func(Step)) (Result, error) {
@@ -51,16 +54,30 @@ func (a *Agent) lead(ctx context.Context, leader model.Bot, serverID, sessionID 
 		return Result{}, err
 	}
 	text = strings.TrimSpace(a.redact(ctx, text))
+	if tr.choice != nil {
+		tr.choice.Prompt = a.redact(ctx, tr.choice.Prompt)
+		for i := range tr.choice.Options {
+			tr.choice.Options[i].Label = a.redact(ctx, tr.choice.Options[i].Label)
+		}
+		msg, err := a.Store.AddMessage(ctx, model.Message{SessionID: sessionID, Role: "assistant", Content: text, Choice: tr.choice})
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{SessionID: sessionID, Text: text, Tools: tr.tools, Steps: tr.steps, Choice: tr.choice, MessageID: msg.ID}, nil
+	}
 	if text == "" {
 		text = "没有得到模型回复。"
 	}
-	_, _ = a.Store.AddMessage(ctx, model.Message{SessionID: sessionID, Role: "assistant", Content: text})
-	return Result{SessionID: sessionID, Text: text, Tools: tr.tools, Steps: tr.steps}, nil
+	msg, _ := a.Store.AddMessage(ctx, model.Message{SessionID: sessionID, Role: "assistant", Content: text})
+	return Result{SessionID: sessionID, Text: text, Tools: tr.tools, Steps: tr.steps, MessageID: msg.ID}, nil
 }
 
 func (a *Agent) converse(ctx context.Context, speaker model.Bot, creds credentials, serverID string, messages []map[string]any, canDelegate bool, tr *trace) (string, error) {
 	limit := a.execution().MaxSteps
 	spec := toolDefs(canDelegate, a.managesAssets(speaker))
+	if !a.managesAssets(speaker) && !isWorker(ctx) {
+		spec = append(spec, askUserTool)
+	}
 	for i := 0; i < limit; i++ {
 		purpose := "conversation"
 		if actor, ok := ctx.Value(usageKey{}).(usageActor); ok {
@@ -78,6 +95,9 @@ func (a *Agent) converse(ctx context.Context, speaker model.Bot, creds credentia
 		for _, call := range msg.ToolCalls {
 			out := a.execCall(ctx, speaker, creds, serverID, call, canDelegate, tr)
 			messages = append(messages, map[string]any{"role": "tool", "tool_call_id": call.ID, "content": out})
+		}
+		if tr != nil && tr.choice != nil && !isWorker(ctx) {
+			return msg.Content, nil
 		}
 	}
 	return "这轮步骤太多，先停在这里。", nil
@@ -102,6 +122,19 @@ func (a *Agent) execCall(ctx context.Context, speaker model.Bot, creds credentia
 			return "这个 Bot 不能再派给别人。"
 		}
 		return a.handOff(ctx, speaker, creds, serverID, call, tr)
+	case "ask_user":
+		if isWorker(ctx) || tr == nil {
+			return "协作 Bot 不能直接向用户提问。把需要用户决定的问题写进结论，由主控来问。"
+		}
+		if tr.choice != nil {
+			return "这一轮已经问过用户了，等用户回答。"
+		}
+		c, err := ParseChoice(call.Function.Arguments)
+		if err != nil {
+			return err.Error()
+		}
+		tr.choice = &c
+		return "已把选项卡片展示给用户。本轮到此结束，等用户选择后再继续。"
 	case "manage_module_record":
 		if !a.managesAssets(speaker) {
 			return "只有模块构建 Bot 可以修改资产与订阅"
@@ -221,6 +254,11 @@ func (a *Agent) sessionMessages(ctx context.Context, sessionID, system string) (
 		if err != nil {
 			return nil, err
 		}
+		if item.Choice != nil {
+			if s, ok := content.(string); ok {
+				content = s + choiceContext(item.Choice)
+			}
+		}
 		out = append(out, map[string]any{"role": item.Role, "content": content})
 	}
 	return out, nil
@@ -233,6 +271,7 @@ func (a *Agent) leaderPrompt(ctx context.Context, bot model.Bot, serverID string
 	var b strings.Builder
 	b.WriteString(promptLeader)
 	a.writeOperations(&b, ctx)
+	b.WriteString(promptAskUser)
 	writeExtra(&b, bot)
 	a.writePeers(&b, ctx, bot.ID)
 	a.writeSecrets(&b, ctx)

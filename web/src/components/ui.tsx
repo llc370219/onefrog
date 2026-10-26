@@ -11,7 +11,7 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
   return <label className="field"><span>{label}</span>{children}{hint && <small>{hint}</small>}</label>;
 }
 export function Status({ status }: { status: string }) {
-  const [label, tone] = ({ online: ['在线', 'ok'], offline: ['离线', 'danger'], host_key_mismatch: ['指纹不一致', 'danger'], server_deleted: ['已删除服务器', 'muted'], host_key_confirmed: ['已确认指纹', 'ok'], host_key_reset: ['已重置指纹', 'muted'], unknown: ['未检测', 'muted'], success: ['已完成', 'ok'], failed: ['执行失败', 'danger'], blocked: ['已拦截', 'warn'], approval_allowed: ['审批通过', 'ok'], approval_denied: ['审批拒绝', 'warn'], rolled_back: ['已记录撤回', 'muted'] } as Record<string, string[]>)[status] || ['未知', 'muted'];
+  const [label, tone] = ({ online: ['在线', 'ok'], offline: ['离线', 'danger'], host_key_mismatch: ['指纹不一致', 'danger'], server_deleted: ['已删除服务器', 'muted'], host_key_confirmed: ['已确认指纹', 'ok'], host_key_reset: ['已重置指纹', 'muted'], unknown: ['未检测', 'muted'], success: ['已完成', 'ok'], failed: ['执行失败', 'danger'], blocked: ['已拦截', 'warn'], approval_allowed: ['审批通过', 'ok'], approval_denied: ['审批拒绝', 'warn'], rolled_back: ['已记录撤回', 'muted'], risk_acknowledged: ['已确认风险', 'muted'] } as Record<string, string[]>)[status] || ['未知', 'muted'];
   return <span className={`status ${tone}`}><i />{label}</span>;
 }
 export function Empty({ title, body, action }: { title: string; body?: string; action?: ReactNode }) {
@@ -23,7 +23,7 @@ export function Notice({ error, children }: { error?: boolean; children: ReactNo
 export function PageHeading({ eyebrow, title, note, actions }: { eyebrow?: string; title: string; note: string; actions?: ReactNode }) {
   return <header className="page-heading"><div>{eyebrow && <div className="eyebrow">{eyebrow}</div>}<h1>{title}</h1><p>{note}</p></div>{actions && <div className="heading-actions">{actions}</div>}</header>;
 }
-export function Modal({ title, note, children, onClose, onSubmit, busy, error, submitDisabled, confirm = '保存', wide }: { title: string; note: string; children?: ReactNode; onClose: () => void; onSubmit?: () => void; busy?: boolean; error?: string; submitDisabled?: boolean; confirm?: string; wide?: boolean }) {
+export function Modal({ title, note, children, onClose, onSubmit, busy, error, submitDisabled, confirm = '保存', cancel = '取消', wide }: { title: string; note: string; children?: ReactNode; onClose: () => void; onSubmit?: () => void; busy?: boolean; error?: string; submitDisabled?: boolean; confirm?: string; cancel?: string; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const titleID = useId();
   const close = useRef(onClose); close.current = onClose;
@@ -43,5 +43,5 @@ export function Modal({ title, note, children, onClose, onSubmit, busy, error, s
     document.addEventListener('keydown', key);
     return () => { document.removeEventListener('keydown', key); previous?.focus(); };
   }, []);
-  return <div className="modal-backdrop" onClick={() => !busy && onClose()}><div ref={ref} className={'modal' + (wide ? ' wide' : '')} role="dialog" aria-modal="true" aria-labelledby={titleID} onClick={e => e.stopPropagation()}><form onSubmit={e => { e.preventDefault(); if (!busy) (onSubmit || onClose)(); }}><header><div><h2 id={titleID}>{title}</h2><p>{note}</p></div><IconButton label="关闭弹窗" onClick={onClose} disabled={busy}><X size={18}/></IconButton></header><div className="modal-body">{children}{error && <Notice error>{error}</Notice>}</div><footer><Button onClick={onClose} disabled={busy}>取消</Button><Button type="submit" variant="primary" busy={busy} disabled={submitDisabled}>{confirm}</Button></footer></form></div></div>;
+  return <div className="modal-backdrop" onClick={() => !busy && onClose()}><div ref={ref} className={'modal' + (wide ? ' wide' : '')} role="dialog" aria-modal="true" aria-labelledby={titleID} onClick={e => e.stopPropagation()}><form onSubmit={e => { e.preventDefault(); if (!busy) (onSubmit || onClose)(); }}><header><div><h2 id={titleID}>{title}</h2><p>{note}</p></div><IconButton label="关闭弹窗" onClick={onClose} disabled={busy}><X size={18}/></IconButton></header><div className="modal-body">{children}{error && <Notice error>{error}</Notice>}</div><footer><Button onClick={onClose} disabled={busy}>{cancel}</Button><Button type="submit" variant="primary" busy={busy} disabled={submitDisabled}>{confirm}</Button></footer></form></div></div>;
 }

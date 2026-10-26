@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowRight, Blocks, Bot, Check, ChevronRight, History, KeyRound, LayoutDashboard, LoaderCircle, LockKeyhole, LogOut, Menu, MessageSquare, RefreshCw, Server, Settings, Terminal, X } from 'lucide-react';
-import { api, type BotRow, type ChatLine, type ChatStep, type Hist, type Host, type Mod, type SecretRow, type SettingsState, type ServerTestResult, type ModelRoute, type Profile, type ChatSession, type Attachment, type UpdateStatus } from './api';
+import { api, type BotRow, type ChatLine, type ChatStep, type Hist, type Host, type Mod, type SecretRow, type SettingsState, type ServerTestResult, type ModelRoute, type Profile, type ChatSession, type Attachment, type UpdateStatus, type Choice } from './api';
+import { choiceAnswerText } from './components/ChoiceCard';
 import { Button, Field, IconButton, Modal, Notice } from './components/ui';
 import { RoutePicker } from "./components/ModelPicker";
 import SettingsPanel from "./pages/Settings";
@@ -24,6 +25,9 @@ type Dialog = 'account' | 'settings' | 'modules' | 'server' | 'secret' | 'agent'
 const navigation = [{id:'panel',label:'面板',icon:LayoutDashboard}, {id:'chat',label:'AI 助理',icon:MessageSquare}, {id:'modules',label:'模块',icon:Blocks}, {id:'servers',label:'服务器',icon:Server}, {id:'agents',label:'Bot',icon:Bot}, {id:'secrets',label:'密钥保险箱',icon:KeyRound}, {id:'history',label:'变更记录',icon:History}] as const;
 const emptyForm = {name:'',host:'',role:'',value:'',port:'22',username:'root',auth_type:'password',description:'',system_prompt:''};
 const message = (err: unknown) => err instanceof Error ? err.message : '操作失败，请重试';
+
+/** The chat opens on the lead bot (主控) by default, never on the asset-only module builder. */
+const defaultBot=(list:BotRow[])=>(list.find(x=>x.id==='main'&&x.enabled)||list.find(x=>x.enabled&&x.id!=='module-builder')||list.find(x=>x.enabled))?.id||'';
 
 export default function App() {
   const [authed,setAuthed] = useState<boolean | null>(null);
@@ -49,7 +53,7 @@ export default function App() {
     setLoading(true);
     try {
       const [h,m,r,s,b,c,settings] = await Promise.all([api.servers(),api.modules(),api.history(),api.secrets(),api.bots(),api.sessions(),api.settings()]);setChatConfig(settings);
-      setHosts(h);setMods(m);setHistory(r);setSecrets(s);setBots(b);setSessions(c);setActiveBot(cur=>b.some(x=>x.id===cur)?cur:b.find(x=>x.enabled)?.id||'');
+      setHosts(h);setMods(m);setHistory(r);setSecrets(s);setBots(b);setSessions(c);setActiveBot(cur=>b.some(x=>x.id===cur)?cur:defaultBot(b));
       setSelected(cur => cur === '' || h.some(item => item.id === cur) ? cur : '');
       setUpdated(new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})); setPageError('');
     } catch(err) {setPageError(message(err));} finally {setLoading(false);}
@@ -91,8 +95,8 @@ export default function App() {
     } catch(err) {setFormError(message(err));} finally {setBusy(false);}
   }
   function openChat(text?: string) {go('chat');setMobileNav(false);if(text) setDraft(text);}
-  function newChat(botID=bots.find(b=>b.id===activeBot&&b.enabled)?.id||bots.find(b=>b.enabled)?.id||''){if(sendingRef.current||uploadRef.current)return;chatLoad.current++;setActiveBot(botID);setSession('');setLines([]);setDraft('');setSelected('');setAttachments([]);setControls({model:{provider_id:'',model:''},excluded:[],approval:'default'});setMobileNav(false);}
-  async function restoreChat(item:ChatSession){if(sendingRef.current||uploadRef.current)return;const request=++chatLoad.current;setLoading(true);try{const rows=await api.messages(item.id);if(request!==chatLoad.current)return;setActiveBot(item.bot_id);setSelected('');setSession(item.id);setLines(rows.filter(r=>r.role==='user'||r.role==='assistant').map(r=>({who:r.role==='user'?'user':'bot',text:r.content,attachments:r.attachments})));setDraft('');setAttachments([]);setControls({model:item.options?.model_route||{provider_id:'',model:''},excluded:(item.options?.excluded_bot_ids||[]).filter(id=>bots.some(b=>b.id===id)),approval:item.options?.approval_mode==='rules'?'off':item.options?.approval_mode||'default',review:item.options?.approval_route});setMobileNav(false);}catch(e){setPageError(message(e));}finally{if(request===chatLoad.current)setLoading(false);}}
+  function newChat(botID=bots.find(b=>b.id===activeBot&&b.enabled)?.id||defaultBot(bots)){if(sendingRef.current||uploadRef.current)return;chatLoad.current++;setActiveBot(botID);setSession('');setLines([]);setDraft('');setSelected('');setAttachments([]);setControls({model:{provider_id:'',model:''},excluded:[],approval:'default'});setMobileNav(false);}
+  async function restoreChat(item:ChatSession){if(sendingRef.current||uploadRef.current)return;const request=++chatLoad.current;setLoading(true);try{const rows=await api.messages(item.id);if(request!==chatLoad.current)return;setActiveBot(item.bot_id);setSelected('');setSession(item.id);setLines(rows.filter(r=>r.role==='user'||r.role==='assistant').map(r=>({who:r.role==='user'?'user':'bot',text:r.content,attachments:r.attachments,id:r.id,choice:r.choice||undefined})));setDraft('');setAttachments([]);setControls({model:item.options?.model_route||{provider_id:'',model:''},excluded:(item.options?.excluded_bot_ids||[]).filter(id=>bots.some(b=>b.id===id)),approval:item.options?.approval_mode==='rules'?'off':item.options?.approval_mode||'default',review:item.options?.approval_route});setMobileNav(false);}catch(e){setPageError(message(e));}finally{if(request===chatLoad.current)setLoading(false);}}
   function chooseBot(id:string){if(sendingRef.current||uploadRef.current)return;chatLoad.current++;setActiveBot(id);setSession('');setLines([]);setControls(cur=>({...cur,model:{provider_id:'',model:''},excluded:cur.excluded.filter(x=>x!==id)}));}
   async function uploadFiles(files:File[]){if(!files.length||uploadRef.current||sendingRef.current)return;if(files.some(f=>f.size>5*1024*1024)){setPageError('每个文件不能超过 5 MB');return;}if(files.length+attachments.length>4){setPageError('每轮最多上传 4 个附件');return;}if(files.reduce((n,f)=>n+f.size,0)+attachments.reduce((n,f)=>n+f.size,0)>12*1024*1024){setPageError('附件合计不能超过 12 MB');return;}uploadRef.current=true;setUploading(true);setPageError('');try{for(const file of files){const ref=await api.upload(file);setAttachments(cur=>[...cur,ref]);}}catch(e){setPageError(message(e));}finally{uploadRef.current=false;setUploading(false);}}
   async function send() {
@@ -102,9 +106,25 @@ export default function App() {
     const text = draft.trim();const sentAttachments=[...attachments];setDraft('');setAttachments([]);
     setLines(cur => [...cur,{who:'user',text,attachments:sentAttachments},{who:'bot',text:'',pending:true,steps:[]}]);
     const steps: ChatStep[] = [];
-    const paint = (reply: string,pending: boolean) => setLines(cur => [...cur.slice(0,-1),{who:'bot',text:reply,pending,steps:[...steps]}]);
-    try {const reply = await api.chatLive({content:text,server_id:selected,session_id:session,bot_id:activeBot,model_route:controls.model,excluded_bot_ids:controls.excluded,approval_mode:controls.approval,approval_route:controls.approval==='model'?controls.review:undefined,attachment_ids:sentAttachments.map(f=>f.id)},step => {steps.push(step);paint('',true);});setSession(reply.session_id);paint(reply.text,false);await load();}
+    const paint = (reply: string,pending: boolean,extra?:Partial<ChatLine>) => setLines(cur => [...cur.slice(0,-1),{who:'bot',text:reply,pending,steps:[...steps],...extra}]);
+    try {const reply = await api.chatLive({content:text,server_id:selected,session_id:session,bot_id:activeBot,model_route:controls.model,excluded_bot_ids:controls.excluded,approval_mode:controls.approval,approval_route:controls.approval==='model'?controls.review:undefined,attachment_ids:sentAttachments.map(f=>f.id)},step => {steps.push(step);paint('',true);});setSession(reply.session_id);paint(reply.text,false,{id:reply.message_id,choice:reply.choice});await load();}
     catch(err) {paint(message(err),false);setAttachments(sentAttachments);} finally {sendingRef.current=false;setSending(false);api.sessions().then(setSessions).catch(()=>{});}
+  }
+  /** Answers an ask_user card once; the answer becomes the next user message and resumes the turn. */
+  async function answerChoice(card: ChatLine, values: string[], custom: string) {
+    if(sendingRef.current || uploadRef.current || loading || !card.id || !card.choice || card.choice.answer || !session) return;chatLoad.current++;
+    sendingRef.current = true;setSending(true);
+    const sid = session, cardID = card.id, choice = card.choice;
+    const mark = (answer?: Choice['answer']) => setLines(cur => cur.map(l => l.id === cardID && l.choice ? {...l,choice:{...l.choice,answer}} : l));
+    mark({values,custom:custom.trim()||undefined});
+    setLines(cur => [...cur,{who:'user',text:choiceAnswerText(choice,values,custom)},{who:'bot',text:'',pending:true,steps:[]}]);
+    const steps: ChatStep[] = [];
+    const paint = (reply: string,pending: boolean,extra?:Partial<ChatLine>) => setLines(cur => [...cur.slice(0,-1),{who:'bot',text:reply,pending,steps:[...steps],...extra}]);
+    const resync = async () => {try {const rows = await api.messages(sid);const row = rows.find(r => r.id === cardID);mark(row?.choice?.answer);} catch {mark(undefined);}};
+    try {const reply = await api.chatLive({content:'',server_id:selected,session_id:sid,bot_id:activeBot,model_route:controls.model,excluded_bot_ids:controls.excluded,approval_mode:controls.approval,approval_route:controls.approval==='model'?controls.review:undefined,choice_answer:{message_id:cardID,values,custom:custom.trim()||undefined}},step => {steps.push(step);paint('',true);});
+      if(reply.answered){setLines(cur => cur.slice(0,-2));await resync();return;}
+      paint(reply.text,false,{id:reply.message_id,choice:reply.choice});await load();}
+    catch(err) {paint(message(err),false);await resync();} finally {sendingRef.current=false;setSending(false);api.sessions().then(setSessions).catch(()=>{});}
   }
   async function login() {
     setBusy(true);setFormError('');
@@ -125,7 +145,7 @@ export default function App() {
     {pageError && <div className="global-error"><Notice error>{pageError}</Notice><IconButton label="关闭错误提示" onClick={() => setPageError('')}><X size={15}/></IconButton></div>}
     <div className={`view-container ${view === 'chat' ? 'chat-view' : ''}`}>
     {view === 'panel' && <Dashboard hosts={hosts} mods={mods} history={history} bots={bots} selected={selected} onSelect={setSelected} onChat={openChat} onModules={() => open('modules')} onSettings={openSettings} onServers={() => go('servers')} onAssets={() => {setActiveModule('assets'); go('modules');}}/>}
-    {view === 'chat' && <Chat onAddServer={()=>open('server')} controls={controls} onControls={setControls} settings={chatConfig} onBot={chooseBot} attachments={attachments} onFiles={uploadFiles} onRemoveFile={id=>setAttachments(cur=>cur.filter(f=>f.id!==id))} uploading={uploading} activeBot={bots.find(b=>b.id===activeBot)} hosts={hosts} bots={bots} selected={selected} onSelect={setSelected} draft={draft} onDraft={setDraft} lines={lines} onSend={send} sending={sending||loading} onNew={()=>newChat()} onNotice={setNotice}/>}
+    {view === 'chat' && <Chat onAddServer={()=>open('server')} controls={controls} onControls={setControls} settings={chatConfig} onBot={chooseBot} attachments={attachments} onFiles={uploadFiles} onRemoveFile={id=>setAttachments(cur=>cur.filter(f=>f.id!==id))} uploading={uploading} activeBot={bots.find(b=>b.id===activeBot)} hosts={hosts} bots={bots} selected={selected} onSelect={setSelected} draft={draft} onDraft={setDraft} lines={lines} onSend={send} sending={sending||loading} onNew={()=>newChat()} onNotice={setNotice} onAnswer={answerChoice}/>}
     {view === 'servers' && <Servers addedServer={addedServer} hosts={hosts} selected={selected} onSelect={setSelected} onAdd={() => open('server')} onTest={testServer} testing={testing} onChat={() => openChat()} onChanged={load}/>}
     {view === 'agents' && <Bots bots={bots} onAdd={()=>open('agent')} onChanged={load} onChat={id=>{newChat(id);openChat();}}/>}
     {view === 'secrets' && <Secrets secrets={secrets} onAdd={() => open('secret')}/>}

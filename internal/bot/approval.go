@@ -145,6 +145,9 @@ func (a *Agent) askOperator(ctx context.Context, botID string, rec store.ServerR
 		g.Reasons = []string{"规则和 AI 都判断为低风险；逐条确认模式下每条命令都要确认"}
 	}
 	req := ApprovalRequest{ID: id.New(), BotID: botID, ServerID: rec.ID, ServerName: rec.Name, Command: command, Mode: mode, Risk: g.Level, Reasons: g.Reasons, Findings: g.Findings, ModelRisk: g.ModelRisk, ModelReason: g.ModelReason, Untrusted: g.Untrusted}
+	if b, err := a.Store.GetBot(ctx, botID); err == nil {
+		req.BotName = b.Name
+	}
 	if len(g.Findings) > 0 {
 		req.Warning = g.Findings[0].Label + "：" + g.Findings[0].Detail
 	}

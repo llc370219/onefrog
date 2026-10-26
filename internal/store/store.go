@@ -77,4 +77,8 @@ type Store interface {
 	SaveChatOptions(ctx context.Context, id string, options json.RawMessage) error
 	ListChatSessions(ctx context.Context) ([]model.SessionSummary, error)
 	ListMessages(ctx context.Context, sessionID string) ([]model.Message, error)
+	// AnswerChoice records the one answer to a choice card. It returns
+	// ErrNotFound when the message has no card, and the stored message with
+	// ErrConflict when the card was already answered.
+	AnswerChoice(ctx context.Context, sessionID, messageID string, answer model.ChoiceAnswer) (model.Message, error)
 }

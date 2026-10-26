@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ShieldAlert, ShieldCheck, Terminal, TriangleAlert } from 'lucide-react';
 import { api, setApprovalHandler, setApprovalTimeoutHandler, type ApprovalPrompt, type ServerTestResult } from '../api';
-import { Button, Modal } from './ui';
+import { Modal } from './ui';
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : '操作失败');
 export const hostKeyCommand = 'for f in /etc/ssh/ssh_host_*_key.pub; do ssh-keygen -lf "$f"; done';
@@ -49,13 +49,12 @@ export function ApprovalDialog() {
   const { req } = head;
   const reasons = req.reasons?.length ? req.reasons : req.warning ? [req.warning] : [];
   const high = req.risk === 'high';
-  return <Modal title={req.mode === 'manual' ? '批准执行这条命令？' : '这条命令需要你确认'} note={`${req.bot || 'Bot'} 想在服务器「${req.server_name || req.server_id}」上执行，未批准不会执行。`} onClose={() => decide(false)} onSubmit={() => decide(true)} confirm="批准执行">
+  return <Modal title={req.mode === 'manual' ? '批准执行这条命令？' : '这条命令需要你确认'} note={`${req.bot_name || req.bot || 'Bot'} 想在服务器「${req.server_name || req.server_id}」上执行，未批准不会执行。`} onClose={() => decide(false)} onSubmit={() => decide(true)} confirm="批准执行" cancel="拒绝">
     <div className="rollback-detail"><Terminal size={18} /><code>{req.command}</code></div>
     {req.model_reason && <p className="approval-purpose"><strong>AI 说明的目的：</strong>{req.model_reason}</p>}
     {req.risk && <p className={'approval-level ' + req.risk}>风险等级：{riskText[req.risk] || req.risk}</p>}
     {reasons.length > 0 && <div className="oauth-risk">{high ? <ShieldAlert size={21} /> : <TriangleAlert size={21} />}<div><strong>为什么需要确认</strong><ul className="approval-risks">{reasons.map(r => <li key={r}>{r}</li>)}</ul></div></div>}
     {req.untrusted && <p className="model-hidden-note">这条命令可能是 AI 从服务器输出或附件里读到的，不是你直接要求的。如果你没有让它这么做，请拒绝。</p>}
     <p className="model-hidden-note">请看清命令的影响范围和能否回滚再批准。{Math.round((req.timeout_seconds || 300) / 60)} 分钟内未处理将自动拒绝。</p>
-    <Button variant="ghost" onClick={() => decide(false)}>拒绝</Button>
   </Modal>;
 }

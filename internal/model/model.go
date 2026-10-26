@@ -91,7 +91,30 @@ type Attachment struct {
 	Size int    `json:"size"`
 }
 
+// ChoiceOption is one button on a choice card.
+type ChoiceOption struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
+// ChoiceAnswer is the operator's single, final answer to a choice card.
+type ChoiceAnswer struct {
+	Values     []string  `json:"values,omitempty"`
+	Custom     string    `json:"custom,omitempty"`
+	AnsweredAt time.Time `json:"answered_at"`
+}
+
+// Choice is a question the bot asked with ask_user, shown as a card of options.
+type Choice struct {
+	Prompt      string         `json:"prompt"`
+	Options     []ChoiceOption `json:"options"`
+	MultiSelect bool           `json:"multi_select,omitempty"`
+	AllowCustom bool           `json:"allow_custom,omitempty"`
+	Answer      *ChoiceAnswer  `json:"answer,omitempty"`
+}
+
 type Message struct {
+	Choice      *Choice      `json:"choice,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
 	ID          string       `json:"id"`
 	SessionID   string       `json:"session_id"`

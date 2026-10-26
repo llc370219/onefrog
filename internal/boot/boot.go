@@ -142,9 +142,9 @@ func seed(ctx context.Context, db store.Store) error {
 		return err
 	}
 	rows := []store.HistoryRec{
-		{History: model.History{BotID: mainBot.ID, ServerID: "web-01", Action: "systemctl reload nginx", Command: "systemctl reload nginx", Status: "success", CanRollback: true, CreatedAt: clock(now, 14, 21)}},
-		{History: model.History{BotID: checkBot.ID, ServerID: "db-01", Action: "df -h /", Command: "df -h /", Status: "success", CreatedAt: clock(now, 14, 2)}},
-		{History: model.History{BotID: mainBot.ID, ServerID: "web-01", Action: "rm -rf /var/log/nginx/*", Command: "rm -rf /var/log/nginx/*", Status: "blocked", CreatedAt: clock(now, 13, 48)}},
+		{History: model.History{BotID: mainBot.ID, ServerID: "web-01", Action: "systemctl reload nginx", Command: "systemctl reload nginx", Status: "success", CanRollback: true, CreatedAt: now.Add(-25 * time.Minute)}},
+		{History: model.History{BotID: checkBot.ID, ServerID: "db-01", Action: "df -h /", Command: "df -h /", Status: "success", CreatedAt: now.Add(-44 * time.Minute)}},
+		{History: model.History{BotID: mainBot.ID, ServerID: "web-01", Action: "rm -rf /var/log/nginx/*", Command: "rm -rf /var/log/nginx/*", Status: "blocked", CreatedAt: now.Add(-58 * time.Minute)}},
 	}
 	for _, row := range rows {
 		if _, err := db.AddHistory(ctx, row); err != nil {
@@ -155,7 +155,3 @@ func seed(ctx context.Context, db store.Store) error {
 }
 
 func pin(n int) *int { return &n }
-
-func clock(now time.Time, hour, min int) time.Time {
-	return time.Date(now.Year(), now.Month(), now.Day(), hour, min, 0, 0, time.UTC)
-}

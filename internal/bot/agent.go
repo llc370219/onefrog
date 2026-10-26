@@ -18,6 +18,7 @@ import (
 	"onefrog/internal/model"
 	"onefrog/internal/preferences"
 	"onefrog/internal/providerlogin"
+	"onefrog/internal/remote"
 	"onefrog/internal/secret"
 	"onefrog/internal/store"
 	"onefrog/internal/usage"
@@ -352,6 +353,16 @@ func (a *Agent) runTool(ctx context.Context, botID, fallbackServer string, call 
 	defer cancel()
 	// The stored host key is pinned; a mismatch fails and is never overwritten.
 	out, _, err := a.SSH.Run(runCtx, rec.Host, rec.Port, rec.Username, rec.AuthType, plain, rec.HostKey, expanded)
+	if errors.Is(err, remote.ErrHostKeyMismatch) {
+		// Nothing was sent to the host. Flag it so the server list shows it.
+		if rec.Status != "host_key_mismatch" {
+			rec.Status = "host_key_mismatch"
+			_, _ = a.Store.UpdateServer(ctx, rec)
+		}
+		ev.Output = "已停止：" + rec.Name + " 的 SSH 主机指纹与已保存的不一致，命令没有执行。请告诉用户到服务器页面点“测试连接”核对新指纹（重装系统或部分服务商重启后会更换主机密钥），确认无误后再重置指纹。"
+		_, _ = a.Store.AddHistory(ctx, store.HistoryRec{History: model.History{BotID: botID, ServerID: rec.ID, Action: ev.Command, Command: ev.Command, Status: "blocked"}})
+		return ev
+	}
 	out = a.redact(ctx, out)
 	status := "success"
 	if err != nil {
@@ -361,6 +372,10 @@ func (a *Agent) runTool(ctx context.Context, botID, fallbackServer string, call 
 		}
 	} else {
 		ev.OK = true
+		if rec.Status != "online" {
+			rec.Status = "online"
+			_, _ = a.Store.UpdateServer(ctx, rec)
+		}
 	}
 	ev.Output = clip(out, 2000)
 	ev.ran = true

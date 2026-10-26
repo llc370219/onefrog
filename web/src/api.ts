@@ -84,6 +84,8 @@ export type UpdateStatus = {
   repo: string;
   checked_at?: string;
   error?: string;
+  install_dir?: string;
+  project?: string;
 };
 
 async function call(path: string, init?: RequestInit) {
@@ -164,6 +166,9 @@ export const api = {
   },
   async createServer(body: { name: string; host: string; role?: string; port?: number; username?: string; auth_type?: string; secret?: string }) {
     return call("/api/servers", { method: "POST", body: JSON.stringify({ port: 22, username: "root", auth_type: "password", ...body }) });
+  },
+  async deleteServer(id: string, uninstallProbe: boolean): Promise<{ deleted: boolean; probe: { status: 'removed' | 'absent' | 'skipped' | 'failed' | string; detail: string } }> {
+    return call("/api/servers/" + encodeURIComponent(id) + (uninstallProbe ? "?uninstall_probe=1" : ""), { method: "DELETE" });
   },
   async testServer(id: string, fingerprint?: string): Promise<ServerTestResult> {
     return call("/api/servers/" + encodeURIComponent(id) + "/test", { method: "POST", body: JSON.stringify(fingerprint ? { fingerprint } : {}) });

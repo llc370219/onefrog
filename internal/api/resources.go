@@ -9,6 +9,7 @@ import (
 	"onefrog/internal/bot"
 	"onefrog/internal/model"
 	"onefrog/internal/module"
+	"onefrog/internal/onboarding"
 	"onefrog/internal/preferences"
 	"onefrog/internal/remote"
 	"onefrog/internal/store"
@@ -135,11 +136,31 @@ func (s *Server) serverRec(req serverReq, old store.ServerRec) (store.ServerRec,
 	return store.ServerRec{Server: model.Server{Name: strings.TrimSpace(req.Name), Host: strings.TrimSpace(req.Host), Port: req.Port, Username: req.Username, AuthType: auth, Status: status, Role: req.Role, DiskPercent: req.Disk, Load: req.Load}, EncryptedKey: enc, HostKey: old.HostKey}, nil
 }
 
+// deleteServer removes a server from the panel. With ?uninstall_probe=1 it
+// first tries (best effort, pinned host key) to remove the probe from the node;
+// the server is deleted either way and the probe result is reported.
 func (s *Server) deleteServer(c *gin.Context) {
-	if mapStore(c, s.Store.DeleteServer(c.Request.Context(), c.Param("id"))) {
+	ctx := c.Request.Context()
+	rec, err := s.Store.GetServer(ctx, c.Param("id"))
+	if mapStore(c, err) {
 		return
 	}
-	c.Status(http.StatusNoContent)
+	probe := onboarding.ProbeRemoval{Status: "skipped", Detail: "未选择卸载探针"}
+	if v := c.Query("uninstall_probe"); v == "1" || v == "true" {
+		if s.Onboarding != nil {
+			probe = s.Onboarding.RemoveProbe(ctx, rec)
+		} else {
+			probe = onboarding.ProbeRemoval{Status: "skipped", Detail: "SSH 执行器不可用"}
+		}
+	}
+	if mapStore(c, s.Store.DeleteServer(ctx, rec.ID)) {
+		return
+	}
+	if s.Monitor != nil {
+		_ = s.Monitor.Remove(rec.ID)
+	}
+	s.recordHostKey(c, rec, "server_deleted", "已删除服务器 "+rec.Name+"；探针："+probe.Detail)
+	c.JSON(http.StatusOK, gin.H{"deleted": true, "probe": probe})
 }
 
 func effectivePort(p int) int {
@@ -197,7 +218,7 @@ func (s *Server) testServer(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"ok": false, "status": "host_key_unknown", "fingerprint": fp, "detail": "服务器指纹在确认期间发生了变化，请重新核对"})
 			return
 		}
-		rec.Status = "offline"
+		rec.Status = "host_key_mismatch"
 		_, _ = s.Store.UpdateServer(ctx, rec)
 		c.JSON(http.StatusOK, gin.H{"ok": false, "status": "host_key_mismatch", "fingerprint": fp, "stored_fingerprint": rec.HostKey, "detail": err.Error()})
 		return

@@ -226,3 +226,20 @@ func (m *Manager) Views(ids []string, now time.Time) []View {
 	}
 	return out
 }
+
+// Remove forgets a server's probe credential and samples, so a deleted
+// server's probe can no longer report.
+func (m *Manager) Remove(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	old, ok := m.nodes[id]
+	if !ok {
+		return nil
+	}
+	delete(m.nodes, id)
+	if err := m.persist(); err != nil {
+		m.nodes[id] = old
+		return err
+	}
+	return nil
+}

@@ -11,7 +11,7 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
   return <label className="field"><span>{label}</span>{children}{hint && <small>{hint}</small>}</label>;
 }
 export function Status({ status }: { status: string }) {
-  const [label, tone] = ({ online: ['在线', 'ok'], offline: ['离线', 'danger'], unknown: ['未检测', 'muted'], success: ['已完成', 'ok'], failed: ['执行失败', 'danger'], blocked: ['已拦截', 'warn'], approval_allowed: ['审批通过', 'ok'], approval_denied: ['审批拒绝', 'warn'], rolled_back: ['已记录撤回', 'muted'] } as Record<string, string[]>)[status] || ['未知', 'muted'];
+  const [label, tone] = ({ online: ['在线', 'ok'], offline: ['离线', 'danger'], host_key_mismatch: ['指纹不一致', 'danger'], server_deleted: ['已删除服务器', 'muted'], host_key_confirmed: ['已确认指纹', 'ok'], host_key_reset: ['已重置指纹', 'muted'], unknown: ['未检测', 'muted'], success: ['已完成', 'ok'], failed: ['执行失败', 'danger'], blocked: ['已拦截', 'warn'], approval_allowed: ['审批通过', 'ok'], approval_denied: ['审批拒绝', 'warn'], rolled_back: ['已记录撤回', 'muted'] } as Record<string, string[]>)[status] || ['未知', 'muted'];
   return <span className={`status ${tone}`}><i />{label}</span>;
 }
 export function Empty({ title, body, action }: { title: string; body?: string; action?: ReactNode }) {

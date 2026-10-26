@@ -408,7 +408,9 @@ func (m *Manager) run(key string, rec store.ServerRec, r Request) {
 		}
 		m.step(key, "ssh", "failed", msg)
 		rec.Status = "offline"
-		if !errors.Is(err, remote.ErrHostKeyMismatch) {
+		if errors.Is(err, remote.ErrHostKeyMismatch) {
+			rec.Status = "host_key_mismatch"
+		} else {
 			rec.HostKey = "" // never persist an unverified key
 		}
 		_, _ = m.db.UpdateServer(ctx, rec)
@@ -458,7 +460,7 @@ func (m *Manager) run(key string, rec store.ServerRec, r Request) {
 		m.finish(key, "partial", "探针已安装，模块初始化未完成")
 		return
 	}
-	missing := []string{}
+	missing, skipped, ready := []string{}, []string{}, []string{}
 	for _, mod := range mods {
 		if !mod.Enabled {
 			continue
@@ -470,17 +472,31 @@ func (m *Manager) run(key string, rec store.ServerRec, r Request) {
 		h, ok := m.hooks[mod.ID]
 		m.mu.Unlock()
 		if !ok {
-			missing = append(missing, mod.Name+"未提供接入初始化器")
+			// Nothing to set up on the node for this module.
+			skipped = append(skipped, mod.Name)
 			continue
 		}
 		if e := h.Initialize(ctx, rec.Server, run); e != nil {
 			missing = append(missing, h.Name+"初始化失败")
+		} else {
+			ready = append(ready, h.Name)
 		}
 	}
-	if len(missing) > 0 {
+	switch {
+	case len(missing) > 0:
 		m.step(key, "modules", "failed", strings.Join(missing, "；"))
-	} else {
-		m.step(key, "modules", "done", "已关联启用模块；共享探针指标，无额外未知脚本")
+	case len(ready) == 0:
+		msg := "启用的模块无需在节点上初始化"
+		if len(skipped) > 0 {
+			msg += "（已跳过：" + strings.Join(skipped, "、") + "）"
+		}
+		m.step(key, "modules", "skipped", msg)
+	default:
+		msg := "已初始化：" + strings.Join(ready, "、")
+		if len(skipped) > 0 {
+			msg += "；无需初始化：" + strings.Join(skipped, "、")
+		}
+		m.step(key, "modules", "done", msg)
 	}
 	m.step(key, "verify", "running", "")
 	deadline := time.NewTimer(m.VerifyTimeout)
@@ -492,7 +508,7 @@ func (m *Manager) run(key string, rec store.ServerRec, r Request) {
 		if len(views) > 0 && views[0].Status == "online" {
 			m.step(key, "verify", "done", "已收到真实指标上报")
 			if len(missing) > 0 {
-				m.finish(key, "partial", "探针在线，部分模块需补充初始化器")
+				m.finish(key, "partial", "探针在线，部分模块初始化失败")
 			} else {
 				m.finish(key, "completed", "服务器、探针与模块已就绪")
 			}
@@ -511,7 +527,99 @@ func (m *Manager) run(key string, rec store.ServerRec, r Request) {
 		}
 	}
 }
+
+// Probe locations on the node. They are deliberately outside /opt/onefrog so
+// uninstalling a panel that runs on the same host does not break the probe.
+const (
+	ProbeDir    = "/opt/onefrog-probe"
+	ProbeConfig = "/etc/onefrog-probe/probe.json"
+	ProbeUnit   = "/etc/systemd/system/onefrog-probe.service"
+	// Paths used by v0.1.1 and earlier; removed when the probe is re-deployed.
+	legacyProbeDir    = "/opt/onefrog/probe"
+	legacyProbeConfig = "/etc/onefrog/probe.json"
+)
+
+func probeUnit() string {
+	return "[Unit]\nDescription=OneFrog read-only probe\nAfter=network-online.target\nWants=network-online.target\nConditionPathExists=" + ProbeDir + "/agent.py\n[Service]\nExecStart=/usr/bin/python3 " + ProbeDir + "/agent.py " + ProbeConfig + "\nRestart=on-failure\nRestartSec=5\nNoNewPrivileges=true\nProtectSystem=strict\nProtectHome=true\nPrivateTmp=true\n[Install]\nWantedBy=multi-user.target\n"
+}
+
 func installScript(config []byte) string {
-	unit := "[Unit]\nDescription=OneFrog read-only probe\nAfter=network-online.target\nWants=network-online.target\n[Service]\nExecStart=/usr/bin/python3 /opt/onefrog/probe/agent.py /etc/onefrog/probe.json\nRestart=on-failure\nRestartSec=5\nNoNewPrivileges=true\nProtectSystem=strict\nProtectHome=true\nPrivateTmp=true\n[Install]\nWantedBy=multi-user.target\n"
-	return fmt.Sprintf("if [ \"$(id -u)\" -eq 0 ]; then OF_RUN=''; else OF_RUN='sudo -n'; fi\n$OF_RUN python3 - <<'ONEFROG_SETUP'\nimport os,sys,base64,subprocess\nif sys.platform!='linux' or sys.version_info<(3,8) or not os.path.isdir('/run/systemd/system'):\n print('ONEFROG_UNSUPPORTED');sys.exit(2)\nos.makedirs('/opt/onefrog/probe',exist_ok=True)\nos.makedirs('/etc/onefrog',mode=0o700,exist_ok=True)\nfiles=[('/opt/onefrog/probe/agent.py','%s',0o755),('/etc/onefrog/probe.json','%s',0o600),('/etc/systemd/system/onefrog-probe.service','%s',0o644)]\nfor path,data,mode in files:\n temp=path+'.onefrog-tmp'\n fd=os.open(temp,os.O_WRONLY|os.O_CREAT|os.O_TRUNC,mode)\n with os.fdopen(fd,'wb') as f:f.write(base64.b64decode(data))\n os.chmod(temp,mode);os.replace(temp,path)\nsubprocess.run(['systemctl','daemon-reload'],check=True)\nsubprocess.run(['systemctl','enable','--now','onefrog-probe.service'],check=True)\nsubprocess.run(['systemctl','restart','onefrog-probe.service'],check=True)\nsubprocess.run(['systemctl','is-active','--quiet','onefrog-probe.service'],check=True)\nprint('ONEFROG_PROBE_INSTALLED')\nONEFROG_SETUP", base64.StdEncoding.EncodeToString([]byte(monitor.AgentScript)), base64.StdEncoding.EncodeToString(config), base64.StdEncoding.EncodeToString([]byte(unit)))
+	py := `import os,sys,base64,subprocess,shutil
+if sys.platform!='linux' or sys.version_info<(3,8) or not os.path.isdir('/run/systemd/system'):
+ print('ONEFROG_UNSUPPORTED');sys.exit(2)
+os.makedirs('` + ProbeDir + `',exist_ok=True)
+os.makedirs(os.path.dirname('` + ProbeConfig + `'),mode=0o700,exist_ok=True)
+files=[('` + ProbeDir + `/agent.py','%s',0o755),('` + ProbeConfig + `','%s',0o600),('` + ProbeUnit + `','%s',0o644)]
+for path,data,mode in files:
+ temp=path+'.onefrog-tmp'
+ fd=os.open(temp,os.O_WRONLY|os.O_CREAT|os.O_TRUNC,mode)
+ with os.fdopen(fd,'wb') as f:f.write(base64.b64decode(data))
+ os.chmod(temp,mode);os.replace(temp,path)
+shutil.rmtree('` + legacyProbeDir + `',ignore_errors=True)
+for p in ['` + legacyProbeConfig + `']:
+ try:os.remove(p)
+ except FileNotFoundError:pass
+for d in ['/etc/onefrog','/opt/onefrog']:
+ try:os.rmdir(d)
+ except OSError:pass
+subprocess.run(['systemctl','daemon-reload'],check=True)
+subprocess.run(['systemctl','enable','--now','onefrog-probe.service'],check=True)
+subprocess.run(['systemctl','restart','onefrog-probe.service'],check=True)
+subprocess.run(['systemctl','is-active','--quiet','onefrog-probe.service'],check=True)
+print('ONEFROG_PROBE_INSTALLED')`
+	return fmt.Sprintf("if [ \"$(id -u)\" -eq 0 ]; then OF_RUN=''; else OF_RUN='sudo -n'; fi\n$OF_RUN python3 - <<'ONEFROG_SETUP'\n"+py+"\nONEFROG_SETUP", base64.StdEncoding.EncodeToString([]byte(monitor.AgentScript)), base64.StdEncoding.EncodeToString(config), base64.StdEncoding.EncodeToString([]byte(probeUnit())))
+}
+
+// UninstallScript stops and removes the probe service and files, including
+// the v0.1.1 locations. It prints ONEFROG_PROBE_REMOVED, or
+// ONEFROG_PROBE_ABSENT when nothing was installed.
+func UninstallScript() string {
+	sh := `found=0
+for f in ` + ProbeUnit + ` ` + ProbeDir + ` ` + filepath.Dir(ProbeConfig) + ` ` + legacyProbeDir + ` ` + legacyProbeConfig + `; do [ -e "$f" ] && found=1; done
+if [ "$found" = 0 ]; then echo ONEFROG_PROBE_ABSENT; exit 0; fi
+systemctl disable --now onefrog-probe.service >/dev/null 2>&1 || true
+rm -f ` + ProbeUnit + `
+systemctl daemon-reload >/dev/null 2>&1 || true
+systemctl reset-failed onefrog-probe.service >/dev/null 2>&1 || true
+rm -rf ` + ProbeDir + ` ` + filepath.Dir(ProbeConfig) + ` ` + legacyProbeDir + `
+rm -f ` + legacyProbeConfig + `
+rmdir /etc/onefrog /opt/onefrog 2>/dev/null || true
+echo ONEFROG_PROBE_REMOVED`
+	return "if [ \"$(id -u)\" -eq 0 ]; then OF_RUN=''; else OF_RUN='sudo -n'; fi\n$OF_RUN sh -s <<'ONEFROG_REMOVE'\n" + sh + "\nONEFROG_REMOVE"
+}
+
+// ProbeRemoval reports what happened to the probe when a server is deleted.
+type ProbeRemoval struct {
+	Status string `json:"status"` // removed | absent | skipped | failed
+	Detail string `json:"detail"`
+}
+
+// RemoveProbe uninstalls the probe from a server over SSH, pinned to the
+// confirmed host key. It never trusts a new key.
+func (m *Manager) RemoveProbe(ctx context.Context, rec store.ServerRec) ProbeRemoval {
+	if m.exec == nil {
+		return ProbeRemoval{"skipped", "SSH 执行器不可用"}
+	}
+	if rec.HostKey == "" || rec.EncryptedKey == "" {
+		return ProbeRemoval{"skipped", "没有已确认的主机指纹或登录凭据，未连接服务器；如装过探针请按文档手动卸载"}
+	}
+	plain, err := m.box.Decrypt(rec.EncryptedKey)
+	if err != nil {
+		return ProbeRemoval{"failed", "凭据无法解密"}
+	}
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	out, _, err := m.exec.Run(ctx, rec.Host, rec.Port, rec.Username, rec.AuthType, plain, rec.HostKey, UninstallScript())
+	switch {
+	case strings.Contains(out, "ONEFROG_PROBE_REMOVED"):
+		return ProbeRemoval{"removed", "已停止并删除节点上的探针服务和文件"}
+	case strings.Contains(out, "ONEFROG_PROBE_ABSENT"):
+		return ProbeRemoval{"absent", "节点上没有安装探针"}
+	case errors.Is(err, remote.ErrHostKeyMismatch):
+		return ProbeRemoval{"failed", "主机指纹不一致，未连接；请按文档在节点上手动卸载探针"}
+	case err != nil && strings.Contains(out, "sudo"):
+		return ProbeRemoval{"failed", "需要 root 或免密 sudo；请按文档在节点上手动卸载探针"}
+	default:
+		return ProbeRemoval{"failed", "无法连接或卸载失败；请按文档在节点上手动卸载探针"}
+	}
 }

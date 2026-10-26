@@ -267,6 +267,13 @@ func TestHostKeyConfirmFlow(t *testing.T) {
 	if res["status"] != "host_key_mismatch" || res["stored_fingerprint"] != "SHA256:test" {
 		t.Fatalf("mismatch must fail and keep stored key: %v", res)
 	}
+	var listed []model.Server
+	getJSON(t, client, srv.URL+"/api/servers", &listed)
+	for _, item := range listed {
+		if item.ID == "web-01" && item.Status != "host_key_mismatch" {
+			t.Fatalf("server list must show the mismatch, got %q", item.Status)
+		}
+	}
 	postJSON(t, client, srv.URL+"/api/servers/web-01/test", map[string]string{}, http.StatusOK, &res)
 	if res["status"] != "host_key_mismatch" {
 		t.Fatal("stored key was overwritten")
@@ -284,5 +291,36 @@ func TestHostKeyConfirmFlow(t *testing.T) {
 	}
 	if !seen["host_key_confirmed"] || !seen["host_key_reset"] {
 		t.Fatalf("host key actions missing from history: %v", seen)
+	}
+}
+
+func TestDeleteServerUninstallsProbe(t *testing.T) {
+	client, srv, ssh := testClient(t)
+	defer srv.Close()
+	login(t, client, srv, "admin", "admin", http.StatusOK)
+	var res map[string]any
+	// Unconfirmed host key: the probe is not touched, the server is still deleted.
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/servers/db-01?uninstall_probe=1", nil)
+	req.Header.Set("Origin", srv.URL)
+	r, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = json.NewDecoder(r.Body).Decode(&res)
+	r.Body.Close()
+	probe, _ := res["probe"].(map[string]any)
+	if r.StatusCode != http.StatusOK || res["deleted"] != true || probe["status"] != "skipped" {
+		t.Fatalf("delete: %d %v", r.StatusCode, res)
+	}
+	calls := ssh.calls
+	if calls != 0 {
+		t.Fatal("must not connect without a confirmed host key")
+	}
+	var servers []model.Server
+	getJSON(t, client, srv.URL+"/api/servers", &servers)
+	for _, s := range servers {
+		if s.ID == "db-01" {
+			t.Fatal("server not deleted")
+		}
 	}
 }

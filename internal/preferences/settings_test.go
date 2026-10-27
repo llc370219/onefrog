@@ -161,3 +161,41 @@ func TestApprovalModeChoiceAndLegacy(t *testing.T) {
 		}
 	}
 }
+
+// The first channel is saved from the API 渠道 tab before 模型路由 is touched.
+func TestFirstChannelSavesWithoutRoute(t *testing.T) {
+	box, _ := secret.New(bytes.Repeat([]byte{5}, 32))
+	m, err := New(filepath.Join(t.TempDir(), "settings.enc"), box)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch := ProviderInput{Provider: Provider{ID: "channel-1", Name: "新 API 渠道", AuthKind: "api_key", BaseURL: "https://relay.example/v1", Enabled: true, AuthRequired: true}, APIKey: "sk-test"}
+	// Key entered, models not pulled yet: nothing to route, still saves.
+	in := Input{Providers: []ProviderInput{ch}, Execution: Defaults().Execution}
+	saved, err := m.Save(in)
+	if err != nil || saved.Default != (Route{}) {
+		t.Fatalf("save without models: %v %+v", err, saved.Default)
+	}
+	// Models pulled, first one hidden: main bot gets the first visible model.
+	ch.APIKey = ""
+	ch.Models = []string{"gpt-hidden", "gpt-5.6-sol", "gpt-6-sol"}
+	ch.HiddenModels = []string{"gpt-hidden"}
+	in.Providers = []ProviderInput{ch}
+	saved, err = m.Save(in)
+	if err != nil || saved.Default != (Route{"channel-1", "gpt-5.6-sol"}) {
+		t.Fatalf("auto route: %v %+v", err, saved.Default)
+	}
+	// An explicit choice is kept, and an explicit bad choice is still rejected.
+	in.Default = Route{"channel-1", "gpt-6-sol"}
+	if saved, err = m.Save(in); err != nil || saved.Default.Model != "gpt-6-sol" {
+		t.Fatalf("explicit route: %v %+v", err, saved.Default)
+	}
+	in.Default = Route{"missing", "gpt-6-sol"}
+	if _, err = m.Save(in); err == nil {
+		t.Fatal("missing provider accepted")
+	}
+	in.Default = Route{"channel-1", ""}
+	if _, err = m.Save(in); err == nil {
+		t.Fatal("half-filled route accepted")
+	}
+}

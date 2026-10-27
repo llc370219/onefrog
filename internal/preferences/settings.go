@@ -248,8 +248,15 @@ func (m *Manager) Save(in Input) (State, error) {
 	if next.State.BotRoutes == nil {
 		next.State.BotRoutes = map[string]Route{}
 	}
-	for label, route := range map[string]Route{"主控": in.Default, "协作": in.Worker, "审批": in.Approval.Route} {
-		required := label == "主控" && len(in.Providers) > 0 || label == "审批" && in.Approval.Mode == "model"
+	// A first channel is usually saved before anyone visits 模型路由. Route the
+	// main bot to the first usable model instead of rejecting the save; with no
+	// model pulled yet there is nothing to route, so the channel saves as is.
+	fallback, usable := firstUsableRoute(next.State)
+	if next.State.Default.ProviderID == "" && strings.TrimSpace(next.State.Default.Model) == "" && usable {
+		next.State.Default = fallback
+	}
+	for label, route := range map[string]Route{"主控": next.State.Default, "协作": in.Worker, "审批": in.Approval.Route} {
+		required := label == "主控" && usable || label == "审批" && in.Approval.Mode == "model"
 		if err := validateRoute(next.State, route, required); err != nil {
 			return State{}, fmt.Errorf("%s：%w", label, err)
 		}
@@ -299,6 +306,25 @@ func (m *Manager) SetApprovalMode(mode string) (State, error) {
 	}
 	m.data = next
 	return clone(next.State), nil
+}
+
+// firstUsableRoute returns the first enabled provider's first visible model.
+func firstUsableRoute(s State) (Route, bool) {
+	for _, p := range s.Providers {
+		if !p.Enabled {
+			continue
+		}
+		hidden := map[string]bool{}
+		for _, h := range p.HiddenModels {
+			hidden[h] = true
+		}
+		for _, name := range p.Models {
+			if !hidden[name] {
+				return Route{ProviderID: p.ID, Model: name}, true
+			}
+		}
+	}
+	return Route{}, false
 }
 
 func validateRoute(s State, r Route, required bool) error {

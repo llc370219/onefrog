@@ -1,5 +1,9 @@
-// Package update checks GitHub for a newer OneFrog release. It only reads the
-// public "latest release" endpoint and never downloads or installs anything.
+// Package update checks GitHub for a newer OneFrog release and can ask the
+// host to upgrade. The check only reads the public "latest release" endpoint.
+// Apply does not download an image and does not talk to Docker: it writes the
+// cached release tag into a directory the installer mounted. A root helper on
+// the host reads that tag and runs docker compose. The container never sees
+// the Docker socket.
 package update
 
 import (
@@ -11,6 +15,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -26,12 +31,25 @@ const (
 	ManualCooldown = 30 * time.Second
 	requestTimeout = 10 * time.Second
 	maxNotes       = 8000
+	// DefaultUpgradeDir is where Apply writes the trigger when OF_UPGRADE_DIR
+	// is unset. It is only usable when the installer bind-mounted it.
+	DefaultUpgradeDir = "/run/onefrog-upgrade"
+	maxReleaseTag     = 40
 )
 
 var repoPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+var releaseTagPattern = regexp.MustCompile("^v[0-9]{1,8}(\\.[0-9]{1,8}){2}$")
 
 // ErrTooSoon is returned by CheckNow when the previous attempt was too recent.
 var ErrTooSoon = errors.New("刚刚检查过，请稍后再试")
+
+// ErrNoUpdate is returned by Apply when no newer official release is cached.
+var ErrNoUpdate = errors.New("当前没有可安装的新版本")
+
+// ErrUpgradeUnavailable is returned by Apply when this install cannot be
+// upgraded from the panel yet. Running install.sh once creates the trigger
+// directory and the host helper.
+var ErrUpgradeUnavailable = errors.New("这次安装还不能在面板里升级。请先在服务器上重新运行一次安装命令，之后就可以点按钮升级。")
 
 // ValidRepo reports whether repo looks like "owner/name".
 func ValidRepo(repo string) bool {
@@ -61,6 +79,9 @@ type Status struct {
 	// installer in docker-compose.yml) so the panel can show exact upgrade commands.
 	InstallDir string `json:"install_dir,omitempty"`
 	Project    string `json:"project,omitempty"`
+	// CanApply is true when the upgrade directory is writable, so the panel
+	// can ask the host helper to upgrade. It does not mean Docker is reachable.
+	CanApply bool `json:"can_apply"`
 }
 
 var (
@@ -79,6 +100,71 @@ func deployment() (dir, project string) {
 		project = ""
 	}
 	return dir, project
+}
+
+// upgradeDir is the host-mounted directory Apply writes into. An empty result
+// means the configured path is not safe to use.
+func upgradeDir() string {
+	dir := strings.TrimSpace(os.Getenv("OF_UPGRADE_DIR"))
+	if dir == "" {
+		dir = DefaultUpgradeDir
+	}
+	if !filepath.IsAbs(dir) || strings.Contains(dir, "..") || strings.ContainsAny(dir, "\n\r") || strings.IndexByte(dir, 0) >= 0 {
+		return ""
+	}
+	return filepath.Clean(dir)
+}
+
+// safeReleaseTag is the only text Apply will put in the trigger file.
+// Prerelease and build suffixes are rejected; the host script checks the same shape.
+func safeReleaseTag(tag string) bool {
+	return len(tag) <= maxReleaseTag && releaseTagPattern.MatchString(tag)
+}
+
+// upgradeDirWritable reports whether dir can be written and the probe file removed.
+func upgradeDirWritable(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	f, err := os.CreateTemp(dir, ".probe-*")
+	if err != nil {
+		return false
+	}
+	name := f.Name()
+	closeErr := f.Close()
+	removeErr := os.Remove(name)
+	return closeErr == nil && removeErr == nil
+}
+
+// writeUpgradeTrigger atomically publishes tag for the host helper.
+func writeUpgradeTrigger(dir, tag string) error {
+	f, err := os.CreateTemp(dir, ".upgrade-*")
+	if err != nil {
+		return err
+	}
+	name := f.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.Remove(name)
+		}
+	}()
+	if _, err := f.Write([]byte(tag + "\n")); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(name, filepath.Join(dir, "upgrade")); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 type release struct {
@@ -142,6 +228,7 @@ func (c *Checker) disabledBy() string {
 
 // Status returns the cached result without any network access.
 func (c *Checker) Status() Status {
+	canApply := upgradeDirWritable(upgradeDir())
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	s := Status{Current: c.Current, Repo: c.repo(), Error: c.lastErr}
@@ -165,10 +252,30 @@ func (c *Checker) Status() Status {
 		}
 		s.Available = s.Enabled && Newer(c.latest.Tag, c.Current)
 	}
+	s.CanApply = canApply
 	if !s.Enabled {
 		s.Error = ""
 	}
 	return s
+}
+
+// Apply asks the host to upgrade to the cached newer release. The version
+// comes only from that cache, never from the caller. It writes the tag and
+// returns; the host helper pulls the image and recreates the container.
+func (c *Checker) Apply() (string, error) {
+	s := c.Status()
+	if !s.Available || !safeReleaseTag(s.Latest) {
+		return "", ErrNoUpdate
+	}
+	dir := upgradeDir()
+	if !s.CanApply || dir == "" {
+		return "", ErrUpgradeUnavailable
+	}
+	if err := writeUpgradeTrigger(dir, s.Latest); err != nil {
+		log.Printf("update apply: %v", err)
+		return "", fmt.Errorf("升级请求没有写出去：%w", err)
+	}
+	return s.Latest, nil
 }
 
 // CheckNow forces a check unless the last attempt was within ManualCooldown.

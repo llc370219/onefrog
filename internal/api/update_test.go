@@ -92,3 +92,61 @@ func TestUpdateStatusAndToggle(t *testing.T) {
 		}
 	}
 }
+
+func TestUpdateApplyUsesCachedReleaseOnly(t *testing.T) {
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"tag_name":"v0.2.0","html_url":"https://github.com/llc370219/onefrog/releases/tag/v0.2.0","body":"notes"}`)
+	}))
+	defer gh.Close()
+	mem := store.NewMemory()
+	box, _ := secret.New(bytes.Repeat([]byte{7}, 32))
+	if err := boot.Prepare(context.Background(), mem, config.Config{AdminUser: "admin", AdminPassword: "admin", Seed: true}); err != nil {
+		t.Fatal(err)
+	}
+	settings, _ := preferences.New("", box)
+	dir := t.TempDir()
+	t.Setenv("OF_UPGRADE_DIR", dir)
+	checker := &update.Checker{Current: "v0.1.1", API: gh.URL, SettingsDisabled: func() bool { return settings.Snapshot().UpdateCheckDisabled }}
+	app := &Server{Store: mem, Box: box, Settings: settings, Updates: checker, WebDir: t.TempDir(), Agent: &bot.Agent{Store: mem, Box: box, SSH: &fakeSSH{}}}
+	srv := httptest.NewServer(app.Handler())
+	defer srv.Close()
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+
+	res := postRaw(t, client, srv.URL+"/api/update/apply", map[string]any{"version": "v9.9.9"})
+	res.Body.Close()
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("apply must require login: %d", res.StatusCode)
+	}
+	login(t, client, srv, "admin", "admin", 200)
+
+	var denied struct {
+		Error string `json:"error"`
+	}
+	postJSON(t, client, srv.URL+"/api/update/apply", map[string]any{"version": "v9.9.9"}, http.StatusConflict, &denied)
+	if denied.Error == "" || strings.Contains(denied.Error, "v9.9.9") {
+		t.Fatalf("unexpected deny %q", denied.Error)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "upgrade")); !os.IsNotExist(err) {
+		t.Fatal("wrote a trigger before a release was cached", err)
+	}
+
+	var status update.Status
+	postJSON(t, client, srv.URL+"/api/update/check", map[string]any{}, 200, &status)
+	if !status.Available || !status.CanApply || status.Latest != "v0.2.0" {
+		t.Fatalf("status %+v", status)
+	}
+	var applied struct {
+		OK      bool   `json:"ok"`
+		Version string `json:"version"`
+		Message string `json:"message"`
+	}
+	postJSON(t, client, srv.URL+"/api/update/apply", map[string]any{"version": "v9.9.9"}, http.StatusAccepted, &applied)
+	if !applied.OK || applied.Version != "v0.2.0" || !strings.Contains(applied.Message, "正在升级") {
+		t.Fatalf("applied %+v", applied)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "upgrade"))
+	if err != nil || string(body) != "v0.2.0\n" {
+		t.Fatalf("trigger %q err %v", body, err)
+	}
+}

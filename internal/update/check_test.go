@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -173,5 +175,93 @@ func TestRunChecksAndStops(t *testing.T) {
 	<-done
 	if hits.Load() != 0 {
 		t.Fatalf("cancelled before first check, got %d requests", hits.Load())
+	}
+}
+
+func cacheRelease(c *Checker, tag string) {
+	c.mu.Lock()
+	c.latest = &release{Tag: tag, URL: "https://github.com/llc370219/onefrog/releases/tag/" + tag}
+	c.mu.Unlock()
+}
+
+func TestApplyWritesCachedTag(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("OF_UPGRADE_DIR", dir)
+	c := &Checker{Current: "v0.1.7"}
+	cacheRelease(c, "v0.1.8")
+	if s := c.Status(); !s.Available || !s.CanApply || s.Latest != "v0.1.8" {
+		t.Fatalf("status %+v", s)
+	}
+	got, err := c.Apply()
+	if err != nil || got != "v0.1.8" {
+		t.Fatalf("apply %q %v", got, err)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "upgrade"))
+	if err != nil || string(body) != "v0.1.8\n" {
+		t.Fatalf("trigger %q err %v", body, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "upgrade" {
+		t.Fatalf("dir %+v err %v", entries, err)
+	}
+}
+
+func TestApplyRefusesMissingDir(t *testing.T) {
+	t.Setenv("OF_UPGRADE_DIR", filepath.Join(t.TempDir(), "missing"))
+	c := &Checker{Current: "v0.1.7"}
+	cacheRelease(c, "v0.1.8")
+	if s := c.Status(); s.CanApply {
+		t.Fatal("missing dir reported can_apply")
+	}
+	if _, err := c.Apply(); !errors.Is(err, ErrUpgradeUnavailable) {
+		t.Fatal(err)
+	}
+}
+
+func TestApplyRefusesWhenNotNewer(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("OF_UPGRADE_DIR", dir)
+	c := &Checker{Current: "v0.1.8"}
+	cacheRelease(c, "v0.1.8")
+	if _, err := c.Apply(); !errors.Is(err, ErrNoUpdate) {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "upgrade")); !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+}
+
+func TestApplyRefusesUnsafeOrDisabled(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("OF_UPGRADE_DIR", dir)
+	unsafe := &Checker{Current: "v0.1.0"}
+	cacheRelease(unsafe, "v0.1.8-rc.1")
+	if s := unsafe.Status(); !s.Available {
+		t.Fatalf("expected a higher core version to count as available: %+v", s)
+	}
+	if _, err := unsafe.Apply(); !errors.Is(err, ErrNoUpdate) {
+		t.Fatal(err)
+	}
+	disabled := &Checker{Current: "v0.1.7", EnvDisabled: true}
+	cacheRelease(disabled, "v0.1.8")
+	if _, err := disabled.Apply(); !errors.Is(err, ErrNoUpdate) {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "upgrade")); !os.IsNotExist(err) {
+		t.Fatal("wrote a trigger", err)
+	}
+}
+
+func TestApplyRejectsUnsafeUpgradeDir(t *testing.T) {
+	for _, dir := range []string{"relative/dir", "/tmp/onefrog/../escape"} {
+		t.Setenv("OF_UPGRADE_DIR", dir)
+		c := &Checker{Current: "v0.1.7"}
+		cacheRelease(c, "v0.1.8")
+		if s := c.Status(); s.CanApply {
+			t.Fatalf("%s reported can_apply", dir)
+		}
+		if _, err := c.Apply(); !errors.Is(err, ErrUpgradeUnavailable) {
+			t.Fatalf("%s: %v", dir, err)
+		}
 	}
 }

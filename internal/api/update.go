@@ -33,6 +33,23 @@ func (s *Server) updateCheck(c *gin.Context) {
 	c.JSON(http.StatusOK, status)
 }
 
+func (s *Server) updateApply(c *gin.Context) {
+	// The version is the cached release only. A body, if any, is ignored.
+	tag, err := s.Updates.Apply()
+	switch {
+	case err == nil:
+		c.JSON(http.StatusAccepted, gin.H{
+			"ok":      true,
+			"version": tag,
+			"message": "正在升级，容器会重启，请稍等后刷新。账号和数据保留。",
+		})
+	case errors.Is(err, update.ErrNoUpdate), errors.Is(err, update.ErrUpgradeUnavailable):
+		fail(c, http.StatusConflict, err.Error())
+	default:
+		fail(c, http.StatusInternalServerError, "升级请求没有写出去，请改用安装命令")
+	}
+}
+
 func (s *Server) putUpdateSetting(c *gin.Context) {
 	var req struct {
 		Enabled *bool `json:"enabled"`

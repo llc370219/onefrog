@@ -139,6 +139,7 @@ func (s *Server) Handler() http.Handler {
 	authed.PUT("/settings/approval", s.putApproval)
 	authed.GET("/update", s.updateStatus)
 	authed.POST("/update/check", s.updateCheck)
+	authed.POST("/update/apply", s.updateApply)
 	authed.PUT("/settings/update", s.putUpdateSetting)
 	authed.POST("/settings/providers/models", s.providerModels)
 	authed.POST("/settings/providers/test", s.testProvider)

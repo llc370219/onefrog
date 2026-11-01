@@ -35,7 +35,7 @@ curl -fsSL https://raw.githubusercontent.com/llc370219/onefrog/main/install.sh \
   | sudo OF_BIND_ADDR=127.0.0.1 OF_PUBLIC_URL=https://ops.example.com bash
 ```
 
-**升级**：重新运行上面的安装命令即可原地升级（改过 `OF_INSTALL_DIR` 的要带上同一个值），账号、设置、对话、密钥和登录状态都会保留。面板会定期检查 GitHub 上的新版本并在顶部提示（只读、不自动安装，可在「设置 → 关于与更新」关闭，或安装时设 `OF_UPDATE_CHECK=0`）。
+**升级**：重新运行上面的安装命令即可原地升级（改过 `OF_INSTALL_DIR` 的要带上同一个值），账号、设置、对话、密钥和登录状态都会保留。面板会定期检查 GitHub 上的新版本并在顶部提示（可在「设置 → 关于与更新」关闭，或安装时设 `OF_UPDATE_CHECK=0`）。v0.1.8 起，用安装命令升级过一次之后，可以在这里点「立即升级」：面板只写入版本号，由宿主机拉取 `docker-compose.yml` 里已经固定的镜像，不把 Docker 接口挂进容器。
 
 安装选项、反向代理示例、升级、备份、卸载和排错见 **[docs/安装.md](docs/安装.md)**。
 
@@ -105,7 +105,7 @@ The installer installs Docker if missing (after a notice; `OF_INSTALL_DOCKER=0` 
 - `master.key` lives next to the encrypted data. Use `OF_MASTER_KEY` to keep them apart.
 - Without `OF_PUBLIC_URL`, the installer queries `https://ifconfig.me` to print a link.
 
-To upgrade, re-run the install command (with the same `OF_INSTALL_DIR` if you changed it); the account, settings, chats, secrets and login sessions are kept, all encrypted on disk. To run a second instance on the same host, use a different `OF_INSTALL_DIR` and `OF_PUBLISH_PORT`; each install dir gets its own compose project and data volume. The SSH host key is shown with its type (ED25519 preferred); check it with `for f in /etc/ssh/ssh_host_*_key.pub; do ssh-keygen -lf "$f"; done`. Probes installed by the panel live in `/opt/onefrog-probe`; deleting a server in the panel can uninstall its probe, see docs/安装.md for manual removal. The panel checks GitHub for a newer release at startup and every 12 hours and shows a banner with the upgrade command (read-only, never installs anything). Turn it off under Settings → 关于与更新 or with `OF_UPDATE_CHECK=0`.
+To upgrade, re-run the install command (with the same `OF_INSTALL_DIR` if you changed it); the account, settings, chats, secrets and login sessions are kept, all encrypted on disk. To run a second instance on the same host, use a different `OF_INSTALL_DIR` and `OF_PUBLISH_PORT`; each install dir gets its own compose project and data volume. The SSH host key is shown with its type (ED25519 preferred); check it with `for f in /etc/ssh/ssh_host_*_key.pub; do ssh-keygen -lf "$f"; done`. Probes installed by the panel live in `/opt/onefrog-probe`; deleting a server in the panel can uninstall its probe, see docs/安装.md for manual removal. The panel checks GitHub for a newer release at startup and every 12 hours. From v0.1.8, after one installer run on a systemd host, Settings can upgrade in place: the container writes a version tag and a root helper pulls the image already pinned in docker-compose.yml. The Docker socket is not mounted. Turn the check off under Settings → 关于与更新 or with `OF_UPDATE_CHECK=0`.
 
 See [DISCLAIMER.md](DISCLAIMER.md). OneFrog is not affiliated with OpenAI, Google or any other provider.
 

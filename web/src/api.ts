@@ -94,6 +94,7 @@ export type UpdateStatus = {
   error?: string;
   install_dir?: string;
   project?: string;
+  can_apply?: boolean;
 };
 
 async function call(path: string, init?: RequestInit) {
@@ -159,6 +160,7 @@ export const api = {
   async messages(id:string):Promise<{id:string;role:string;content:string;attachments?:Attachment[];choice?:Choice}[]>{return (await call("/api/sessions/"+encodeURIComponent(id)+"/messages"))||[];},
   async updateStatus():Promise<UpdateStatus>{return call("/api/update");},
   async checkUpdate():Promise<UpdateStatus>{return call("/api/update/check",{method:"POST",body:"{}"});},
+  async applyUpdate():Promise<{ok:boolean;version:string;message:string}>{return call("/api/update/apply",{method:"POST",body:"{}"});},
   async setUpdateCheck(enabled:boolean):Promise<UpdateStatus>{return call("/api/settings/update",{method:"PUT",body:JSON.stringify({enabled})});},
   async approvalMode():Promise<{mode:ApprovalMode;effective_mode:ApprovalMode;choice_required:boolean}>{return call("/api/settings/approval");},
   async setApprovalMode(mode:ApprovalMode):Promise<{mode:ApprovalMode}>{return call("/api/settings/approval",{method:"PUT",body:JSON.stringify({mode})});},

@@ -36,6 +36,35 @@ function UpgradeHelp({ status }: { status: UpdateStatus }) {
   return <div className="update-help">{upgradeCommands(status.repo, status.install_dir, status.project).map(c => <CommandLine key={c.cmd} {...c}/>)}<p>在安装 OneFrog 的服务器上以 root 执行。{!status.install_dir && '如果安装时改过 OF_INSTALL_DIR，请换成你的安装目录。'}账号、设置、对话和数据卷都会保留；升级会重启容器，进行中的回复会中断，登录状态不受影响。</p></div>;
 }
 
+function interrupted(msg: string) {
+  return msg === 'Failed to fetch' || msg === 'Load failed' || msg.includes('NetworkError') || msg.includes('服务暂时不可用');
+}
+
+/** Asks the host helper to pull the pinned image and recreate the container. */
+function ApplyUpgrade({ startConfirm, onCancel }: { startConfirm?: boolean; onCancel?: () => void }) {
+  const [phase, setPhase] = useState<'idle' | 'confirm' | 'done'>(startConfirm ? 'confirm' : 'idle');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  async function apply() {
+    setBusy(true); setError('');
+    try {
+      const res = await api.applyUpdate();
+      setMessage(res.message);
+      setPhase('done');
+    } catch (e) {
+      const msg = errorText(e);
+      if (interrupted(msg)) {
+        setMessage('连接已中断，升级可能已经开始。请稍等一两分钟后刷新。账号和数据会保留。');
+        setPhase('done');
+      } else setError(msg);
+    } finally { setBusy(false); }
+  }
+  if (phase === 'done') return <Notice>{message}</Notice>;
+  if (phase === 'confirm') return <div className="update-apply"><p>升级会拉取新镜像并重启面板，进行中的回复会中断。账号、设置和数据会保留，登录状态不受影响。</p>{error && <Notice error>{error}</Notice>}<div><Button onClick={() => onCancel ? onCancel() : setPhase('idle')} disabled={busy}>取消</Button><Button variant="primary" busy={busy} onClick={apply}>确认升级</Button></div></div>;
+  return <Button variant="primary" onClick={() => setPhase('confirm')}><ArrowUpCircle size={14}/>立即升级</Button>;
+}
+
 /** Dismissible banner shown above every page when a newer release exists. */
 export function UpdateBanner({ status }: { status: UpdateStatus | null }) {
   const [dismissed, setDismissed] = useState(() => { try { return localStorage.getItem(DISMISS_KEY) || ''; } catch { return ''; } });
@@ -43,7 +72,7 @@ export function UpdateBanner({ status }: { status: UpdateStatus | null }) {
   if (!status?.available || !status.latest || dismissed === status.latest) return null;
   const latest = status.latest;
   function dismiss() { try { localStorage.setItem(DISMISS_KEY, latest); } catch { /* ignore */ } setDismissed(latest); }
-  return <div className="update-banner" role="status"><div className="update-banner-row"><ArrowUpCircle size={17}/><span><strong>OneFrog {latest} 已发布</strong><small>当前 {status.current}</small></span>{status.url && <a href={status.url} target="_blank" rel="noreferrer noopener">更新说明<ExternalLink size={12}/></a>}<button type="button" className="text-btn" onClick={() => setOpen(v => !v)}>{open ? '收起' : '如何升级'}</button><IconButton label="不再提示此版本" onClick={dismiss}><X size={15}/></IconButton></div>{open && <UpgradeHelp status={status}/>}</div>;
+  return <div className="update-banner" role="status"><div className="update-banner-row"><ArrowUpCircle size={17}/><span><strong>OneFrog {latest} 已发布</strong><small>当前 {status.current}</small></span>{status.url && <a href={status.url} target="_blank" rel="noreferrer noopener">更新说明<ExternalLink size={12}/></a>}{status.can_apply ? <Button variant="primary" onClick={() => setOpen(v => !v)}>{open ? '收起' : '立即升级'}</Button> : <button type="button" className="text-btn" onClick={() => setOpen(v => !v)}>{open ? '收起' : '如何升级'}</button>}<IconButton label="不再提示此版本" onClick={dismiss}><X size={15}/></IconButton></div>{open && (status.can_apply ? <ApplyUpgrade startConfirm onCancel={() => setOpen(false)}/> : <UpgradeHelp status={status}/>)}</div>;
 }
 
 const disabledText: Record<string, string> = {
@@ -71,8 +100,12 @@ export function AboutSection({ onStatus }: { onStatus?: (s: UpdateStatus) => voi
     </div>
     {error && <Notice error>{error}</Notice>}
     {status.enabled && status.error && <Notice error>{status.error}</Notice>}
-    {status.available ? <Notice><strong>有新版本 {status.latest}。</strong>按下面的命令升级：</Notice> : status.enabled && status.latest && <Notice>已是最新版本。</Notice>}
-    {status.available && <UpgradeHelp status={status}/>}
+    {!status.available && status.enabled && status.latest && <Notice>已是最新版本。</Notice>}
+    {status.available && status.can_apply && <Notice><strong>有新版本 {status.latest}。</strong>可以直接升级。</Notice>}
+    {status.available && status.can_apply && <ApplyUpgrade/>}
+    {status.available && status.can_apply && <details className="update-notes"><summary>仍使用命令升级</summary><UpgradeHelp status={status}/></details>}
+    {status.available && !status.can_apply && <Notice><strong>有新版本 {status.latest}。</strong>这次安装还不能在面板里点升级，请先执行下面的命令。装上之后，以后就可以点按钮。</Notice>}
+    {status.available && !status.can_apply && <UpgradeHelp status={status}/>}
     {status.available && status.notes && <details className="update-notes"><summary>本次更新内容</summary><pre>{status.notes}</pre></details>}
     <div className="settings-subheading"><h3>检查更新</h3><p>开启后，服务端在启动时和每 12 小时向 GitHub 查询一次 {status.repo} 的最新正式版本（只读，不发送你的数据，也不会自动安装）。有新版本时面板顶部会提示。</p></div>
     <div className="about-actions">

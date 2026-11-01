@@ -86,3 +86,20 @@
 @media(max-width:600px){.settings-nav{flex-wrap:wrap;overflow:visible;min-height:0;padding:8px 10px}.settings-nav>button{flex:1 1 calc(33% - 5px);justify-content:center;min-width:0}.settings-nav>button>span{flex:0 1 auto;min-width:0}.settings-nav strong{overflow:hidden;text-overflow:ellipsis}.modal footer .btn{flex:1}.choice-card{padding:14px}.choice-options>button{flex:1 1 calc(50% - 4px)}.choice-submit{flex-wrap:wrap}.choice-submit input{flex-basis:100%}.choice-submit .btn{flex:1}}
 .chat-welcome>p{max-width:520px}
 .brand-version{display:block;margin-top:3px;font-style:normal;font-size:11px;line-height:1;letter-spacing:0;font-weight:500;font-family:"IBM Plex Mono",ui-monospace,monospace;color:var(--fg3)}
+.panel-operator{margin:0 0 22px;border:1px solid var(--line);border-radius:13px;background:var(--s1);padding:16px 18px}
+.panel-operator-head{display:flex;align-items:center;gap:14px}
+.panel-operator-head>div:nth-child(2){min-width:0;flex:1}
+.panel-operator-head strong{display:block;font-size:13px;font-weight:500}
+.panel-operator-head p{font-size:11px;color:var(--fg4);margin-top:4px;line-height:1.5}
+.panel-operator-head>.btn{margin-left:auto;flex-shrink:0}
+.operator-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.operator-form{display:flex;gap:8px;margin-top:10px}
+.operator-form input{flex:1;min-width:0;height:36px;border-radius:9px;border:1px solid var(--line);background:#ffffff05;color:var(--fg);padding:0 12px;font-size:12px}
+.operator-form input:focus{outline:none;border-color:var(--line2)}
+.operator-result{margin-top:14px;border-top:1px solid var(--line);padding-top:12px;display:flex;flex-direction:column;gap:8px}
+.operator-pending{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--fg3)}
+.operator-error{font-size:12px;color:var(--danger);line-height:1.5}
+.operator-text{font-size:12px;line-height:1.65;white-space:pre-wrap;color:var(--fg2)}
+.operator-step strong{display:block;font-size:11px;font-weight:500}
+.operator-step pre{margin-top:4px;white-space:pre-wrap;word-break:break-word;font-size:10px;line-height:1.5;color:var(--fg3);background:#00000033;border-radius:8px;padding:8px 10px}
+@media(max-width:760px){.panel-operator{padding:14px}.panel-operator-head{flex-wrap:wrap}.panel-operator-head>.btn{margin-left:50px}.operator-form{flex-wrap:wrap}.operator-form .btn{width:100%}}

@@ -11,6 +11,7 @@ import ApprovalChoice from './components/ApprovalChoice';
 import { UpdateBanner } from './components/UpdateInfo';
 import SecondaryNav from './components/SecondaryNav';
 import Dashboard from './pages/Dashboard';
+import type { PanelJob } from './components/PanelOperator';
 import Chat from './pages/Chat';
 import Bots from './pages/Bots';
 import AddServer from './components/AddServer';
@@ -47,6 +48,8 @@ export default function App() {
   const [switching,setSwitching] = useState(''); const [testing,setTesting] = useState(''); const [rollback,setRollback] = useState('');
   const [draft,setDraft] = useState(''); const [lines,setLines] = useState<ChatLine[]>([]); const [session,setSession] = useState(''); const [sending,setSending] = useState(false);
   const sendingRef = useRef(false); const [mobileNav,setMobileNav] = useState(false);
+  const [panelJob, setPanelJob] = useState<PanelJob | null>(null);
+  const panelSession = useRef('');
   const [compact,setCompact] = useState(() => window.matchMedia('(max-width:760px)').matches); const [updated,setUpdated] = useState('');
 
   const load = useCallback(async () => {
@@ -126,11 +129,58 @@ export default function App() {
       paint(reply.text,false,{id:reply.message_id,choice:reply.choice});await load();}
     catch(err) {paint(message(err),false);await resync();} finally {sendingRef.current=false;setSending(false);api.sessions().then(setSessions).catch(()=>{});}
   }
+  async function runPanel(prompt: string, serverId?: string) {
+    if (sendingRef.current || uploadRef.current || loading) return;
+    const botID = defaultBot(bots);
+    if (!bots.some(b => b.id === botID && b.enabled)) { setPageError('请先启用主控 Bot'); return; }
+    if (serverId) setSelected(serverId);
+    sendingRef.current = true; setSending(true);
+    const steps: ChatStep[] = [];
+    setPanelJob({ pending: true, prompt, text: '', error: '', steps, sessionId: panelSession.current, botId: botID, serverId });
+    const paint = (patch: Partial<PanelJob>) => setPanelJob(cur => cur ? { ...cur, ...patch, steps: [...steps] } : cur);
+    try {
+      const reply = await api.chatLive({ content: prompt, server_id: serverId, session_id: panelSession.current, bot_id: botID, approval_mode: 'default' }, step => {
+        steps.push(step);
+        if (step.ok && step.server && (step.command || '').includes('接入')) { setSelected(step.server); setAddedServer(step.server); }
+        paint({ pending: true });
+      });
+      panelSession.current = reply.session_id || panelSession.current;
+      paint({ pending: false, text: reply.text, error: '', sessionId: panelSession.current, messageId: reply.message_id, choice: reply.choice });
+      await load();
+    } catch (err) {
+      paint({ pending: false, error: message(err) });
+    } finally {
+      sendingRef.current = false; setSending(false);
+    }
+  }
+  async function answerPanel(values: string[], custom: string) {
+    const job = panelJob;
+    if (sendingRef.current || uploadRef.current || loading || !job?.messageId || !job.choice || job.choice.answer || !panelSession.current) return;
+    sendingRef.current = true; setSending(true);
+    const cardID = job.messageId;
+    const steps: ChatStep[] = [];
+    setPanelJob({ ...job, pending: true, error: '', steps, choice: { ...job.choice, answer: { values, custom: custom.trim() || undefined } } });
+    const paint = (patch: Partial<PanelJob>) => setPanelJob(cur => cur ? { ...cur, ...patch, steps: [...steps] } : cur);
+    try {
+      const reply = await api.chatLive({ content: '', server_id: job.serverId, session_id: panelSession.current, bot_id: job.botId || defaultBot(bots), approval_mode: 'default', choice_answer: { message_id: cardID, values, custom: custom.trim() || undefined } }, step => {
+        steps.push(step); paint({ pending: true });
+      });
+      if (reply.answered) { paint({ pending: false, text: '这个问题已经回答过了' }); return; }
+      panelSession.current = reply.session_id || panelSession.current;
+      paint({ pending: false, text: reply.text, error: '', sessionId: panelSession.current, messageId: reply.message_id, choice: reply.choice });
+      await load();
+    } catch (err) {
+      paint({ pending: false, error: message(err), choice: job.choice });
+    } finally {
+      sendingRef.current = false; setSending(false);
+    }
+  }
   async function login() {
     setBusy(true);setFormError('');
     try {const res = await api.login(user,password);setUser(res.username);setProfile(res);setAuthed(true);if(res.must_change_credentials)return;setPassword('');await load();} catch(err) {setFormError(message(err));} finally {setBusy(false);}
   }
-  async function logout() {try {await api.logout();chatLoad.current++;setAuthed(false);setLines([]);setSession('');setPassword('');setNotice('');setDialog(null);} catch(err) {setPageError(message(err));}}
+  async function logout() {try {await api.logout();chatLoad.current++;setAuthed(false);setLines([]);setSession('');setPassword('');setNotice('');setDialog(null);setPanelJob(null);panelSession.current='';} catch(err) {setPageError(message(err));}}
+
   if(authed === null) return <div className="boot-screen"><LoaderCircle className="spin" size={23}/><span>连接工作台…</span></div>;
   if(!authed) return <div className="login-screen"><div className="login-brand"><span className="brand-icon"><img src="/assets/onefrog-logo.png" alt=""/></span><strong>OneFrog<span>OPERATIONS CONSOLE</span></strong></div><form className="login-card" onSubmit={e => {e.preventDefault();login();}}><span className="eyebrow">WELCOME BACK</span><h1>进入你的运维工作台</h1><p>服务器、Bot 和密钥，一个地方管理。</p><Field label="账号"><input value={user} autoComplete="username" onChange={e => setUser(e.target.value)} required placeholder="管理员账号"/></Field><Field label="密码"><input type="password" value={password} autoComplete="current-password" onChange={e => setPassword(e.target.value)} required placeholder="输入登录密码"/></Field>{formError && <Notice error>{formError}</Notice>}<Button type="submit" variant="primary" busy={busy}>进入工作台<ArrowRight size={16}/></Button><small><LockKeyhole size={12}/>自托管 · 你的基础设施，由你掌控</small></form><footer>ONEFROG / OPERATIONS, SIMPLIFIED.</footer></div>;
   if(profile.must_change_credentials) return <SetupCredentials profile={profile} initialPassword={password} onDone={async next => {setProfile(next);setUser(next.username);setPassword(''); if(!next.must_change_credentials) await load();}} onLogout={logout}/>;
@@ -144,7 +194,7 @@ export default function App() {
     <main className="app-main" inert={Boolean(dialog) || mobileNav}><UpdateBanner status={updateStatus}/><div className="topbar"><IconButton label="展开导航" className="mobile-menu" onClick={() => setMobileNav(true)}><Menu size={20}/></IconButton><span className="breadcrumb">OneFrog<ChevronRight size={13}/><strong>{currentLabel}</strong></span><div className="topbar-right"><span className="sync-time">{updated ? `更新于 ${updated}` : '尚未同步'}</span><IconButton label="刷新数据" onClick={load} disabled={loading}><RefreshCw size={15} className={loading ? 'spin' : ''}/></IconButton><span className="topbar-divider"/><span className="connection"><span className={`live-dot ${pageError ? 'warn' : ''}`}/>{pageError ? '同步异常' : 'API 已连接'}</span></div></div>
     {pageError && <div className="global-error"><Notice error>{pageError}</Notice><IconButton label="关闭错误提示" onClick={() => setPageError('')}><X size={15}/></IconButton></div>}
     <div className={`view-container ${view === 'chat' ? 'chat-view' : ''}`}>
-    {view === 'panel' && <Dashboard hosts={hosts} mods={mods} history={history} bots={bots} selected={selected} onSelect={setSelected} onChat={openChat} onModules={() => open('modules')} onSettings={openSettings} onServers={() => go('servers')} onAssets={() => {setActiveModule('assets'); go('modules');}}/>}
+    {view === 'panel' && <Dashboard hosts={hosts} mods={mods} history={history} bots={bots} settings={chatConfig} job={panelJob} sending={sending} onSelect={setSelected} onRun={runPanel} onAnswer={answerPanel} onModules={() => open('modules')} onSettings={openSettings} onServers={() => go('servers')} onAssets={() => {setActiveModule('assets'); go('modules');}}/>}
     {view === 'chat' && <Chat onAddServer={()=>open('server')} controls={controls} onControls={setControls} settings={chatConfig} onBot={chooseBot} attachments={attachments} onFiles={uploadFiles} onRemoveFile={id=>setAttachments(cur=>cur.filter(f=>f.id!==id))} uploading={uploading} activeBot={bots.find(b=>b.id===activeBot)} hosts={hosts} bots={bots} selected={selected} onSelect={setSelected} draft={draft} onDraft={setDraft} lines={lines} onSend={send} sending={sending||loading} onNew={()=>newChat()} onNotice={setNotice} onAnswer={answerChoice}/>}
     {view === 'servers' && <Servers addedServer={addedServer} hosts={hosts} selected={selected} onSelect={setSelected} onAdd={() => open('server')} onTest={testServer} testing={testing} onChat={() => openChat()} onChanged={load}/>}
     {view === 'agents' && <Bots bots={bots} onAdd={()=>open('agent')} onChanged={load} onChat={id=>{newChat(id);openChat();}}/>}

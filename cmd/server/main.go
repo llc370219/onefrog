@@ -100,13 +100,14 @@ func main() {
 	}
 	go updates.Run(ctx)
 	log.Printf("OneFrog %s", version.Version)
+	files := attachment.New(filepath.Join(cfg.DataDir, "uploads"), box)
 	app := &api.Server{
 		Updates:    updates,
 		OAuth:      oauth,
 		Onboarding: onboard,
 		Assets:     ledger,
 		PublicURL:  cfg.PublicURL,
-		Files:      attachment.New(filepath.Join(cfg.DataDir, "uploads"), box),
+		Files:      files,
 		Usage:      usageLog,
 		Monitor:    probe,
 		Store:      db,
@@ -117,11 +118,17 @@ func main() {
 		// OF_TRUSTED_PROXIES: reverse proxies whose X-Forwarded-For is trusted for login rate limiting.
 		TrustedProxies: os.Getenv("OF_TRUSTED_PROXIES"),
 		Agent: &bot.Agent{
-			Store:    db,
-			Settings: settings,
-			Box:      box,
-			SSH:      remoteExec{},
-			HTTP:     &http.Client{Timeout: 60 * time.Second},
+			Store:        db,
+			Settings:     settings,
+			SettingsLive: settings,
+			Box:          box,
+			SSH:          remoteExec{},
+			HTTP:         &http.Client{Timeout: 60 * time.Second},
+			OAuth:        oauth,
+			Files:        files,
+			Usage:        usageLog,
+			Assets:       ledger,
+			Updates:      updates,
 		},
 	}
 	log.Printf("listening on %s", cfg.Addr)

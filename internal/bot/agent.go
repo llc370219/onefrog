@@ -38,6 +38,10 @@ type Agent struct {
 	SSH      Exec
 	HTTP     *http.Client
 	Settings *preferences.Manager
+	// SettingsLive is the process-wide settings store. Settings may be a
+	// frozen snapshot for one turn; panel changes must hit the live store.
+	SettingsLive *preferences.Manager
+	Updates      PanelUpdates
 }
 
 type ToolEvent struct {
@@ -133,7 +137,7 @@ func (a *Agent) replyTurn(ctx context.Context, botID, serverID, sessionID, conte
 		sink(Step{Kind: "session", Output: sess.ID})
 	}
 	if strings.TrimSpace(bot.BaseURL) == "" {
-		text := "模型还没接上。接上之后，主控可以把活分给其他 Bot，命令会先过审核。"
+		text := "模型还没接上。打开设置，添加渠道并保存。接上之后，助理可以直接改面板，不用再进对话。"
 		_, _ = a.Store.AddMessage(ctx, model.Message{SessionID: sess.ID, Role: "assistant", Content: text})
 		return Result{SessionID: sess.ID, Text: text}, nil
 	}
@@ -233,7 +237,7 @@ func (a *Agent) chat(ctx context.Context, baseURL, modelName, apiKey string, mes
 		res, err = client.Do(req)
 	}
 	if err != nil {
-		return assistantMsg{}, err
+		return assistantMsg{}, fmt.Errorf("连不上模型接口：%s", clip(err.Error(), 180))
 	}
 	defer res.Body.Close()
 	payload, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))

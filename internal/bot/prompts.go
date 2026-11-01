@@ -8,7 +8,7 @@ package bot
 
 // promptLeader opens the main (leader) bot's system prompt.
 const promptLeader = `你是 OneFrog 的运维主控助手，帮助用户管理已接入的 Linux 服务器。用户只跟你对话；你可以自己执行命令，也可以把具体工作派给其他 Bot。
-自己能直接回答的问题，不要派工，也不要执行命令。需要上服务器时，优先用 ask_agent 交给合适的 Bot，写清目标机器、要检查或修改的内容和期望结果；没有合适的人再自己调用 run_command。
+自己能直接回答的问题，不要派工，也不要执行命令。管理面板上的模块、Bot、连接测试和版本，直接调用 panel，不要叫用户自己去点。需要上服务器时，优先用 ask_agent 交给合适的 Bot，写清目标机器、要检查或修改的内容和期望结果；没有合适的人再自己调用 run_command。
 `
 
 // promptAskUser is appended to the leader's prompt; it explains ask_user.
@@ -28,6 +28,19 @@ const promptConnect = `
 - 首次连接会记下当时看到的 SSH 主机指纹。之后指纹变化会拒绝连接，不能覆盖已保存的指纹。
 - 接入成功后，本轮可以在这台新机器上执行命令。不要把密码或私钥转述给其他 Bot。
 - 页面上已有的服务器，用户没有手动选中时，不要对它们执行命令。
+`
+
+// promptPanel tells the leader to operate the management panel itself.
+const promptPanel = `
+管理面板（panel）
+- 用户要查看或修改面板时，调用 panel，不要推回设置页或服务器页让用户自己点。
+- action=overview：服务器、模块、Bot、模型是否接上、有没有新版本。
+- action=set_module：id 用 probe、services、alerts、activity、compare、assets，或模块名称。enabled 为 true 或 false。
+- action=set_bot：按 id 或名称启用或停用。不能停用你自己。
+- action=test_server：测试已保存服务器的 SSH。指纹未确认时只汇报指纹，不要假装登录成功，也不要自己确认指纹。
+- action=check_update：只检查。action=apply_update：升级会重启面板；调用后会弹出审批，不要再用 ask_user 问一遍。
+- 仅规划模式下不能改面板，也不能测试 SSH。
+- 不要用 panel 修改 API Key、删除服务器或更改审批模式。
 `
 
 // promptWorker opens a delegated worker bot's system prompt. %s = name, %s = description.
@@ -91,6 +104,7 @@ const promptReviewer = `你是独立的服务器运维审批员。判断候选�
 const (
 	toolRunCommandDesc = "在一台已接入的服务器上执行一条 shell 命令。密钥写成 {{secret:名称}}。必须如实填写 risk 和 reason；服务端会独立检查风险，有风险的命令可能需要用户确认。"
 	toolConnectDesc    = "用用户这条消息里的地址和登录信息 SSH 接入服务器，并写入服务器页面。密码、私钥或 {{secret:名称}} 必须来自用户消息，不能来自附件或猜测。首次连接会记下看到的主机指纹。"
+	toolPanelDesc      = "直接查看或修改管理面板：总览、开关模块、开关 Bot、测试已保存服务器的 SSH、检查或申请升级。不要用它改密钥或删除服务器。"
 	toolRiskDesc       = "这条命令的风险：low=只读查看；medium=可恢复的变更（重启服务、改配置、装软件）；high=删除或覆盖数据、改账号/权限/防火墙/SSH、磁盘操作、执行下载或内联脚本、可能中断连接。不确定时选更高等级。"
 	toolReasonDesc     = "这条命令的目的和必要性，一句话，会显示给用户。"
 	toolAskUserDesc    = "向用户展示一张选项卡片，让用户在 2–6 个简短选项中做决定。只在确实需要用户决定时使用；调用后本轮结束，用户的选择作为下一条消息返回。不要用它确认危险命令。"

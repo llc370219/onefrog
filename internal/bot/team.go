@@ -76,7 +76,7 @@ func (a *Agent) converse(ctx context.Context, speaker model.Bot, creds credentia
 	limit := a.execution().MaxSteps
 	spec := toolDefs(canDelegate, a.managesAssets(speaker))
 	if !a.managesAssets(speaker) && !isWorker(ctx) {
-		spec = append(spec, askUserTool)
+		spec = append(spec, askUserTool, panelTool)
 	}
 	for i := 0; i < limit; i++ {
 		purpose := "conversation"
@@ -165,6 +165,15 @@ func (a *Agent) execCall(ctx context.Context, speaker model.Bot, creds credentia
 		}
 		tr.choice = &c
 		return "已把选项卡片展示给用户。本轮到此结束，等用户选择后再继续。"
+	case "panel":
+		if isWorker(ctx) || a.managesAssets(speaker) {
+			return "只有主控可以直接改管理面板"
+		}
+		ev := a.panelAct(ctx, speaker, call)
+		if tr != nil {
+			tr.noteTool(speaker.Name, ev)
+		}
+		return ev.Output
 	case "manage_module_record":
 		if !a.managesAssets(speaker) {
 			return "只有模块构建 Bot 可以修改资产与订阅"
@@ -303,6 +312,7 @@ func (a *Agent) leaderPrompt(ctx context.Context, bot model.Bot, serverID string
 	a.writeOperations(&b, ctx)
 	b.WriteString(promptAskUser)
 	b.WriteString(promptConnect)
+	b.WriteString(promptPanel)
 	writeExtra(&b, bot)
 	a.writePeers(&b, ctx, bot.ID)
 	a.writeSecrets(&b, ctx)

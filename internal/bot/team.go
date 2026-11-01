@@ -108,6 +108,36 @@ func (a *Agent) execCall(ctx context.Context, speaker model.Bot, creds credentia
 		return "模块构建 Bot 只能登记资产与订阅，不能执行命令或派工"
 	}
 	switch call.Function.Name {
+	case "connect_server":
+		ev := a.connectServer(ctx, speaker.ID, call)
+		if tr != nil {
+			tr.noteTool(speaker.Name, ev)
+		}
+		extra := ""
+		if ev.OK {
+			var follow struct {
+				Command string `json:"command"`
+				Risk    string `json:"risk"`
+				Reason  string `json:"reason"`
+			}
+			_ = json.Unmarshal([]byte(call.Function.Arguments), &follow)
+			if cmd := strings.TrimSpace(follow.Command); cmd != "" {
+				next := toolCall{ID: call.ID + "-cmd", Type: "function"}
+				next.Function.Name = "run_command"
+				raw, _ := json.Marshal(map[string]string{"server_id": ev.ServerID, "command": cmd, "risk": follow.Risk, "reason": follow.Reason})
+				next.Function.Arguments = string(raw)
+				cmdEv := a.runTool(ctx, speaker.ID, ev.ServerID, next)
+				if tr != nil {
+					tr.noteTool(speaker.Name, cmdEv)
+				}
+				if cmdEv.ran {
+					extra = "\n" + fmt.Sprintf(untrustedOpen, cmdEv.server) + cmdEv.Output + untrustedClose
+				} else if cmdEv.Output != "" {
+					extra = "\n" + cmdEv.Output
+				}
+			}
+		}
+		return ev.Output + extra
 	case "run_command":
 		ev := a.runTool(ctx, speaker.ID, serverID, call)
 		if tr != nil {
@@ -272,6 +302,7 @@ func (a *Agent) leaderPrompt(ctx context.Context, bot model.Bot, serverID string
 	b.WriteString(promptLeader)
 	a.writeOperations(&b, ctx)
 	b.WriteString(promptAskUser)
+	b.WriteString(promptConnect)
 	writeExtra(&b, bot)
 	a.writePeers(&b, ctx, bot.ID)
 	a.writeSecrets(&b, ctx)
@@ -287,6 +318,7 @@ func (a *Agent) workerPrompt(ctx context.Context, bot model.Bot, serverID string
 	var b strings.Builder
 	fmt.Fprintf(&b, promptWorker, bot.Name, strings.TrimSpace(bot.Description))
 	a.writeOperations(&b, ctx)
+	b.WriteString(promptConnect)
 	writeExtra(&b, bot)
 	a.writeSecrets(&b, ctx)
 	a.writeServers(&b, ctx, serverID)
@@ -356,11 +388,15 @@ func (a *Agent) writeSecrets(b *strings.Builder, ctx context.Context) {
 
 func (a *Agent) writeServers(b *strings.Builder, ctx context.Context, serverID string) {
 	servers, err := a.Store.ListServers(ctx)
-	if err != nil || len(servers) == 0 {
+	if err != nil {
+		return
+	}
+	if len(servers) == 0 {
+		b.WriteString("目前没有已接入的服务器。用户这条消息里给出地址和登录信息时调用 connect_server，不要只回复操作步骤。\n")
 		return
 	}
 	if options(ctx).RestrictServers && serverID == "" {
-		b.WriteString("用户尚未手动选择服务器；可以分析与规划，但禁止执行远程命令。\n")
+		b.WriteString("用户尚未手动选择已有服务器，不要对它们执行命令。用户这条消息里如果给出了新的地址和登录信息，调用 connect_server；接入成功后本轮可以操作这台新机器。\n")
 		return
 	}
 	b.WriteString("已接入服务器：\n")
@@ -478,9 +514,32 @@ func toolDefs(delegate, manage bool) []map[string]any {
 			},
 		},
 	}
+	connect := map[string]any{
+		"type": "function",
+		"function": map[string]any{
+			"name":        "connect_server",
+			"description": toolConnectDesc,
+			"parameters": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"name":      map[string]string{"type": "string", "description": "页面上的名称，可省略"},
+					"host":      map[string]string{"type": "string"},
+					"port":      map[string]string{"type": "integer"},
+					"username":  map[string]string{"type": "string"},
+					"auth_type": map[string]any{"type": "string", "enum": []string{"password", "private_key"}},
+					"secret":    map[string]string{"type": "string", "description": "密码、私钥，或 {{secret:名称}}"},
+					"role":      map[string]string{"type": "string"},
+					"command":   map[string]string{"type": "string", "description": "接入成功后可选执行的一条命令"},
+					"risk":      map[string]any{"type": "string", "enum": []string{"low", "medium", "high"}, "description": toolRiskDesc},
+					"reason":    map[string]string{"type": "string", "description": toolReasonDesc},
+				},
+				"required": []string{"host", "secret"},
+			},
+		},
+	}
 	out := []map[string]any{}
 	if !manage {
-		out = append(out, command)
+		out = append(out, connect, command)
 		if delegate {
 			out = append(out, ask)
 		}

@@ -118,6 +118,7 @@ func (a *Agent) replyTurn(ctx context.Context, botID, serverID, sessionID, conte
 	}
 	ctx = context.WithValue(ctx, taskKey{}, content)
 	ctx = withTaint(ctx)
+	ctx = withGrants(ctx)
 	savedOptions := options(ctx)
 	savedOptions.AttachmentIDs = nil
 	savedOptions.ChoiceAnswer = nil
@@ -319,8 +320,10 @@ func (a *Agent) runTool(ctx context.Context, botID, fallbackServer string, call 
 		}
 	}
 	if options(ctx).RestrictServers && (fallbackServer == "" || rec.ID != fallbackServer) {
-		ev.Output = "请先手动选择目标服务器；本轮只能操作选中的服务器"
-		return ev
+		if !serverGranted(ctx, rec.ID) {
+			ev.Output = "请先手动选择目标服务器；本轮只能操作选中的服务器"
+			return ev
+		}
 	}
 	expanded, err := a.expand(ctx, args.Command)
 	if err != nil {

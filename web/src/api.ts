@@ -46,11 +46,15 @@ export type ChoiceAnswer = { values?: string[]; custom?: string; answered_at?: s
 /** A question the bot asked with ask_user; answered once, then read-only. */
 export type Choice = { prompt: string; options: ChoiceOption[]; multi_select?: boolean; allow_custom?: boolean; answer?: ChoiceAnswer };
 export type ChoiceReply = { message_id: string; values?: string[]; custom?: string };
+/** A password card. The value is never stored on the card or in the transcript. */
+export type SecretRequest = { name: string; label: string; description?: string; provided_at?: string };
+export type SecretReply = { message_id: string; value: string };
 export type ChatLine = {
   who: "user" | "bot";
   text: string;
   id?: string;
   choice?: Choice;
+  secret?: SecretRequest;
   pending?: boolean;
   steps?: ChatStep[];
   attachments?:Attachment[];
@@ -59,8 +63,8 @@ export type TokenUsage={requests:number;reported_calls:number;failed_calls:numbe
 export type UsageRow=TokenUsage&{bot_id:string;purpose:string;provider_id:string;model:string;updated_at:string};
 export type Attachment={id:string;name:string;mime:string;size:number};
 export type ChatOptions={approval_route?:ModelRoute;model_route?:ModelRoute;excluded_bot_ids?:string[];approval_mode?:string;attachment_ids?:string[]};
-export type ChatRequest=ChatOptions&{content:string;server_id?:string;bot_id?:string;session_id?:string;choice_answer?:ChoiceReply};
-export type ChatResult={session_id:string;text:string;message_id?:string;choice?:Choice;answered?:boolean};
+export type ChatRequest=ChatOptions&{content:string;server_id?:string;bot_id?:string;session_id?:string;choice_answer?:ChoiceReply;secret_answer?:SecretReply};
+export type ChatResult={session_id:string;text:string;message_id?:string;choice?:Choice;secret_request?:SecretRequest;answered?:boolean};
 export type BotRow = { id:string;name:string;description:string;system_prompt?:string;enabled:boolean;model_route:ModelRoute;effective_route:ModelRoute;usage:TokenUsage };
 
 type ServerJSON = {
@@ -157,7 +161,7 @@ export const api = {
   async probeToken(id:string):Promise<{token:string;server_id:string}>{return call("/api/servers/"+encodeURIComponent(id)+"/probe/token",{method:"POST",body:"{}"});},
   async profile(body:{username:string;display_name:string;avatar:string;current_password:string;new_password:string}):Promise<Profile>{return call("/api/auth/profile",{method:"PUT",body:JSON.stringify(body)});},
   async sessions():Promise<ChatSession[]>{return (await call("/api/sessions"))||[];},
-  async messages(id:string):Promise<{id:string;role:string;content:string;attachments?:Attachment[];choice?:Choice}[]>{return (await call("/api/sessions/"+encodeURIComponent(id)+"/messages"))||[];},
+  async messages(id:string):Promise<{id:string;role:string;content:string;attachments?:Attachment[];choice?:Choice;secret_request?:SecretRequest}[]>{return (await call("/api/sessions/"+encodeURIComponent(id)+"/messages"))||[];},
   async updateStatus():Promise<UpdateStatus>{return call("/api/update");},
   async checkUpdate():Promise<UpdateStatus>{return call("/api/update/check",{method:"POST",body:"{}"});},
   async applyUpdate():Promise<{ok:boolean;version:string;message:string}>{return call("/api/update/apply",{method:"POST",body:"{}"});},
@@ -192,6 +196,12 @@ export const api = {
   },
   async createSecret(body: { name: string; value: string; description?: string }) {
     return call("/api/secrets", { method: "POST", body: JSON.stringify(body) });
+  },
+  async rotateSecret(id: string, body: { value: string; description?: string }) {
+    return call("/api/secrets/" + encodeURIComponent(id), { method: "PUT", body: JSON.stringify(body) });
+  },
+  async deleteSecret(id: string) {
+    return call("/api/secrets/" + encodeURIComponent(id), { method: "DELETE" });
   },
   async modules(): Promise<Mod[]> {
     const rows = (await call("/api/modules")) as { id: string; name: string; description: string; enabled: boolean }[];
@@ -303,7 +313,7 @@ function liveChat(body: ChatRequest, onStep: (step: ChatStep) => void) {
       if (!opened) {
         api.chat(body).then((res) => {
           for (const step of res.steps || []) onStep(toStep(step));
-          resolve({ session_id: res.session_id, text: res.text, message_id: res.message_id, choice: res.choice || undefined, answered: res.answered });
+          resolve({ session_id: res.session_id, text: res.text, message_id: res.message_id, choice: res.choice || undefined, secret_request: res.secret_request || undefined, answered: res.answered });
         }, reject);
         return;
       }
@@ -345,7 +355,7 @@ function liveChat(body: ChatRequest, onStep: (step: ChatStep) => void) {
         ok: msg.ok,
         output: msg.output,
       }));
-      if (msg.type === "assistant") { text = msg.content || ""; extra = { message_id: msg.message_id || undefined, choice: msg.choice || undefined, answered: !!msg.answered }; }
+      if (msg.type === "assistant") { text = msg.content || ""; extra = { message_id: msg.message_id || undefined, choice: msg.choice || undefined, secret_request: msg.secret_request || undefined, answered: !!msg.answered }; }
       if (msg.type === "error") fail(new Error(msg.message || "发送失败"));
       if (msg.type === "done") ok();
     };

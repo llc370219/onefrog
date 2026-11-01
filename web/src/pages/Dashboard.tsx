@@ -8,7 +8,7 @@ import { AssetGlance } from './Assets';
 
 const moduleIcons = { probe: Server, services: Activity, alerts: TriangleAlert, activity: Terminal, compare: HardDrive, assets: Wallet };
 const order = ['probe', 'alerts', 'services', 'compare', 'activity', 'assets'];
-export default function Dashboard({ hosts, mods, history, bots, settings, job, sending, onSelect, onRun, onAnswer, onModules, onSettings, onServers, onAssets }: { hosts: Host[]; mods: Mod[]; history: Hist[]; bots: BotRow[]; settings: SettingsState | null; job: PanelJob | null; sending: boolean; onSelect: (id: string) => void; onRun: (text: string, serverId?: string) => void; onAnswer: (values: string[], custom: string) => void; onModules: () => void; onSettings: () => void; onServers: () => void; onAssets: () => void }) {
+export default function Dashboard({ hosts, mods, history, bots, settings, job, sending, onSelect, onRun, onAnswer, onProvide, onModules, onSettings, onServers, onAssets }: { hosts: Host[]; mods: Mod[]; history: Hist[]; bots: BotRow[]; settings: SettingsState | null; job: PanelJob | null; sending: boolean; onSelect: (id: string) => void; onRun: (text: string, serverId?: string) => void; onAnswer: (values: string[], custom: string) => void; onProvide: (value: string) => void; onModules: () => void; onSettings: () => void; onServers: () => void; onAssets: () => void }) {
   const [probeNodes,setProbeNodes]=useState<ProbeNode[]>([]);
   const [probeError,setProbeError]=useState('');
   useEffect(()=>{let active=true;async function refresh(){try{const res=await api.monitor();if(active){setProbeNodes(res.nodes);setProbeError('');}}catch{if(active)setProbeError('探针数据暂时不可用');}}refresh();const timer=window.setInterval(()=>{if(!document.hidden)refresh();},15000);return()=>{active=false;clearInterval(timer);};},[]);
@@ -26,7 +26,7 @@ export default function Dashboard({ hosts, mods, history, bots, settings, job, s
   ];
   return <div className="page dashboard"><PageHeading eyebrow="WORKSPACE / OVERVIEW" title="面板" note="掌握服务器状态，让助理直接处理。" actions={<><Button onClick={onSettings}><SlidersHorizontal size={15}/>设置</Button><Button variant="primary" onClick={onModules}><LayoutGrid size={15}/>选取模块</Button></>}/>
     <div className="metrics">{stats.map(({label, value, suffix, icon: Icon, note, tone}) => <section className="metric" key={label}><div className="metric-top">{label}<Icon size={16} strokeWidth={1.5}/></div><div className={`metric-value ${tone}`}>{value}<span>{suffix}</span></div><p>{note}</p></section>)}</div>
-    <PanelOperator settings={settings} bots={bots} sending={sending} job={job} onRun={onRun} onAnswer={onAnswer} onSettings={onSettings}/>
+    <PanelOperator settings={settings} bots={bots} sending={sending} job={job} onRun={onRun} onAnswer={onAnswer} onProvide={onProvide} onSettings={onSettings}/>
     <div className="section-label"><span><span className="live-dot"/>工作台模块 <small>{enabled.length} 个已启用</small></span><span className="muted">按需组合你的工作台</span></div>
     {!enabled.length ? <Empty title="定制你的第一个工作台" body="选择服务器、服务和告警模块，集中查看需要的信息。" action={<Button onClick={onModules}>选取模块</Button>}/> : <div className="dashboard-grid">{enabled.map(mod => {
       const Icon = moduleIcons[mod.id as keyof typeof moduleIcons] || Box;

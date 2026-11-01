@@ -336,8 +336,17 @@ func (m *Memory) SecretByName(_ context.Context, name string) (SecretRec, error)
 func (m *Memory) CreateSecret(_ context.Context, rec SecretRec) (model.Secret, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	name, err := secret.ValidName(rec.Name)
+	if err != nil {
+		return model.Secret{}, err
+	}
+	rec.Name = name
+	rec.Description = secret.CleanDescription(rec.Description)
 	if _, ok := m.secretName[rec.Name]; ok {
 		return model.Secret{}, ErrConflict
+	}
+	if len(m.secrets) >= secret.MaxCount {
+		return model.Secret{}, ErrLimit
 	}
 	if rec.ID == "" {
 		rec.ID = id.New()
@@ -350,6 +359,26 @@ func (m *Memory) CreateSecret(_ context.Context, rec SecretRec) (model.Secret, e
 	if err := m.saveSecretsLocked(); err != nil {
 		delete(m.secrets, rec.ID)
 		delete(m.secretName, rec.Name)
+		return model.Secret{}, err
+	}
+	return rec.Secret, nil
+}
+
+func (m *Memory) UpdateSecret(_ context.Context, idv, encryptedValue string, description *string) (model.Secret, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec, ok := m.secrets[idv]
+	if !ok {
+		return model.Secret{}, ErrNotFound
+	}
+	old := rec
+	rec.EncryptedValue = encryptedValue
+	if description != nil {
+		rec.Description = secret.CleanDescription(*description)
+	}
+	m.secrets[idv] = rec
+	if err := m.saveSecretsLocked(); err != nil {
+		m.secrets[idv] = old
 		return model.Secret{}, err
 	}
 	return rec.Secret, nil
@@ -572,6 +601,39 @@ func (m *Memory) AnswerChoice(_ context.Context, sessionID, messageID string, an
 		choice.Answer = &answer
 		updated := msg
 		updated.Choice = &choice
+		next := append([]model.Message(nil), list...)
+		next[i] = updated
+		m.messages[sessionID] = next
+		if err := m.saveChatLocked(sessionID); err != nil {
+			m.messages[sessionID] = list
+			return model.Message{}, err
+		}
+		return updated, nil
+	}
+	return model.Message{}, ErrNotFound
+}
+
+func (m *Memory) MarkSecretProvided(_ context.Context, sessionID, messageID string, at time.Time) (model.Message, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	list := m.messages[sessionID]
+	for i, msg := range list {
+		if msg.ID != messageID {
+			continue
+		}
+		if msg.SecretRequest == nil {
+			return model.Message{}, ErrNotFound
+		}
+		if msg.SecretRequest.ProvidedAt != nil {
+			return msg, ErrConflict
+		}
+		if at.IsZero() {
+			at = time.Now().UTC()
+		}
+		req := *msg.SecretRequest
+		req.ProvidedAt = &at
+		updated := msg
+		updated.SecretRequest = &req
 		next := append([]model.Message(nil), list...)
 		next[i] = updated
 		m.messages[sessionID] = next

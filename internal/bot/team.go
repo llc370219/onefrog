@@ -37,6 +37,9 @@ type trace struct {
 	// choice is set when the leader asked the user with ask_user; the turn
 	// then ends and the card is stored with the reply.
 	choice *model.Choice
+	// secret is set when the leader asked for a vault secret. The plaintext is
+	// not part of this trace.
+	secret *model.SecretRequest
 }
 
 func (a *Agent) lead(ctx context.Context, leader model.Bot, serverID, sessionID string, sink func(Step)) (Result, error) {
@@ -65,6 +68,18 @@ func (a *Agent) lead(ctx context.Context, leader model.Bot, serverID, sessionID 
 		}
 		return Result{SessionID: sessionID, Text: text, Tools: tr.tools, Steps: tr.steps, Choice: tr.choice, MessageID: msg.ID}, nil
 	}
+	if tr.secret != nil {
+		tr.secret.Label = a.redact(ctx, tr.secret.Label)
+		tr.secret.Description = a.redact(ctx, tr.secret.Description)
+		if text == "" {
+			text = "需要一项密钥才能继续。请在卡片里输入，明文不会进入对话。"
+		}
+		msg, err := a.Store.AddMessage(ctx, model.Message{SessionID: sessionID, Role: "assistant", Content: text, SecretRequest: tr.secret})
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{SessionID: sessionID, Text: text, Tools: tr.tools, Steps: tr.steps, SecretRequest: tr.secret, MessageID: msg.ID}, nil
+	}
 	if text == "" {
 		text = "没有得到模型回复。"
 	}
@@ -76,7 +91,7 @@ func (a *Agent) converse(ctx context.Context, speaker model.Bot, creds credentia
 	limit := a.execution().MaxSteps
 	spec := toolDefs(canDelegate, a.managesAssets(speaker))
 	if !a.managesAssets(speaker) && !isWorker(ctx) {
-		spec = append(spec, askUserTool, panelTool)
+		spec = append(spec, askUserTool, requestSecretTool, panelTool)
 	}
 	for i := 0; i < limit; i++ {
 		purpose := "conversation"
@@ -96,7 +111,7 @@ func (a *Agent) converse(ctx context.Context, speaker model.Bot, creds credentia
 			out := a.execCall(ctx, speaker, creds, serverID, call, canDelegate, tr)
 			messages = append(messages, map[string]any{"role": "tool", "tool_call_id": call.ID, "content": out})
 		}
-		if tr != nil && tr.choice != nil && !isWorker(ctx) {
+		if tr != nil && (tr.choice != nil || tr.secret != nil) && !isWorker(ctx) {
 			return msg.Content, nil
 		}
 	}
@@ -156,8 +171,8 @@ func (a *Agent) execCall(ctx context.Context, speaker model.Bot, creds credentia
 		if isWorker(ctx) || tr == nil {
 			return "协作 Bot 不能直接向用户提问。把需要用户决定的问题写进结论，由主控来问。"
 		}
-		if tr.choice != nil {
-			return "这一轮已经问过用户了，等用户回答。"
+		if tr.choice != nil || tr.secret != nil {
+			return "这一轮已经在等用户了，等用户回应后再继续。"
 		}
 		c, err := ParseChoice(call.Function.Arguments)
 		if err != nil {
@@ -165,6 +180,8 @@ func (a *Agent) execCall(ctx context.Context, speaker model.Bot, creds credentia
 		}
 		tr.choice = &c
 		return "已把选项卡片展示给用户。本轮到此结束，等用户选择后再继续。"
+	case "request_secret":
+		return a.requestSecret(ctx, call, tr)
 	case "panel":
 		if isWorker(ctx) || a.managesAssets(speaker) {
 			return "只有主控可以直接改管理面板"
@@ -298,6 +315,11 @@ func (a *Agent) sessionMessages(ctx context.Context, sessionID, system string) (
 				content = s + choiceContext(item.Choice)
 			}
 		}
+		if item.SecretRequest != nil {
+			if s, ok := content.(string); ok {
+				content = s + secretContext(item.SecretRequest)
+			}
+		}
 		out = append(out, map[string]any{"role": item.Role, "content": content})
 	}
 	return out, nil
@@ -311,6 +333,7 @@ func (a *Agent) leaderPrompt(ctx context.Context, bot model.Bot, serverID string
 	b.WriteString(promptLeader)
 	a.writeOperations(&b, ctx)
 	b.WriteString(promptAskUser)
+	b.WriteString(promptRequestSecret)
 	b.WriteString(promptConnect)
 	b.WriteString(promptPanel)
 	writeExtra(&b, bot)

@@ -19,7 +19,10 @@ type Options struct {
 	ApprovalMode   string             `json:"approval_mode,omitempty"`
 	AttachmentIDs  []string           `json:"attachment_ids,omitempty"`
 	// ChoiceAnswer answers an ask_user card in this session; it replaces Content.
-	ChoiceAnswer    *ChoiceReply `json:"choice_answer,omitempty"`
+	ChoiceAnswer *ChoiceReply `json:"choice_answer,omitempty"`
+	// SecretAnswer saves a password card. Value is encrypted and then dropped;
+	// it is never written into chat options or the transcript.
+	SecretAnswer    *SecretReply `json:"secret_answer,omitempty"`
 	OwnerID         string       `json:"-"`
 	RestrictServers bool         `json:"-"`
 	// Approver asks a human to allow one command (smart or manual mode). It is
@@ -143,8 +146,8 @@ func (a *Agent) ReplyWithOptions(ctx context.Context, botID, serverID, sessionID
 	if size > attachment.MaxTotal {
 		return Result{}, errors.New("附件合计不能超过 12 MB")
 	}
-	if opt.ChoiceAnswer != nil && len(refs) > 0 {
-		return Result{}, errors.New("回答选项时不能附带附件")
+	if (opt.ChoiceAnswer != nil || opt.SecretAnswer != nil) && len(refs) > 0 {
+		return Result{}, errors.New("回答卡片时不能附带附件")
 	}
 	if strings.TrimSpace(content) == "" && len(refs) > 0 {
 		content = "请分析这些附件。"

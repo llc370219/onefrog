@@ -11,6 +11,8 @@ import (
 var (
 	ErrNotFound = errors.New("not found")
 	ErrConflict = errors.New("conflict")
+	// ErrLimit means the vault already holds the maximum number of secrets.
+	ErrLimit = errors.New("保险箱最多保存 100 个密钥")
 )
 
 type ServerRec struct {
@@ -59,6 +61,9 @@ type Store interface {
 	GetSecret(ctx context.Context, id string) (SecretRec, error)
 	SecretByName(ctx context.Context, name string) (SecretRec, error)
 	CreateSecret(ctx context.Context, rec SecretRec) (model.Secret, error)
+	// UpdateSecret replaces the ciphertext and, when description is non-nil,
+	// the description. The id and name stay the same. The plaintext is not stored.
+	UpdateSecret(ctx context.Context, id, encryptedValue string, description *string) (model.Secret, error)
 	DeleteSecret(ctx context.Context, id string) error
 	AllSecrets(ctx context.Context) ([]SecretRec, error)
 
@@ -81,4 +86,9 @@ type Store interface {
 	// ErrNotFound when the message has no card, and the stored message with
 	// ErrConflict when the card was already answered.
 	AnswerChoice(ctx context.Context, sessionID, messageID string, answer model.ChoiceAnswer) (model.Message, error)
+	// MarkSecretProvided records that the operator saved a password card. It
+	// returns ErrNotFound when the message has no card, and the stored message
+	// with ErrConflict when the card was already saved. The value is not stored
+	// on the message.
+	MarkSecretProvided(ctx context.Context, sessionID, messageID string, at time.Time) (model.Message, error)
 }

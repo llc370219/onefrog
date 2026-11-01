@@ -61,10 +61,13 @@ type Result struct {
 	Steps     []Step      `json:"steps"`
 	// MessageID is the stored assistant message; Choice is set when the bot
 	// asked the user to pick an option (answer it with Options.ChoiceAnswer).
-	MessageID string        `json:"message_id,omitempty"`
-	Choice    *model.Choice `json:"choice,omitempty"`
-	// Answered is true when a retried choice answer was already recorded and
-	// no new turn ran.
+	// SecretRequest is a password card (answer it with Options.SecretAnswer).
+	// The plaintext is never part of Result.
+	MessageID     string               `json:"message_id,omitempty"`
+	Choice        *model.Choice        `json:"choice,omitempty"`
+	SecretRequest *model.SecretRequest `json:"secret_request,omitempty"`
+	// Answered is true when a retried choice or secret answer was already
+	// recorded and no new turn ran.
 	Answered bool `json:"answered,omitempty"`
 }
 
@@ -77,11 +80,23 @@ func (a *Agent) ReplyTo(ctx context.Context, botID, serverID, sessionID, content
 }
 func (a *Agent) replyTurn(ctx context.Context, botID, serverID, sessionID, content string, refs []model.Attachment, sink func(Step)) (Result, error) {
 	reply := options(ctx).ChoiceAnswer
+	secretReply := options(ctx).SecretAnswer
+	if reply != nil && secretReply != nil {
+		return Result{}, errors.New("一次只能回答一个卡片")
+	}
 	if reply != nil {
 		if sessionID == "" {
 			return Result{}, errors.New("缺少要回答的问题")
 		}
 		content = "选项回答"
+	}
+	if secretReply != nil {
+		if sessionID == "" {
+			return Result{}, errors.New("缺少要保存的密钥")
+		}
+		// Ignore anything the client put in the message body. The plaintext
+		// arrives only in SecretAnswer and is replaced by an acknowledgement.
+		content = "密钥已保存"
 	}
 	content = strings.TrimSpace(content)
 	if content == "" {
@@ -120,12 +135,23 @@ func (a *Agent) replyTurn(ctx context.Context, botID, serverID, sessionID, conte
 		}
 		content = text
 	}
+	if secretReply != nil {
+		text, done, err := a.answerSecret(ctx, sess.ID, *secretReply)
+		if err != nil {
+			return Result{}, err
+		}
+		if done {
+			return Result{SessionID: sess.ID, Answered: true}, nil
+		}
+		content = text
+	}
 	ctx = context.WithValue(ctx, taskKey{}, content)
 	ctx = withTaint(ctx)
 	ctx = withGrants(ctx)
 	savedOptions := options(ctx)
 	savedOptions.AttachmentIDs = nil
 	savedOptions.ChoiceAnswer = nil
+	savedOptions.SecretAnswer = nil
 	optionJSON, _ := json.Marshal(savedOptions)
 	if err = a.Store.SaveChatOptions(ctx, sess.ID, optionJSON); err != nil {
 		return Result{}, err

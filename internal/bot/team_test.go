@@ -131,6 +131,9 @@ func TestTeamHidesSecretWhileDelegating(t *testing.T) {
 	if !strings.Contains(bodies[0], `"ask_user"`) || strings.Contains(bodies[1], `"ask_user"`) {
 		t.Fatal("only the leader may ask the user")
 	}
+	if !strings.Contains(bodies[0], `"request_secret"`) || strings.Contains(bodies[1], `"request_secret"`) {
+		t.Fatal("only the leader may request a secret")
+	}
 	if !strings.Contains(result.Text, "可以连接") {
 		t.Fatal("leader did not receive the worker conclusion")
 	}

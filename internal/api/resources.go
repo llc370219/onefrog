@@ -12,6 +12,7 @@ import (
 	"onefrog/internal/onboarding"
 	"onefrog/internal/preferences"
 	"onefrog/internal/remote"
+	"onefrog/internal/secret"
 	"onefrog/internal/store"
 )
 
@@ -417,8 +418,17 @@ func (s *Server) listSecrets(c *gin.Context) {
 
 func (s *Server) createSecret(c *gin.Context) {
 	var req secretReq
-	if err := c.BindJSON(&req); err != nil || strings.TrimSpace(req.Name) == "" || req.Value == "" {
-		fail(c, http.StatusBadRequest, "名称和内容必填")
+	if err := c.BindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, "请求无效")
+		return
+	}
+	name, err := secret.ValidName(req.Name)
+	if err != nil {
+		fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err = secret.ValidValue(req.Value); err != nil {
+		fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	enc, err := s.Box.Encrypt(req.Value)
@@ -426,11 +436,41 @@ func (s *Server) createSecret(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, "加密失败")
 		return
 	}
-	item, err := s.Store.CreateSecret(c.Request.Context(), store.SecretRec{Secret: model.Secret{Name: strings.TrimSpace(req.Name), Description: req.Description}, EncryptedValue: enc})
+	item, err := s.Store.CreateSecret(c.Request.Context(), store.SecretRec{Secret: model.Secret{Name: name, Description: secret.CleanDescription(req.Description)}, EncryptedValue: enc})
 	if mapStore(c, err) {
 		return
 	}
 	c.JSON(http.StatusCreated, item)
+}
+
+func (s *Server) updateSecret(c *gin.Context) {
+	var req struct {
+		Value       string  `json:"value"`
+		Description *string `json:"description"`
+	}
+	if err := c.BindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, "请求无效")
+		return
+	}
+	if err := secret.ValidValue(req.Value); err != nil {
+		fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	var desc *string
+	if req.Description != nil {
+		cleaned := secret.CleanDescription(*req.Description)
+		desc = &cleaned
+	}
+	enc, err := s.Box.Encrypt(req.Value)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, "加密失败")
+		return
+	}
+	item, err := s.Store.UpdateSecret(c.Request.Context(), c.Param("id"), enc, desc)
+	if mapStore(c, err) {
+		return
+	}
+	c.JSON(http.StatusOK, item)
 }
 
 func (s *Server) deleteSecret(c *gin.Context) {

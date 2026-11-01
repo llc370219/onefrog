@@ -146,6 +146,7 @@ func (s *Server) Handler() http.Handler {
 	authed.GET("/approvals", s.listApprovals)
 	authed.GET("/secrets", s.listSecrets)
 	authed.POST("/secrets", s.createSecret)
+	authed.PUT("/secrets/:id", s.updateSecret)
 	authed.DELETE("/secrets/:id", s.deleteSecret)
 	authed.GET("/modules", s.listModules)
 	authed.POST("/modules/install", s.installModule)
@@ -286,6 +287,10 @@ func mapStore(c *gin.Context, err error) bool {
 	}
 	if errors.Is(err, store.ErrConflict) {
 		fail(c, http.StatusConflict, "名称已存在")
+		return true
+	}
+	if errors.Is(err, store.ErrLimit) {
+		fail(c, http.StatusConflict, err.Error())
 		return true
 	}
 	fail(c, http.StatusInternalServerError, "服务器错误")

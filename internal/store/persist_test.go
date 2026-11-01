@@ -247,3 +247,34 @@ func TestChoiceCardSurvivesRestartAndAnswersOnce(t *testing.T) {
 		t.Fatalf("unknown message: %v", err)
 	}
 }
+
+func TestSecretCardSurvivesRestart(t *testing.T) {
+	dir, box := t.TempDir(), persistBox(t)
+	ctx := context.Background()
+	m := reopen(t, dir, box)
+	sess, err := m.EnsureSession(ctx, "", "main", "密钥")
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, err := m.AddMessage(ctx, model.Message{SessionID: sess.ID, Role: "assistant", Content: "需要密钥", SecretRequest: &model.SecretRequest{Name: "数据库密码", Label: "数据库密码", Description: "生产库"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = reopen(t, dir, box)
+	msgs, err := m.ListMessages(ctx, sess.ID)
+	if err != nil || len(msgs) != 1 || msgs[0].SecretRequest == nil || msgs[0].SecretRequest.Name != "数据库密码" || msgs[0].SecretRequest.ProvidedAt != nil {
+		t.Fatalf("card after restart: %+v %v", msgs, err)
+	}
+	if _, err = m.MarkSecretProvided(ctx, sess.ID, msg.ID, time.Unix(20, 0).UTC()); err != nil {
+		t.Fatal(err)
+	}
+	m = reopen(t, dir, box)
+	got, err := m.MarkSecretProvided(ctx, sess.ID, msg.ID, time.Now())
+	if !errors.Is(err, ErrConflict) || got.SecretRequest == nil || got.SecretRequest.ProvidedAt == nil {
+		t.Fatalf("second mark: %+v %v", got, err)
+	}
+	raw, _ := json.Marshal(got)
+	if strings.Contains(string(raw), "value") && strings.Contains(string(raw), "plain") {
+		t.Fatal("card stored a value")
+	}
+}

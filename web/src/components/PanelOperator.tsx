@@ -1,7 +1,8 @@
 import { FormEvent, useState } from "react";
 import { Bot, LoaderCircle } from "lucide-react";
-import type { BotRow, ChatStep, Choice, SettingsState } from "../api";
+import type { BotRow, ChatStep, Choice, SecretRequest, SettingsState } from "../api";
 import ChoiceCard from "./ChoiceCard";
+import SecretCard from "./SecretCard";
 import { Button } from "./ui";
 
 export type PanelJob = {
@@ -14,6 +15,7 @@ export type PanelJob = {
   botId: string;
   messageId?: string;
   choice?: Choice;
+  secret?: SecretRequest;
   serverId?: string;
 };
 
@@ -42,13 +44,14 @@ const orders = [
   { label: "检查更新", text: "调用 panel 的 check_update。只汇报有没有新版本，不要调用 apply_update。" },
 ];
 
-export default function PanelOperator({ settings, bots, sending, job, onRun, onAnswer, onSettings }: {
+export default function PanelOperator({ settings, bots, sending, job, onRun, onAnswer, onProvide, onSettings }: {
   settings: SettingsState | null;
   bots: BotRow[];
   sending: boolean;
   job: PanelJob | null;
   onRun: (text: string, serverId?: string) => void;
   onAnswer: (values: string[], custom: string) => void;
+  onProvide: (value: string) => void;
   onSettings: () => void;
 }) {
   const ready = modelReady(settings, bots);
@@ -82,7 +85,7 @@ export default function PanelOperator({ settings, bots, sending, job, onRun, onA
           </form>
         </>
       )}
-      {job && (job.pending || job.error || job.text || job.steps.length > 0 || job.choice) && (
+      {job && (job.pending || job.error || job.text || job.steps.length > 0 || job.choice || job.secret) && (
         <div className="operator-result" aria-live="polite">
           {job.pending && <p className="operator-pending"><LoaderCircle size={14} className="spin" />正在操作面板</p>}
           {job.error && <p className="operator-error">{job.error}</p>}
@@ -93,7 +96,7 @@ export default function PanelOperator({ settings, bots, sending, job, onRun, onA
             </div>
           ))}
           {job.text && <p className="operator-text">{job.text}</p>}
-          {job.choice && <ChoiceCard choice={job.choice} disabled={busy} onAnswer={onAnswer} />}
+          {job.choice && <ChoiceCard choice={job.choice} disabled={busy} onAnswer={onAnswer} />}{job.secret && <SecretCard request={job.secret} disabled={busy} onProvide={onProvide} />}
         </div>
       )}
     </section>

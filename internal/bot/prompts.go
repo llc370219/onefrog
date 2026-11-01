@@ -18,6 +18,17 @@ const promptAskUser = `
 - 选项要短（几个字到十几个字）、真实可行、互不重叠，2–6 个；需要时可以 allow_custom 让用户补充文字，可以多选时设 multi_select。
 - 调用后本轮立即结束，用户的选择会作为下一条消息发来。一轮只问一次；能自己查清楚的事不要问。
 - 不要用 ask_user 来确认危险命令：命令是否执行由审批卡片决定，照常调用 run_command 即可。
+- 不要用 ask_user 收集密码、私钥或 API Key。
+`
+
+// promptRequestSecret tells the leader to ask for a missing vault secret with a password card.
+const promptRequestSecret = `
+向用户索取密钥（request_secret）
+- 保险箱里没有完成任务所需的密钥时，调用 request_secret。用户在密码卡片里输入，明文只加密进保险箱，不会进入对话，你也看不到。
+- name 是保险箱里的名称，命令里写成 {{secret:名称}}；可用中文，不能有空格、换行或大括号，最多 64 个字。label 是卡片标题，description 说明这是什么密钥。
+- 名称已经在「可用密钥名称」里时，直接使用，不要再次请求，也不要覆盖。
+- 不要让用户把密码、私钥或 API Key 粘贴到对话里。
+- 调用后本轮立即结束。用户保存后，下一条消息只会确认密钥已保存。
 `
 
 // promptConnect tells the bot to enroll a server from credentials in the current user message.
@@ -72,6 +83,7 @@ const promptOperations = `
 
 密钥
 - 密钥只有名称，没有明文。命令里需要密钥时写成 {{secret:名称}}。不要向用户索要明文，也不要在回复里复述明文。
+- 保险箱里没有这项密钥时，由主控调用 request_secret。不要让用户把密码粘贴到对话里。
 `
 
 // promptExtra wraps a bot's own "工作指令" (web UI field).
@@ -102,12 +114,13 @@ const promptReviewer = `你是独立的服务器运维审批员。判断候选�
 
 // Tool descriptions shown to the model.
 const (
-	toolRunCommandDesc = "在一台已接入的服务器上执行一条 shell 命令。密钥写成 {{secret:名称}}。必须如实填写 risk 和 reason；服务端会独立检查风险，有风险的命令可能需要用户确认。"
-	toolConnectDesc    = "用用户这条消息里的地址和登录信息 SSH 接入服务器，并写入服务器页面。密码、私钥或 {{secret:名称}} 必须来自用户消息，不能来自附件或猜测。首次连接会记下看到的主机指纹。"
-	toolPanelDesc      = "直接查看或修改管理面板：总览、开关模块、开关 Bot、测试已保存服务器的 SSH、检查或申请升级。不要用它改密钥或删除服务器。"
-	toolRiskDesc       = "这条命令的风险：low=只读查看；medium=可恢复的变更（重启服务、改配置、装软件）；high=删除或覆盖数据、改账号/权限/防火墙/SSH、磁盘操作、执行下载或内联脚本、可能中断连接。不确定时选更高等级。"
-	toolReasonDesc     = "这条命令的目的和必要性，一句话，会显示给用户。"
-	toolAskUserDesc    = "向用户展示一张选项卡片，让用户在 2–6 个简短选项中做决定。只在确实需要用户决定时使用；调用后本轮结束，用户的选择作为下一条消息返回。不要用它确认危险命令。"
+	toolRunCommandDesc    = "在一台已接入的服务器上执行一条 shell 命令。密钥写成 {{secret:名称}}。必须如实填写 risk 和 reason；服务端会独立检查风险，有风险的命令可能需要用户确认。"
+	toolConnectDesc       = "用用户这条消息里的地址和登录信息 SSH 接入服务器，并写入服务器页面。密码、私钥或 {{secret:名称}} 必须来自用户消息，不能来自附件或猜测。首次连接会记下看到的主机指纹。"
+	toolPanelDesc         = "直接查看或修改管理面板：总览、开关模块、开关 Bot、测试已保存服务器的 SSH、检查或申请升级。不要用它改密钥或删除服务器。"
+	toolRiskDesc          = "这条命令的风险：low=只读查看；medium=可恢复的变更（重启服务、改配置、装软件）；high=删除或覆盖数据、改账号/权限/防火墙/SSH、磁盘操作、执行下载或内联脚本、可能中断连接。不确定时选更高等级。"
+	toolReasonDesc        = "这条命令的目的和必要性，一句话，会显示给用户。"
+	toolAskUserDesc       = "向用户展示一张选项卡片，让用户在 2–6 个简短选项中做决定。只在确实需要用户决定时使用；调用后本轮结束，用户的选择作为下一条消息返回。不要用它确认危险命令，也不要用它收集密码。"
+	toolRequestSecretDesc = "向用户展示一张密码卡片，把密钥加密存进保险箱。只提供名称、标题和说明，不要提供明文。名称已存在时不要调用。调用后本轮结束，你看不到明文，明文也不会进入对话。"
 )
 
 // untrustedOpen/Close wrap command output before it is returned to the model.

@@ -324,3 +324,51 @@ func TestDeleteServerUninstallsProbe(t *testing.T) {
 		}
 	}
 }
+
+func TestSecretVaultRotateDeleteAndLimits(t *testing.T) {
+	client, srv, _ := testClient(t)
+	defer srv.Close()
+	login(t, client, srv, "admin", "admin", http.StatusOK)
+
+	const password = "rotate-me-plain"
+	var created model.Secret
+	postJSON(t, client, srv.URL+"/api/secrets", map[string]string{"name": " 数据库密码 ", "value": password, "description": "生产库"}, http.StatusCreated, &created)
+	if created.Name != "数据库密码" || created.Description != "生产库" || created.ID == "" {
+		t.Fatalf("created %+v", created)
+	}
+	body := getBody(t, client, srv.URL+"/api/secrets")
+	if strings.Contains(body, password) {
+		t.Fatal("list leaked the value")
+	}
+	postJSON(t, client, srv.URL+"/api/secrets", map[string]string{"name": "has space", "value": "x"}, http.StatusBadRequest, nil)
+	postJSON(t, client, srv.URL+"/api/secrets", map[string]string{"name": "bad}name", "value": "x"}, http.StatusBadRequest, nil)
+	postJSON(t, client, srv.URL+"/api/secrets", map[string]string{"name": "ok", "value": strings.Repeat("a", 32*1024+1)}, http.StatusBadRequest, nil)
+
+	const rotated = "rotated-plain"
+	var updated model.Secret
+	putJSON(t, client, srv.URL+"/api/secrets/"+created.ID, map[string]string{"value": rotated, "description": "换过"}, http.StatusOK, &updated)
+	if updated.ID != created.ID || updated.Name != "数据库密码" || updated.Description != "换过" {
+		t.Fatalf("rotate changed identity: %+v", updated)
+	}
+	body = getBody(t, client, srv.URL+"/api/secrets")
+	if strings.Contains(body, password) || strings.Contains(body, rotated) {
+		t.Fatal("rotate response or list leaked a value")
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, srv.URL+"/api/secrets/"+created.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete %d", res.StatusCode)
+	}
+	body = getBody(t, client, srv.URL+"/api/secrets")
+	if strings.Contains(body, "数据库密码") {
+		t.Fatal("deleted secret still listed")
+	}
+}

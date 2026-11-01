@@ -113,12 +113,22 @@ type Choice struct {
 	Answer      *ChoiceAnswer  `json:"answer,omitempty"`
 }
 
+// SecretRequest is a password card from request_secret. The plaintext is never
+// stored on the message, in the transcript, or returned to the model.
+type SecretRequest struct {
+	Name        string     `json:"name"`
+	Label       string     `json:"label"`
+	Description string     `json:"description,omitempty"`
+	ProvidedAt  *time.Time `json:"provided_at,omitempty"`
+}
+
 type Message struct {
-	Choice      *Choice      `json:"choice,omitempty"`
-	Attachments []Attachment `json:"attachments,omitempty"`
-	ID          string       `json:"id"`
-	SessionID   string       `json:"session_id"`
-	Role        string       `json:"role"`
-	Content     string       `json:"content"`
-	CreatedAt   time.Time    `json:"created_at"`
+	Choice        *Choice        `json:"choice,omitempty"`
+	SecretRequest *SecretRequest `json:"secret_request,omitempty"`
+	Attachments   []Attachment   `json:"attachments,omitempty"`
+	ID            string         `json:"id"`
+	SessionID     string         `json:"session_id"`
+	Role          string         `json:"role"`
+	Content       string         `json:"content"`
+	CreatedAt     time.Time      `json:"created_at"`
 }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowRight, Blocks, Bot, Check, ChevronRight, History, KeyRound, LayoutDashboard, LoaderCircle, LockKeyhole, LogOut, Menu, MessageSquare, RefreshCw, Server, Settings, Terminal, X } from 'lucide-react';
 import { api, type BotRow, type ChatLine, type ChatStep, type Hist, type Host, type Mod, type SecretRow, type SettingsState, type ServerTestResult, type ModelRoute, type Profile, type ChatSession, type Attachment, type UpdateStatus, type Choice } from './api';
 import { choiceAnswerText } from './components/ChoiceCard';
+import { secretAckText } from './components/SecretCard';
 import { Button, Field, IconButton, Modal, Notice } from './components/ui';
 import { RoutePicker } from "./components/ModelPicker";
 import SettingsPanel from "./pages/Settings";
@@ -22,7 +23,7 @@ import { HistoryPage, Modules, Secrets } from './pages/Resources';
 import Assets from './pages/Assets';
 
 type View = 'panel' | 'chat' | 'servers' | 'agents' | 'secrets' | 'modules' | 'history';
-type Dialog = 'account' | 'settings' | 'modules' | 'server' | 'secret' | 'agent' | 'rollback' | null;
+type Dialog = 'account' | 'settings' | 'modules' | 'server' | 'secret' | 'rotate' | 'agent' | 'rollback' | null;
 const navigation = [{id:'panel',label:'面板',icon:LayoutDashboard}, {id:'chat',label:'AI 助理',icon:MessageSquare}, {id:'modules',label:'模块',icon:Blocks}, {id:'servers',label:'服务器',icon:Server}, {id:'agents',label:'Bot',icon:Bot}, {id:'secrets',label:'密钥保险箱',icon:KeyRound}, {id:'history',label:'变更记录',icon:History}] as const;
 const emptyForm = {name:'',host:'',role:'',value:'',port:'22',username:'root',auth_type:'password',description:'',system_prompt:''};
 const message = (err: unknown) => err instanceof Error ? err.message : '操作失败，请重试';
@@ -39,7 +40,7 @@ export default function App() {
   const [hosts,setHosts] = useState<Host[]>([]); const [mods,setMods] = useState<Mod[]>([]); const [history,setHistory] = useState<Hist[]>([]); const [secrets,setSecrets] = useState<SecretRow[]>([]); const [bots,setBots] = useState<BotRow[]>([]);
   const [selected,setSelected] = useState('');const [addedServer,setAddedServer]=useState('');
  const [chatConfig,setChatConfig]=useState<SettingsState|null>(null);const [controls,setControls]=useState<ChatControlState>({model:{provider_id:'',model:''},excluded:[],approval:'default'});const [attachments,setAttachments]=useState<Attachment[]>([]);const [uploading,setUploading]=useState(false);const uploadRef=useRef(false); const [dialog,setDialog] = useState<Dialog>(null);
-  const [form,setForm] = useState(emptyForm);
+  const [form,setForm] = useState(emptyForm); const [rotateID,setRotateID] = useState('');
   const [botModels,setBotModels] = useState<SettingsState|null>(null);
   const [botRoute,setBotRoute] = useState<ModelRoute>({provider_id:'',model:''});
   const [botModelsLoading,setBotModelsLoading] = useState(false);
@@ -92,14 +93,19 @@ export default function App() {
     if(busy) return; setFormError('');setBusy(true);
     try {
       if(dialog === 'server') {const port = Number(form.port); if(!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('端口必须是 1–65535 的整数'); await api.createServer({name:form.name.trim(),host:form.host.trim(),role:form.role.trim(),port,username:form.username.trim(),auth_type:form.auth_type,secret:form.value});}
-      if(dialog === 'secret') await api.createSecret({name:form.name.trim(),value:form.value,description:form.description.trim()});
+      if(dialog === 'secret' || dialog === 'rotate') {
+        const value = form.value;
+        setForm(cur => ({...cur, value: ''}));
+        if(dialog === 'secret') await api.createSecret({name:form.name.trim(),value,description:form.description.trim()});
+        else await api.rotateSecret(rotateID,{value,description:form.description.trim()});
+      }
       if(dialog === 'agent') {if(!botModels||botModelsLoading) throw new Error('模型配置尚未加载，请关闭后重试');if(botRoute.provider_id&&!botRoute.model)throw new Error('请选择模型');await api.createBot({name:form.name.trim(),description:form.description.trim(),system_prompt:form.system_prompt.trim(),model_route:botRoute});}
       setDialog(null);setForm(emptyForm);setNotice('已保存');await load();
     } catch(err) {setFormError(message(err));} finally {setBusy(false);}
   }
   function openChat(text?: string) {go('chat');setMobileNav(false);if(text) setDraft(text);}
   function newChat(botID=bots.find(b=>b.id===activeBot&&b.enabled)?.id||defaultBot(bots)){if(sendingRef.current||uploadRef.current)return;chatLoad.current++;setActiveBot(botID);setSession('');setLines([]);setDraft('');setSelected('');setAttachments([]);setControls({model:{provider_id:'',model:''},excluded:[],approval:'default'});setMobileNav(false);}
-  async function restoreChat(item:ChatSession){if(sendingRef.current||uploadRef.current)return;const request=++chatLoad.current;setLoading(true);try{const rows=await api.messages(item.id);if(request!==chatLoad.current)return;setActiveBot(item.bot_id);setSelected('');setSession(item.id);setLines(rows.filter(r=>r.role==='user'||r.role==='assistant').map(r=>({who:r.role==='user'?'user':'bot',text:r.content,attachments:r.attachments,id:r.id,choice:r.choice||undefined})));setDraft('');setAttachments([]);setControls({model:item.options?.model_route||{provider_id:'',model:''},excluded:(item.options?.excluded_bot_ids||[]).filter(id=>bots.some(b=>b.id===id)),approval:item.options?.approval_mode==='rules'?'off':item.options?.approval_mode||'default',review:item.options?.approval_route});setMobileNav(false);}catch(e){setPageError(message(e));}finally{if(request===chatLoad.current)setLoading(false);}}
+  async function restoreChat(item:ChatSession){if(sendingRef.current||uploadRef.current)return;const request=++chatLoad.current;setLoading(true);try{const rows=await api.messages(item.id);if(request!==chatLoad.current)return;setActiveBot(item.bot_id);setSelected('');setSession(item.id);setLines(rows.filter(r=>r.role==='user'||r.role==='assistant').map(r=>({who:r.role==='user'?'user':'bot',text:r.content,attachments:r.attachments,id:r.id,choice:r.choice||undefined,secret:r.secret_request||undefined})));setDraft('');setAttachments([]);setControls({model:item.options?.model_route||{provider_id:'',model:''},excluded:(item.options?.excluded_bot_ids||[]).filter(id=>bots.some(b=>b.id===id)),approval:item.options?.approval_mode==='rules'?'off':item.options?.approval_mode||'default',review:item.options?.approval_route});setMobileNav(false);}catch(e){setPageError(message(e));}finally{if(request===chatLoad.current)setLoading(false);}}
   function chooseBot(id:string){if(sendingRef.current||uploadRef.current)return;chatLoad.current++;setActiveBot(id);setSession('');setLines([]);setControls(cur=>({...cur,model:{provider_id:'',model:''},excluded:cur.excluded.filter(x=>x!==id)}));}
   async function uploadFiles(files:File[]){if(!files.length||uploadRef.current||sendingRef.current)return;if(files.some(f=>f.size>5*1024*1024)){setPageError('每个文件不能超过 5 MB');return;}if(files.length+attachments.length>4){setPageError('每轮最多上传 4 个附件');return;}if(files.reduce((n,f)=>n+f.size,0)+attachments.reduce((n,f)=>n+f.size,0)>12*1024*1024){setPageError('附件合计不能超过 12 MB');return;}uploadRef.current=true;setUploading(true);setPageError('');try{for(const file of files){const ref=await api.upload(file);setAttachments(cur=>[...cur,ref]);}}catch(e){setPageError(message(e));}finally{uploadRef.current=false;setUploading(false);}}
   async function send() {
@@ -110,7 +116,7 @@ export default function App() {
     setLines(cur => [...cur,{who:'user',text,attachments:sentAttachments},{who:'bot',text:'',pending:true,steps:[]}]);
     const steps: ChatStep[] = [];
     const paint = (reply: string,pending: boolean,extra?:Partial<ChatLine>) => setLines(cur => [...cur.slice(0,-1),{who:'bot',text:reply,pending,steps:[...steps],...extra}]);
-    try {const reply = await api.chatLive({content:text,server_id:selected,session_id:session,bot_id:activeBot,model_route:controls.model,excluded_bot_ids:controls.excluded,approval_mode:controls.approval,approval_route:controls.approval==='model'?controls.review:undefined,attachment_ids:sentAttachments.map(f=>f.id)},step => {steps.push(step); if(step.ok && step.server && (step.command||'').includes('接入')){setSelected(step.server);setAddedServer(step.server);} paint('',true);});setSession(reply.session_id);paint(reply.text,false,{id:reply.message_id,choice:reply.choice});await load(); if(steps.some(step => step.ok && (step.command||'').includes('接入'))) setNotice('服务器已接入，已出现在服务器页面');}
+    try {const reply = await api.chatLive({content:text,server_id:selected,session_id:session,bot_id:activeBot,model_route:controls.model,excluded_bot_ids:controls.excluded,approval_mode:controls.approval,approval_route:controls.approval==='model'?controls.review:undefined,attachment_ids:sentAttachments.map(f=>f.id)},step => {steps.push(step); if(step.ok && step.server && (step.command||'').includes('接入')){setSelected(step.server);setAddedServer(step.server);} paint('',true);});setSession(reply.session_id);paint(reply.text,false,{id:reply.message_id,choice:reply.choice,secret:reply.secret_request});await load(); if(steps.some(step => step.ok && (step.command||'').includes('接入'))) setNotice('服务器已接入，已出现在服务器页面');}
     catch(err) {paint(message(err),false);setAttachments(sentAttachments);} finally {sendingRef.current=false;setSending(false);api.sessions().then(setSessions).catch(()=>{});}
   }
   /** Answers an ask_user card once; the answer becomes the next user message and resumes the turn. */
@@ -126,8 +132,23 @@ export default function App() {
     const resync = async () => {try {const rows = await api.messages(sid);const row = rows.find(r => r.id === cardID);mark(row?.choice?.answer);} catch {mark(undefined);}};
     try {const reply = await api.chatLive({content:'',server_id:selected,session_id:sid,bot_id:activeBot,model_route:controls.model,excluded_bot_ids:controls.excluded,approval_mode:controls.approval,approval_route:controls.approval==='model'?controls.review:undefined,choice_answer:{message_id:cardID,values,custom:custom.trim()||undefined}},step => {steps.push(step); if(step.ok && step.server && (step.command||'').includes('接入')){setSelected(step.server);setAddedServer(step.server);} paint('',true);});
       if(reply.answered){setLines(cur => cur.slice(0,-2));await resync();return;}
-      paint(reply.text,false,{id:reply.message_id,choice:reply.choice});await load();}
+      paint(reply.text,false,{id:reply.message_id,choice:reply.choice,secret:reply.secret_request});await load();}
     catch(err) {paint(message(err),false);await resync();} finally {sendingRef.current=false;setSending(false);api.sessions().then(setSessions).catch(()=>{});}
+  }
+  async function answerSecret(card: ChatLine, value: string) {
+    if(sendingRef.current || uploadRef.current || loading || !card.id || !card.secret || card.secret.provided_at || !session) return;chatLoad.current++;
+    sendingRef.current = true;setSending(true);
+    const sid = session, cardID = card.id, name = card.secret.name;
+    const mark = (provided?: string) => setLines(cur => cur.map(l => l.id === cardID && l.secret ? {...l,secret:{...l.secret,provided_at:provided}} : l));
+    mark(new Date().toISOString());
+    setLines(cur => [...cur,{who:'user',text:secretAckText(name)},{who:'bot',text:'',pending:true,steps:[]}]);
+    const steps: ChatStep[] = [];
+    const paint = (reply: string,pending: boolean,extra?:Partial<ChatLine>) => setLines(cur => [...cur.slice(0,-1),{who:'bot',text:reply,pending,steps:[...steps],...extra}]);
+    const resync = async () => {try {const rows = await api.messages(sid);const row = rows.find(r => r.id === cardID);mark(row?.secret_request?.provided_at);} catch {mark(undefined);}};
+    try {const reply = await api.chatLive({content:'',server_id:selected,session_id:sid,bot_id:activeBot,model_route:controls.model,excluded_bot_ids:controls.excluded,approval_mode:controls.approval,approval_route:controls.approval==='model'?controls.review:undefined,secret_answer:{message_id:cardID,value}},step => {steps.push(step); if(step.ok && step.server && (step.command||'').includes('接入')){setSelected(step.server);setAddedServer(step.server);} paint('',true);});
+      if(reply.answered){setLines(cur => cur.slice(0,-2));await resync();return;}
+      paint(reply.text,false,{id:reply.message_id,choice:reply.choice,secret:reply.secret_request});await load();}
+    catch(err) {setLines(cur => cur.slice(0,-2));setPageError(message(err));await resync();} finally {sendingRef.current=false;setSending(false);api.sessions().then(setSessions).catch(()=>{});}
   }
   async function runPanel(prompt: string, serverId?: string) {
     if (sendingRef.current || uploadRef.current || loading) return;
@@ -145,7 +166,7 @@ export default function App() {
         paint({ pending: true });
       });
       panelSession.current = reply.session_id || panelSession.current;
-      paint({ pending: false, text: reply.text, error: '', sessionId: panelSession.current, messageId: reply.message_id, choice: reply.choice });
+      paint({ pending: false, text: reply.text, error: '', sessionId: panelSession.current, messageId: reply.message_id, choice: reply.choice, secret: reply.secret_request });
       await load();
     } catch (err) {
       paint({ pending: false, error: message(err) });
@@ -167,13 +188,49 @@ export default function App() {
       });
       if (reply.answered) { paint({ pending: false, text: '这个问题已经回答过了' }); return; }
       panelSession.current = reply.session_id || panelSession.current;
-      paint({ pending: false, text: reply.text, error: '', sessionId: panelSession.current, messageId: reply.message_id, choice: reply.choice });
+      paint({ pending: false, text: reply.text, error: '', sessionId: panelSession.current, messageId: reply.message_id, choice: reply.choice, secret: reply.secret_request });
       await load();
     } catch (err) {
-      paint({ pending: false, error: message(err), choice: job.choice });
+      paint({ pending: false, error: message(err), choice: job.choice, secret: job.secret });
     } finally {
       sendingRef.current = false; setSending(false);
     }
+  }
+  async function answerPanelSecret(value: string) {
+    const job = panelJob;
+    if (sendingRef.current || uploadRef.current || loading || !job?.messageId || !job.secret || job.secret.provided_at || !panelSession.current) return;
+    sendingRef.current = true; setSending(true);
+    const cardID = job.messageId;
+    const original = job.secret;
+    const steps: ChatStep[] = [];
+    setPanelJob({ ...job, pending: true, error: '', steps, secret: { ...original, provided_at: new Date().toISOString() } });
+    const paint = (patch: Partial<PanelJob>) => setPanelJob(cur => cur ? { ...cur, ...patch, steps: [...steps] } : cur);
+    try {
+      const reply = await api.chatLive({ content: '', server_id: job.serverId, session_id: panelSession.current, bot_id: job.botId || defaultBot(bots), approval_mode: 'default', secret_answer: { message_id: cardID, value } }, step => {
+        steps.push(step); paint({ pending: true });
+      });
+      if (reply.answered) { paint({ pending: false, text: '这项密钥已经保存', secret: { ...original, provided_at: original.provided_at || new Date().toISOString() } }); return; }
+      panelSession.current = reply.session_id || panelSession.current;
+      paint({ pending: false, text: reply.text, error: '', sessionId: panelSession.current, messageId: reply.message_id, choice: reply.choice, secret: reply.secret_request });
+      await load();
+    } catch (err) {
+      paint({ pending: false, error: message(err), secret: original });
+    } finally {
+      sendingRef.current = false; setSending(false);
+    }
+  }
+  function openRotate(row: SecretRow) {
+    setMobileNav(false);
+    setForm({...emptyForm, name: row.name, description: row.desc});
+    setRotateID(row.id);
+    setFormError('');
+    setDialog('rotate');
+  }
+  async function removeSecret(id: string) {
+    const row = secrets.find(item => item.id === id);
+    if (!row) return;
+    if (!window.confirm('删除密钥「' + row.name + '」？命令里的 {{secret:' + row.name + '}} 会失效。')) return;
+    try { await api.deleteSecret(id); setNotice('已删除'); await load(); } catch (err) { setPageError(message(err)); }
   }
   async function login() {
     setBusy(true);setFormError('');
@@ -194,11 +251,11 @@ export default function App() {
     <main className="app-main" inert={Boolean(dialog) || mobileNav}><UpdateBanner status={updateStatus}/><div className="topbar"><IconButton label="展开导航" className="mobile-menu" onClick={() => setMobileNav(true)}><Menu size={20}/></IconButton><span className="breadcrumb">OneFrog<ChevronRight size={13}/><strong>{currentLabel}</strong></span><div className="topbar-right"><span className="sync-time">{updated ? `更新于 ${updated}` : '尚未同步'}</span><IconButton label="刷新数据" onClick={load} disabled={loading}><RefreshCw size={15} className={loading ? 'spin' : ''}/></IconButton><span className="topbar-divider"/><span className="connection"><span className={`live-dot ${pageError ? 'warn' : ''}`}/>{pageError ? '同步异常' : 'API 已连接'}</span></div></div>
     {pageError && <div className="global-error"><Notice error>{pageError}</Notice><IconButton label="关闭错误提示" onClick={() => setPageError('')}><X size={15}/></IconButton></div>}
     <div className={`view-container ${view === 'chat' ? 'chat-view' : ''}`}>
-    {view === 'panel' && <Dashboard hosts={hosts} mods={mods} history={history} bots={bots} settings={chatConfig} job={panelJob} sending={sending} onSelect={setSelected} onRun={runPanel} onAnswer={answerPanel} onModules={() => open('modules')} onSettings={openSettings} onServers={() => go('servers')} onAssets={() => {setActiveModule('assets'); go('modules');}}/>}
-    {view === 'chat' && <Chat onAddServer={()=>open('server')} controls={controls} onControls={setControls} settings={chatConfig} onBot={chooseBot} attachments={attachments} onFiles={uploadFiles} onRemoveFile={id=>setAttachments(cur=>cur.filter(f=>f.id!==id))} uploading={uploading} activeBot={bots.find(b=>b.id===activeBot)} hosts={hosts} bots={bots} selected={selected} onSelect={setSelected} draft={draft} onDraft={setDraft} lines={lines} onSend={send} sending={sending||loading} onNew={()=>newChat()} onNotice={setNotice} onAnswer={answerChoice}/>}
+    {view === 'panel' && <Dashboard hosts={hosts} mods={mods} history={history} bots={bots} settings={chatConfig} job={panelJob} sending={sending} onSelect={setSelected} onRun={runPanel} onAnswer={answerPanel} onProvide={answerPanelSecret} onModules={() => open('modules')} onSettings={openSettings} onServers={() => go('servers')} onAssets={() => {setActiveModule('assets'); go('modules');}}/>}
+    {view === 'chat' && <Chat onAddServer={()=>open('server')} controls={controls} onControls={setControls} settings={chatConfig} onBot={chooseBot} attachments={attachments} onFiles={uploadFiles} onRemoveFile={id=>setAttachments(cur=>cur.filter(f=>f.id!==id))} uploading={uploading} activeBot={bots.find(b=>b.id===activeBot)} hosts={hosts} bots={bots} selected={selected} onSelect={setSelected} draft={draft} onDraft={setDraft} lines={lines} onSend={send} sending={sending||loading} onNew={()=>newChat()} onNotice={setNotice} onAnswer={answerChoice} onProvide={answerSecret}/>}
     {view === 'servers' && <Servers addedServer={addedServer} hosts={hosts} selected={selected} onSelect={setSelected} onAdd={() => open('server')} onTest={testServer} testing={testing} onChat={() => openChat()} onChanged={load}/>}
     {view === 'agents' && <Bots bots={bots} onAdd={()=>open('agent')} onChanged={load} onChat={id=>{newChat(id);openChat();}}/>}
-    {view === 'secrets' && <Secrets secrets={secrets} onAdd={() => open('secret')}/>}
+    {view === 'secrets' && <Secrets secrets={secrets} onAdd={() => open('secret')} onRotate={openRotate} onDelete={removeSecret}/>}
     {view === 'modules' && activeModule === 'assets' && <Assets hosts={hosts} onAsk={text => {const bot = bots.find(b => (b.id === 'module-builder' || b.name === '模块构建') && b.enabled); if (bot) newChat(bot.id); go('chat'); setDraft(text);}}/>}
     {view === 'modules' && activeModule !== 'assets' && <Modules mods={activeModule?mods.filter(m=>m.id===activeModule):mods} onToggle={toggle} pending={switching} onOpen={id => setActiveModule(id)}/>}
     {view === 'history' && <HistoryPage history={history} onUndo={id => {setRollback(id);open('rollback');}}/>}
@@ -210,7 +267,7 @@ export default function App() {
     {dialog === 'settings' && <SettingsPanel bots={bots} onUpdateStatus={setUpdateStatus} onClose={close} onSaved={() => {setNotice('设置已保存，下一轮任务生效');load();}}/>}
     {dialog === 'modules' && <Modal title="定制面板模块" note="选择你想持续关注的内容，开关即时保存。" onClose={close} confirm="完成"><div className="module-picker">{mods.map(m => <div key={m.id}><span className="host-icon"><Blocks size={16}/></span><div><strong>{m.name}</strong><small>{m.desc}</small></div><button className={`switch ${m.enabled ? 'on' : ''}`} role="switch" aria-checked={m.enabled} aria-label={`显示${m.name}`} disabled={!!switching} onClick={() => toggle(m.id)}><i/></button></div>)}</div></Modal>}
     {dialog === 'server' && <AddServer onClose={close} onChanged={load} onDone={id=>{setSelected(id);setAddedServer(id);setNotice('服务器接入状态已更新');load();}}/>}
-    {dialog === 'secret' && <Modal title="添加密钥" note="在这里录入敏感内容，Bot 只能按名称引用。" onClose={close} onSubmit={submit} busy={busy} error={formError}><Field label="密钥名称" hint="命令引用格式：{{secret:名称}}"><input required value={form.name} placeholder="例如 production-db-password" onChange={e => setForm({...form,name:e.target.value})}/></Field><Field label="密钥内容"><textarea required className="secret-textarea" autoComplete="off" value={form.value} placeholder="输入密码、API Key 或私钥" rows={4} onChange={e => setForm({...form,value:e.target.value})}/></Field><Field label="用途说明"><input value={form.description} placeholder="例如：生产数据库连接凭据" onChange={e => setForm({...form,description:e.target.value})}/></Field><div className="inline-help"><LockKeyhole size={15}/>关闭窗口会清空未保存的敏感内容。</div></Modal>}
+    {dialog === 'secret' && <Modal title="添加密钥" note="在这里录入敏感内容，Bot 只能按名称引用。" onClose={close} onSubmit={submit} busy={busy} error={formError}><Field label="密钥名称" hint="命令引用格式：{{secret:名称}}"><input required value={form.name} placeholder="例如 production-db-password" onChange={e => setForm({...form,name:e.target.value})}/></Field><Field label="密钥内容"><textarea required className="secret-textarea" autoComplete="off" value={form.value} placeholder="输入密码、API Key 或私钥" rows={4} onChange={e => setForm({...form,value:e.target.value})}/></Field><Field label="用途说明"><input value={form.description} placeholder="例如：生产数据库连接凭据" onChange={e => setForm({...form,description:e.target.value})}/></Field><div className="inline-help"><LockKeyhole size={15}/>关闭窗口会清空未保存的敏感内容。</div></Modal>}{dialog === 'rotate' && <Modal title="轮换密钥" note={'替换「' + form.name + '」的密文。名称不变，明文不会显示。'} onClose={close} onSubmit={submit} busy={busy} error={formError} confirm="保存新内容"><Field label="密钥名称"><input value={form.name} readOnly/></Field><Field label="新的密钥内容"><textarea required className="secret-textarea" autoComplete="off" value={form.value} placeholder="输入新的密码、API Key 或私钥" rows={4} onChange={e => setForm({...form,value:e.target.value})}/></Field><Field label="用途说明"><input value={form.description} placeholder="可选，留空则清空说明" onChange={e => setForm({...form,description:e.target.value})}/></Field><div className="inline-help"><LockKeyhole size={15}/>提交后输入框会清空。模型仍然只能看到名称。</div></Modal>}
     {dialog === 'agent' && <Modal title="创建 Bot" note="描述分工，让主控知道何时把任务交给它。" onClose={close} onSubmit={submit} busy={busy} submitDisabled={botModelsLoading||!botModels} error={formError} confirm="创建 Bot"><Field label="Bot 名称"><input required placeholder="例如：数据库专家" value={form.name} onChange={e => setForm({...form,name:e.target.value})}/></Field><Field label="职责描述"><input required placeholder="例如：分析数据库性能与慢查询" value={form.description} onChange={e => setForm({...form,description:e.target.value})}/></Field>{botModelsLoading?<div className="loading-inline"><LoaderCircle size={16} className="spin"/>加载可选模型…</div>:botModels&&<><RoutePicker label="Bot 模型" note="跟随协作默认模型，或为此 Bot 单独选择渠道和模型；创建后可在设置中修改。" providers={botModels.providers} value={botRoute} onChange={setBotRoute} inherit/>{!botModels.providers.some(p=>p.enabled)&&<p className="model-hidden-note">尚无可用渠道，可先跟随默认配置，稍后在设置中配置。</p>}</>}<Field label="工作指令" hint="可选，用于约束这个 Bot 的工作方式。"><textarea placeholder="例如：先收集证据，只执行只读查询。" rows={4} value={form.system_prompt} onChange={e => setForm({...form,system_prompt:e.target.value})}/></Field></Modal>}
     {dialog === 'rollback' && <Modal title="撤回详情" note="当前版本仅支持记录撤回标记，暂不恢复服务器上的文件或服务。" onClose={close} confirm="知道了"><div className="rollback-detail"><Terminal size={18}/><code>{history.find(h => h.id === rollback)?.action}</code></div><p className="muted">实际恢复需要有效快照与恢复执行器。这里暂不提供恢复操作，避免将记录更新误认为服务器已恢复。</p></Modal>}
   </div>;

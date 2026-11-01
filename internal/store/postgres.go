@@ -6,6 +6,7 @@ import (
 	"errors"
 	"onefrog/internal/id"
 	"onefrog/internal/model"
+	"onefrog/internal/secret"
 	"strings"
 	"time"
 
@@ -260,14 +261,46 @@ func (p *Postgres) SecretByName(ctx context.Context, name string) (SecretRec, er
 }
 
 func (p *Postgres) CreateSecret(ctx context.Context, rec SecretRec) (model.Secret, error) {
+	name, err := secret.ValidName(rec.Name)
+	if err != nil {
+		return model.Secret{}, err
+	}
+	rec.Name = name
+	rec.Description = secret.CleanDescription(rec.Description)
+	var n int
+	if err = p.pool.QueryRow(ctx, "SELECT count(*) FROM secrets").Scan(&n); err != nil {
+		return model.Secret{}, err
+	}
+	if n >= secret.MaxCount {
+		return model.Secret{}, ErrLimit
+	}
 	if rec.ID == "" {
 		rec.ID = id.New()
 	}
 	if rec.CreatedAt.IsZero() {
 		rec.CreatedAt = time.Now().UTC()
 	}
-	_, err := p.pool.Exec(ctx, "INSERT INTO secrets (id, name, encrypted_value, description, created_at) VALUES ($1,$2,$3,$4,$5)", rec.ID, rec.Name, rec.EncryptedValue, rec.Description, rec.CreatedAt)
+	_, err = p.pool.Exec(ctx, "INSERT INTO secrets (id, name, encrypted_value, description, created_at) VALUES ($1,$2,$3,$4,$5)", rec.ID, rec.Name, rec.EncryptedValue, rec.Description, rec.CreatedAt)
 	return rec.Secret, mapErr(err)
+}
+
+func (p *Postgres) UpdateSecret(ctx context.Context, idv, encryptedValue string, description *string) (model.Secret, error) {
+	rec, err := p.GetSecret(ctx, idv)
+	if err != nil {
+		return model.Secret{}, err
+	}
+	if description != nil {
+		rec.Description = secret.CleanDescription(*description)
+	}
+	rec.EncryptedValue = encryptedValue
+	tag, err := p.pool.Exec(ctx, "UPDATE secrets SET encrypted_value=$2, description=$3 WHERE id=$1", idv, rec.EncryptedValue, rec.Description)
+	if err != nil {
+		return model.Secret{}, err
+	}
+	if tag.RowsAffected() == 0 {
+		return model.Secret{}, ErrNotFound
+	}
+	return rec.Secret, nil
 }
 
 func (p *Postgres) DeleteSecret(ctx context.Context, idv string) error {
@@ -425,7 +458,12 @@ func (p *Postgres) AddMessage(ctx context.Context, msg model.Message) (model.Mes
 		raw, _ := json.Marshal(msg.Choice)
 		choice = string(raw)
 	}
-	_, err := p.pool.Exec(ctx, "INSERT INTO messages (id, session_id, role, content, created_at,attachments,choice) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb)", msg.ID, msg.SessionID, msg.Role, msg.Content, msg.CreatedAt, string(attachments), choice)
+	var secretReq any
+	if msg.SecretRequest != nil {
+		raw, _ := json.Marshal(msg.SecretRequest)
+		secretReq = string(raw)
+	}
+	_, err := p.pool.Exec(ctx, "INSERT INTO messages (id, session_id, role, content, created_at,attachments,choice,secret_request) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb)", msg.ID, msg.SessionID, msg.Role, msg.Content, msg.CreatedAt, string(attachments), choice, secretReq)
 	return msg, mapErr(err)
 }
 
@@ -453,8 +491,32 @@ func (p *Postgres) AnswerChoice(ctx context.Context, sessionID, messageID string
 	return model.Message{}, ErrNotFound
 }
 
+func (p *Postgres) MarkSecretProvided(ctx context.Context, sessionID, messageID string, at time.Time) (model.Message, error) {
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	raw, _ := json.Marshal(at.UTC())
+	tag, err := p.pool.Exec(ctx, "UPDATE messages SET secret_request=jsonb_set(secret_request,'{provided_at}',$3::jsonb) WHERE session_id=$1 AND id=$2 AND secret_request IS NOT NULL AND (secret_request->'provided_at') IS NULL", sessionID, messageID, string(raw))
+	if err != nil {
+		return model.Message{}, err
+	}
+	msgs, err := p.ListMessages(ctx, sessionID)
+	if err != nil {
+		return model.Message{}, err
+	}
+	for _, msg := range msgs {
+		if msg.ID == messageID && msg.SecretRequest != nil {
+			if tag.RowsAffected() == 0 {
+				return msg, ErrConflict
+			}
+			return msg, nil
+		}
+	}
+	return model.Message{}, ErrNotFound
+}
+
 func (p *Postgres) ListMessages(ctx context.Context, sessionID string) ([]model.Message, error) {
-	rows, err := p.pool.Query(ctx, "SELECT id, session_id, role, content, created_at, attachments, choice FROM messages WHERE session_id=$1 ORDER BY created_at", sessionID)
+	rows, err := p.pool.Query(ctx, "SELECT id, session_id, role, content, created_at, attachments, choice, secret_request FROM messages WHERE session_id=$1 ORDER BY created_at", sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -462,13 +524,19 @@ func (p *Postgres) ListMessages(ctx context.Context, sessionID string) ([]model.
 	var out []model.Message
 	for rows.Next() {
 		var msg model.Message
-		var attachments, choice []byte
-		if err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &msg.Content, &msg.CreatedAt, &attachments, &choice); err != nil {
+		var attachments, choice, secretReq []byte
+		if err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &msg.Content, &msg.CreatedAt, &attachments, &choice, &secretReq); err != nil {
 			return nil, err
 		}
 		if len(choice) > 0 {
 			msg.Choice = &model.Choice{}
 			if err := json.Unmarshal(choice, msg.Choice); err != nil {
+				return nil, err
+			}
+		}
+		if len(secretReq) > 0 {
+			msg.SecretRequest = &model.SecretRequest{}
+			if err := json.Unmarshal(secretReq, msg.SecretRequest); err != nil {
 				return nil, err
 			}
 		}

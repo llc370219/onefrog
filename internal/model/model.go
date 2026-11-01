@@ -40,6 +40,18 @@ type Bot struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
+// BotMemory is one note belonging to a single bot. Other bots do not see the
+// body unless the leader explicitly recalls it. Secrets are removed before save.
+type BotMemory struct {
+	ID        string    `json:"id"`
+	BotID     string    `json:"bot_id"`
+	Title     string    `json:"title"`
+	Body      string    `json:"body"`
+	Source    string    `json:"source"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type Secret struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`

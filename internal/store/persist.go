@@ -139,6 +139,16 @@ func (m *Memory) EnablePersistence(dir string, box *secret.Box) error {
 		m.modules[r.ID] = r
 	}
 
+	var memories []model.BotMemory
+	if err := readEncryptedJSON(filepath.Join(dir, memoriesFile), box, &memories); err != nil {
+		return err
+	}
+	for _, r := range memories {
+		if r.ID != "" && r.BotID != "" {
+			m.memories[r.ID] = r
+		}
+	}
+
 	entries, err := os.ReadDir(filepath.Join(dir, chatsDir))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err

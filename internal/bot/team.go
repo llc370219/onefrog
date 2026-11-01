@@ -259,6 +259,10 @@ func (a *Agent) execCall(ctx context.Context, speaker model.Bot, creds credentia
 		return "已把选项卡片展示给用户。本轮到此结束，等用户选择后再继续。"
 	case "request_secret":
 		return a.requestSecret(ctx, call, tr)
+	case "remember":
+		return a.rememberCall(ctx, speaker, call, tr)
+	case "recall":
+		return a.recallCall(ctx, speaker, call)
 	case "panel":
 		if isWorker(ctx) || a.managesAssets(speaker) {
 			return "只有主控可以直接改管理面板"
@@ -342,6 +346,13 @@ func (a *Agent) handOff(ctx context.Context, speaker model.Bot, creds credential
 	if text == "" {
 		text = "没有结论"
 	}
+	if text != "没有结论" && !strings.HasPrefix(text, "这轮步骤用完了") {
+		title := clip(strings.Join(strings.Fields(args.Task), " "), 40)
+		if title == "" {
+			title = "最近一次协作"
+		}
+		_, _ = a.Remember(ctx, target.ID, title, text, "handoff")
+	}
 	return target.Name + "：" + text
 }
 
@@ -415,6 +426,9 @@ func (a *Agent) leaderPrompt(ctx context.Context, bot model.Bot, serverID string
 	b.WriteString(promptPanel)
 	writeExtra(&b, bot)
 	a.writePeers(&b, ctx, bot.ID)
+	b.WriteString(promptMemory)
+	a.writeOwnMemory(&b, ctx, bot)
+	a.writePeerMemory(&b, ctx, bot.ID)
 	a.writeSecrets(&b, ctx)
 	a.writeServers(&b, ctx, serverID)
 	a.writeAssets(&b, bot)
@@ -429,6 +443,8 @@ func (a *Agent) workerPrompt(ctx context.Context, bot model.Bot, serverID string
 	fmt.Fprintf(&b, promptWorker, bot.Name, strings.TrimSpace(bot.Description))
 	a.writeOperations(&b, ctx)
 	b.WriteString(promptConnect)
+	b.WriteString(promptMemory)
+	a.writeOwnMemory(&b, ctx, bot)
 	writeExtra(&b, bot)
 	a.writeSecrets(&b, ctx)
 	a.writeServers(&b, ctx, serverID)
@@ -579,7 +595,7 @@ func toolDefs(delegate, manage bool) []map[string]any {
 		"type": "function",
 		"function": map[string]any{
 			"name":        "ask_agent",
-			"description": "把一件具体工作交给另一个 Bot，并拿回它的结论",
+			"description": "把一件具体工作交给另一个 Bot。它会带着自己的记忆完成，并把这次结论记进自己的记忆。",
 			"parameters": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -649,7 +665,7 @@ func toolDefs(delegate, manage bool) []map[string]any {
 	}
 	out := []map[string]any{}
 	if !manage {
-		out = append(out, connect, command)
+		out = append(out, connect, command, rememberTool, recallTool)
 		if delegate {
 			out = append(out, ask)
 		}

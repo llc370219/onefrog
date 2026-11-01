@@ -172,6 +172,7 @@ func (p *Postgres) DeleteServer(ctx context.Context, idv string) error {
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
+	_, _ = p.pool.Exec(ctx, "DELETE FROM bot_memories WHERE bot_id=$1", idv)
 	return nil
 }
 
@@ -227,6 +228,9 @@ func (p *Postgres) DeleteBot(ctx context.Context, idv string) error {
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+	if _, err = p.pool.Exec(ctx, "DELETE FROM bot_memories WHERE bot_id=$1", idv); err != nil {
+		return err
 	}
 	return nil
 }

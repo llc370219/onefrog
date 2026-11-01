@@ -18,6 +18,7 @@ type botView struct {
 	ModelRoute     preferences.Route `json:"model_route"`
 	EffectiveRoute preferences.Route `json:"effective_route"`
 	Usage          usage.Totals      `json:"usage"`
+	MemoryCount    int               `json:"memory_count"`
 }
 
 func (s *Server) botEnabled(c *gin.Context) {

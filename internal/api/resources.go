@@ -293,7 +293,11 @@ func (s *Server) listBots(c *gin.Context) {
 		if route.Model == "" {
 			route.Model = item.ModelName
 		}
-		views = append(views, botView{Bot: item, Enabled: s.Settings.BotEnabled(item.ID), ModelRoute: state.BotRoutes[item.ID], EffectiveRoute: route, Usage: s.Usage.ForBot(item.ID)})
+		memories, err := s.Store.ListBotMemories(c.Request.Context(), item.ID)
+		if mapStore(c, err) {
+			return
+		}
+		views = append(views, botView{Bot: item, Enabled: s.Settings.BotEnabled(item.ID), ModelRoute: state.BotRoutes[item.ID], EffectiveRoute: route, Usage: s.Usage.ForBot(item.ID), MemoryCount: len(memories)})
 	}
 	c.JSON(http.StatusOK, views)
 }

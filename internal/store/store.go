@@ -56,6 +56,12 @@ type Store interface {
 	CreateBot(ctx context.Context, bot model.Bot) (model.Bot, error)
 	UpdateBot(ctx context.Context, bot model.Bot) (model.Bot, error)
 	DeleteBot(ctx context.Context, id string) error
+	// ListBotMemories returns one bot's notes, newest update first.
+	ListBotMemories(ctx context.Context, botID string) ([]model.BotMemory, error)
+	// UpsertBotMemory creates a note or replaces the note with the same title.
+	// The bot keeps at most MaxBotMemories notes; the least recently updated is dropped.
+	UpsertBotMemory(ctx context.Context, item model.BotMemory) (model.BotMemory, error)
+	DeleteBotMemory(ctx context.Context, botID, id string) error
 
 	ListSecrets(ctx context.Context) ([]model.Secret, error)
 	GetSecret(ctx context.Context, id string) (SecretRec, error)

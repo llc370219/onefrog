@@ -31,6 +31,7 @@ type Memory struct {
 	history     map[string]HistoryRec
 	chats       map[string]model.Session
 	messages    map[string][]model.Message
+	memories    map[string]model.BotMemory
 }
 
 type userRow struct {
@@ -50,6 +51,7 @@ func NewMemory() *Memory {
 		secrets: map[string]SecretRec{}, secretName: map[string]string{},
 		modules: map[string]model.Module{}, history: map[string]HistoryRec{},
 		chats: map[string]model.Session{}, messages: map[string][]model.Message{},
+		memories: map[string]model.BotMemory{},
 	}
 }
 
@@ -295,8 +297,17 @@ func (m *Memory) DeleteBot(_ context.Context, idv string) error {
 	}
 	old := m.bots[idv]
 	delete(m.bots, idv)
+	kept := m.snapshotMemoriesLocked()
+	m.dropBotMemoriesLocked(idv)
 	if err := m.saveBotsLocked(); err != nil {
 		m.bots[idv] = old
+		m.memories = kept
+		return err
+	}
+	if err := m.saveMemoriesLocked(); err != nil {
+		m.bots[idv] = old
+		m.memories = kept
+		_ = m.saveBotsLocked()
 		return err
 	}
 	return nil

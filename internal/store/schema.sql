@@ -95,3 +95,14 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS choice JSONB;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS secret_request JSONB;
 
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS options JSONB NOT NULL DEFAULT '{}';
+
+CREATE TABLE IF NOT EXISTS bot_memories (
+  id TEXT PRIMARY KEY,
+  bot_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'bot',
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS bot_memories_bot_title ON bot_memories (bot_id, title);

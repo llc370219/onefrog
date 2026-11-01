@@ -65,7 +65,8 @@ export type Attachment={id:string;name:string;mime:string;size:number};
 export type ChatOptions={approval_route?:ModelRoute;model_route?:ModelRoute;excluded_bot_ids?:string[];approval_mode?:string;attachment_ids?:string[]};
 export type ChatRequest=ChatOptions&{content:string;server_id?:string;bot_id?:string;session_id?:string;choice_answer?:ChoiceReply;secret_answer?:SecretReply};
 export type ChatResult={session_id:string;text:string;message_id?:string;choice?:Choice;secret_request?:SecretRequest;answered?:boolean};
-export type BotRow = { id:string;name:string;description:string;system_prompt?:string;enabled:boolean;model_route:ModelRoute;effective_route:ModelRoute;usage:TokenUsage };
+export type BotRow = { id:string;name:string;description:string;system_prompt?:string;enabled:boolean;model_route:ModelRoute;effective_route:ModelRoute;usage:TokenUsage;memory_count?:number };
+export type BotMemory = { id:string;bot_id:string;title:string;body:string;source:string;created_at:string;updated_at:string };
 
 type ServerJSON = {
   id: string;
@@ -156,6 +157,9 @@ export const api = {
  async upload(file:File):Promise<Attachment>{const data=new FormData();data.append('file',file);const res=await fetch('/api/attachments',{method:'POST',credentials:'include',headers:{[CSRF_HEADER]:'1'},body:data});const body=await res.json();if(!res.ok)throw new Error(body.error||'上传失败');return body;},
  async updateBot(id:string,body:{name:string;description:string;system_prompt:string;model_route:ModelRoute}){return call('/api/bots/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(body)});},
  async botEnabled(id:string,enabled:boolean){return call('/api/bots/'+encodeURIComponent(id)+'/enabled',{method:'PUT',body:JSON.stringify({enabled})});},
+ async memories(id:string):Promise<BotMemory[]>{return (await call('/api/bots/'+encodeURIComponent(id)+'/memories'))||[];},
+ async addMemory(id:string,body:{title:string;body:string}):Promise<BotMemory>{return call('/api/bots/'+encodeURIComponent(id)+'/memories',{method:'POST',body:JSON.stringify(body)});},
+ async deleteMemory(id:string,memoryID:string){return call('/api/bots/'+encodeURIComponent(id)+'/memories/'+encodeURIComponent(memoryID),{method:'DELETE'});},
  async usage():Promise<UsageRow[]>{return call('/api/usage');},
   async monitor():Promise<ProbeView>{return call("/api/monitor");},
   async probeToken(id:string):Promise<{token:string;server_id:string}>{return call("/api/servers/"+encodeURIComponent(id)+"/probe/token",{method:"POST",body:"{}"});},

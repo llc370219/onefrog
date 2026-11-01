@@ -272,12 +272,17 @@ func (a *Agent) chat(ctx context.Context, baseURL, modelName, apiKey string, mes
 	}
 	defer res.Body.Close()
 	payload, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	note := ""
 	if res.StatusCode >= 300 {
-		snippet := string(payload)
-		if len(snippet) > 180 {
-			snippet = snippet[:180]
+		next, mediaNote, err := a.recoverUnsupportedMedia(callCtx, baseURL, modelName, apiKey, messages, tools, payload)
+		if err != nil {
+			return assistantMsg{}, err
 		}
-		return assistantMsg{}, fmt.Errorf("模型接口返回 %d：%s", res.StatusCode, snippet)
+		if next == nil {
+			return assistantMsg{}, providerStatusError(res.StatusCode, payload)
+		}
+		payload = next
+		note = mediaNote
 	}
 	var parsed struct {
 		Usage *struct {
@@ -325,6 +330,13 @@ func (a *Agent) chat(ctx context.Context, baseURL, modelName, apiKey string, mes
 			return assistantMsg{}, err
 		}
 		msg.ToolCalls = append(msg.ToolCalls, call)
+	}
+	if note != "" {
+		if strings.TrimSpace(msg.Content) == "" {
+			msg.Content = note
+		} else {
+			msg.Content = note + "\n" + msg.Content
+		}
 	}
 	return msg, nil
 }

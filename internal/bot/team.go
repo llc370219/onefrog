@@ -93,6 +93,7 @@ func (a *Agent) converse(ctx context.Context, speaker model.Bot, creds credentia
 	if !a.managesAssets(speaker) && !isWorker(ctx) {
 		spec = append(spec, askUserTool, requestSecretTool, panelTool, installProbeTool)
 	}
+	mediaNote := ""
 	for i := 0; i < limit; i++ {
 		purpose := "conversation"
 		if actor, ok := ctx.Value(usageKey{}).(usageActor); ok {
@@ -103,8 +104,12 @@ func (a *Agent) converse(ctx context.Context, speaker model.Bot, creds credentia
 		if err != nil {
 			return "", err
 		}
+		if note, rest := peelMediaNote(msg.Content); note != "" {
+			mediaNote = note
+			msg.Content = rest
+		}
 		if len(msg.ToolCalls) == 0 {
-			return msg.Content, nil
+			return joinMediaNote(mediaNote, msg.Content), nil
 		}
 		messages = append(messages, map[string]any{"role": "assistant", "content": msg.Content, "tool_calls": msg.ToolCalls})
 		for _, call := range msg.ToolCalls {
@@ -112,10 +117,10 @@ func (a *Agent) converse(ctx context.Context, speaker model.Bot, creds credentia
 			messages = append(messages, map[string]any{"role": "tool", "tool_call_id": call.ID, "content": out})
 		}
 		if tr != nil && (tr.choice != nil || tr.secret != nil) && !isWorker(ctx) {
-			return msg.Content, nil
+			return joinMediaNote(mediaNote, msg.Content), nil
 		}
 	}
-	return a.pauseForBudget(ctx, speaker, creds, messages), nil
+	return joinMediaNote(mediaNote, a.pauseForBudget(ctx, speaker, creds, messages)), nil
 }
 
 // pauseForBudget runs when the tool loop hits its limit. The tool results are

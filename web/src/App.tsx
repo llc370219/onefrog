@@ -107,7 +107,7 @@ export default function App() {
     setLines(cur => [...cur,{who:'user',text,attachments:sentAttachments},{who:'bot',text:'',pending:true,steps:[]}]);
     const steps: ChatStep[] = [];
     const paint = (reply: string,pending: boolean,extra?:Partial<ChatLine>) => setLines(cur => [...cur.slice(0,-1),{who:'bot',text:reply,pending,steps:[...steps],...extra}]);
-    try {const reply = await api.chatLive({content:text,server_id:selected,session_id:session,bot_id:activeBot,model_route:controls.model,excluded_bot_ids:controls.excluded,approval_mode:controls.approval,approval_route:controls.approval==='model'?controls.review:undefined,attachment_ids:sentAttachments.map(f=>f.id)},step => {steps.push(step); if(step.ok && step.server && (step.command||'').includes('接入')){setSelected(step.server);setAddedServer(step.server);} paint('',true);});setSession(reply.session_id);paint(reply.text,false,{id:reply.message_id,choice:reply.choice});await load(); if(steps.some(step => step.ok && (step.command||'').includes('接入'))) setNotice('服务器已接入，已出现在服务器页面');}
+    try {const reply = await api.chatLive({content:text,server_id:selected,session_id:session,bot_id:activeBot,model_route:controls.model,excluded_bot_ids:controls.excluded,approval_mode:controls.approval,approval_route:controls.approval==='model'?controls.review:undefined,attachment_ids:sentAttachments.map(f=>f.id)},step => {steps.push(step);paint('',true);});setSession(reply.session_id);paint(reply.text,false,{id:reply.message_id,choice:reply.choice});await load();}
     catch(err) {paint(message(err),false);setAttachments(sentAttachments);} finally {sendingRef.current=false;setSending(false);api.sessions().then(setSessions).catch(()=>{});}
   }
   /** Answers an ask_user card once; the answer becomes the next user message and resumes the turn. */
@@ -121,7 +121,7 @@ export default function App() {
     const steps: ChatStep[] = [];
     const paint = (reply: string,pending: boolean,extra?:Partial<ChatLine>) => setLines(cur => [...cur.slice(0,-1),{who:'bot',text:reply,pending,steps:[...steps],...extra}]);
     const resync = async () => {try {const rows = await api.messages(sid);const row = rows.find(r => r.id === cardID);mark(row?.choice?.answer);} catch {mark(undefined);}};
-    try {const reply = await api.chatLive({content:'',server_id:selected,session_id:sid,bot_id:activeBot,model_route:controls.model,excluded_bot_ids:controls.excluded,approval_mode:controls.approval,approval_route:controls.approval==='model'?controls.review:undefined,choice_answer:{message_id:cardID,values,custom:custom.trim()||undefined}},step => {steps.push(step); if(step.ok && step.server && (step.command||'').includes('接入')){setSelected(step.server);setAddedServer(step.server);} paint('',true);});
+    try {const reply = await api.chatLive({content:'',server_id:selected,session_id:sid,bot_id:activeBot,model_route:controls.model,excluded_bot_ids:controls.excluded,approval_mode:controls.approval,approval_route:controls.approval==='model'?controls.review:undefined,choice_answer:{message_id:cardID,values,custom:custom.trim()||undefined}},step => {steps.push(step);paint('',true);});
       if(reply.answered){setLines(cur => cur.slice(0,-2));await resync();return;}
       paint(reply.text,false,{id:reply.message_id,choice:reply.choice});await load();}
     catch(err) {paint(message(err),false);await resync();} finally {sendingRef.current=false;setSending(false);api.sessions().then(setSessions).catch(()=>{});}

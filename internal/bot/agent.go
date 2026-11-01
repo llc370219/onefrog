@@ -40,13 +40,20 @@ type Agent struct {
 	// Onboarding installs the read-only probe. PublicURL is the panel address
 	// a node can reach; install_probe uses it when the model omits report_base.
 	Onboarding *onboarding.Manager
-	PublicURL  string
-	HTTP       *http.Client
-	Settings   *preferences.Manager
+	// Probes forgets a deleted server's probe credential. Nil skips that step.
+	Probes    ProbeIndex
+	PublicURL string
+	HTTP      *http.Client
+	Settings  *preferences.Manager
 	// SettingsLive is the process-wide settings store. Settings may be a
 	// frozen snapshot for one turn; panel changes must hit the live store.
 	SettingsLive *preferences.Manager
 	Updates      PanelUpdates
+}
+
+// ProbeIndex forgets a server's probe after its panel record is deleted.
+type ProbeIndex interface {
+	Remove(id string) error
 }
 
 type ToolEvent struct {

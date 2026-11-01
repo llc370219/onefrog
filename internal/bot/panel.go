@@ -10,6 +10,7 @@ import (
 
 	"onefrog/internal/model"
 	"onefrog/internal/module"
+	"onefrog/internal/onboarding"
 	"onefrog/internal/preferences"
 	"onefrog/internal/remote"
 	"onefrog/internal/store"
@@ -55,12 +56,14 @@ func (a *Agent) panelAct(ctx context.Context, speaker model.Bot, call toolCall) 
 		ev.Output, ev.OK = a.panelSetBot(ctx, speaker, args.ID, args.Enabled)
 	case "test_server":
 		ev.ServerID, ev.Output, ev.OK = a.panelTestServer(ctx, speaker.ID, args.ID)
+	case "delete_server":
+		ev.ServerID, ev.Output, ev.OK = a.panelDeleteServer(ctx, speaker.ID, args.ID, probeChoice(call.Function.Arguments))
 	case "check_update":
 		ev.Output, ev.OK = a.panelCheckUpdate(ctx)
 	case "apply_update":
 		ev.Output, ev.OK = a.panelApplyUpdate(ctx, speaker.ID)
 	default:
-		ev.Output = "panel 的 action 只能是 overview、set_module、set_bot、test_server、check_update、apply_update"
+		ev.Output = "panel 的 action 只能是 overview、set_module、set_bot、test_server、delete_server、check_update、apply_update"
 	}
 	ev.Output = clip(ev.Output, 2000)
 	return ev
@@ -82,6 +85,8 @@ func panelCommand(action, id string, enabled *bool) string {
 		return "停用 Bot " + id
 	case "test_server":
 		return "测试服务器 " + id
+	case "delete_server":
+		return "删除服务器 " + id
 	case "check_update":
 		return "检查更新"
 	case "apply_update":
@@ -344,6 +349,114 @@ func (a *Agent) formatUpdate(st update.Status) string {
 	return line + "。"
 }
 
+func probeChoice(raw string) *bool {
+	var bag map[string]json.RawMessage
+	if json.Unmarshal([]byte(raw), &bag) != nil {
+		return nil
+	}
+	encoded, ok := bag["uninstall_probe"]
+	if !ok || string(encoded) == "null" {
+		return nil
+	}
+	var drop bool
+	if json.Unmarshal(encoded, &drop) != nil {
+		return nil
+	}
+	return &drop
+}
+
+func (a *Agent) panelDeleteServer(ctx context.Context, botID, id string, uninstall *bool) (string, string, bool) {
+	if msg := a.panelPlanBlocked(ctx); msg != "" {
+		return "", msg, false
+	}
+	rec, err := a.oneServer(ctx, id)
+	if err != nil {
+		return "", err.Error(), false
+	}
+	dropProbe := uninstall == nil || *uninstall
+	what := "删除服务器记录 " + rec.Name + "（" + rec.Host + "）。面板里不再显示这台机器，保存的登录信息会一并清除"
+	if dropProbe {
+		what += "，并尝试卸载节点上的只读探针"
+	} else {
+		what += "，不卸载节点上的探针"
+	}
+	review := a.askOperator(ctx, botID, rec, what, a.approvalMode(ctx), riskGate{
+		Level:   "high",
+		Reasons: []string{"删除后这台机器从面板消失，登录信息一并清除"},
+	})
+	if !review.Allow {
+		reason := review.Reason
+		if reason == "" {
+			reason = "未批准"
+		}
+		return rec.ID, "没有删除：" + reason, false
+	}
+	probe := onboarding.ProbeRemoval{Status: "skipped", Detail: "未选择卸载探针"}
+	if dropProbe {
+		if a.Onboarding != nil {
+			probe = a.Onboarding.RemoveProbe(ctx, rec)
+		} else {
+			probe = onboarding.ProbeRemoval{Status: "skipped", Detail: "SSH 执行器不可用"}
+		}
+	}
+	if err := a.Store.DeleteServer(ctx, rec.ID); err != nil {
+		return rec.ID, "服务器记录没有删除：" + err.Error(), false
+	}
+	if a.Probes != nil {
+		_ = a.Probes.Remove(rec.ID)
+	}
+	a.notePanel(ctx, botID, rec.ID, "删除服务器 "+rec.Name, "server_deleted")
+	return rec.ID, fmt.Sprintf("已删除服务器 %s（%s）。%s。面板会在这一轮结束后刷新。", rec.Name, rec.Host, probeRemovalLine(dropProbe, probe)), true
+}
+
+func (a *Agent) oneServer(ctx context.Context, idOrName string) (store.ServerRec, error) {
+	idOrName = strings.TrimSpace(idOrName)
+	if idOrName == "" {
+		return store.ServerRec{}, errors.New("delete_server 需要服务器名称或 id")
+	}
+	servers, err := a.Store.ListServers(ctx)
+	if err != nil {
+		return store.ServerRec{}, err
+	}
+	var matches []model.Server
+	for _, item := range servers {
+		if item.ID == idOrName || item.Name == idOrName {
+			matches = append(matches, item)
+		}
+	}
+	if len(matches) == 0 {
+		return store.ServerRec{}, errors.New("没有这台服务器")
+	}
+	if len(matches) > 1 {
+		var b strings.Builder
+		b.WriteString("有多台匹配的服务器，没有删除。请用 id 指定：")
+		for _, item := range matches {
+			fmt.Fprintf(&b, " %s（id=%s，%s）", item.Name, item.ID, item.Host)
+		}
+		return store.ServerRec{}, errors.New(b.String())
+	}
+	return a.Store.GetServer(ctx, matches[0].ID)
+}
+
+func probeRemovalLine(drop bool, probe onboarding.ProbeRemoval) string {
+	if !drop {
+		return "未卸载探针"
+	}
+	switch probe.Status {
+	case "removed":
+		return "节点探针已卸载"
+	case "absent":
+		return "节点上没有探针"
+	case "failed":
+		return "探针卸载失败：" + probe.Detail
+	default:
+		if strings.TrimSpace(probe.Detail) == "" {
+			return "未卸载探针"
+		}
+		return "未卸载探针：" + probe.Detail
+	}
+}
+
 func (a *Agent) panelApplyUpdate(ctx context.Context, botID string) (string, bool) {
 	if msg := a.panelPlanBlocked(ctx); msg != "" {
 		return msg, false
@@ -386,9 +499,10 @@ var panelTool = map[string]any{
 		"parameters": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"action":  map[string]any{"type": "string", "enum": []string{"overview", "set_module", "set_bot", "test_server", "check_update", "apply_update"}},
-				"id":      map[string]string{"type": "string", "description": "模块 id 或名称、Bot id 或名称、服务器 id 或名称"},
-				"enabled": map[string]string{"type": "boolean"},
+				"action":          map[string]any{"type": "string", "enum": []string{"overview", "set_module", "set_bot", "test_server", "delete_server", "check_update", "apply_update"}},
+				"id":              map[string]string{"type": "string", "description": "模块 id 或名称、Bot id 或名称、服务器 id 或名称"},
+				"enabled":         map[string]string{"type": "boolean"},
+				"uninstall_probe": map[string]string{"type": "boolean", "description": "仅 delete_server。省略或 true 时尝试卸载节点探针；用户要求保留探针时为 false"},
 			},
 			"required": []string{"action"},
 		},

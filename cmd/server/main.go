@@ -130,6 +130,7 @@ func main() {
 			Assets:       ledger,
 			Updates:      updates,
 			Onboarding:   onboard,
+			Probes:       probe,
 			PublicURL:    cfg.PublicURL,
 		},
 	}

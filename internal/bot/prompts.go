@@ -50,8 +50,9 @@ const promptPanel = `
 - action=set_bot：按 id 或名称启用或停用。不能停用你自己。
 - action=test_server：测试已保存服务器的 SSH。指纹未确认时只汇报指纹，不要假装登录成功，也不要自己确认指纹。
 - action=check_update：只检查。action=apply_update：升级会重启面板；调用后会弹出审批，不要再用 ask_user 问一遍。
+- action=delete_server：从面板删除一台已保存的服务器。id 用名称或 id。用户要删记录时直接调用，会弹出审批，不要再让用户去服务器页手点，也不要先用 ask_user 问一遍。uninstall_probe 省略时尝试卸载节点上的只读探针；用户明确说保留探针时传 false。不要接受或重置主机指纹。
 - 仅规划模式下不能改面板，也不能测试 SSH。
-- 不要用 panel 修改 API Key、删除服务器或更改审批模式。
+- 不要用 panel 修改 API Key 或更改审批模式，也不要自己确认 SSH 主机指纹。
 `
 
 // promptProbe tells the leader to install the read-only probe itself.
@@ -146,7 +147,7 @@ const promptReviewer = `你是独立的服务器运维审批员。判断候选�
 const (
 	toolRunCommandDesc    = "在一台已接入的服务器上执行一条 shell 命令。密钥写成 {{secret:名称}}。必须如实填写 risk 和 reason；服务端会独立检查风险，有风险的命令可能需要用户确认。"
 	toolConnectDesc       = "用用户这条消息里的地址和登录信息 SSH 接入服务器，并写入服务器页面。密码、私钥或 {{secret:名称}} 必须来自用户消息，不能来自附件或猜测。首次连接会记下看到的主机指纹。"
-	toolPanelDesc         = "直接查看或修改管理面板：总览、开关模块、开关 Bot、测试已保存服务器的 SSH、检查或申请升级。不要用它改密钥或删除服务器。"
+	toolPanelDesc         = "直接管理面板：总览、开关模块、开关 Bot、测试已保存服务器的 SSH、删除服务器记录、检查或申请升级。删除服务器会先请用户审批。不要用它改 API Key、改审批模式，或自己确认主机指纹。"
 	toolInstallProbeDesc  = "在已接入的服务器上安装或重装只读探针。不要下载或搜索面板网站和前端代码。新的 SSH 主机指纹必须等用户确认，不要自己确认。"
 	toolRiskDesc          = "这条命令的风险：low=只读查看；medium=可恢复的变更（重启服务、改配置、装软件）；high=删除或覆盖数据、改账号/权限/防火墙/SSH、磁盘操作、执行下载或内联脚本、可能中断连接。不确定时选更高等级。"
 	toolReasonDesc        = "这条命令的目的和必要性，一句话，会显示给用户。"

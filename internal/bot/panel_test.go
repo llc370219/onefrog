@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -169,5 +170,107 @@ func TestPanelTestDoesNotAcceptAModelFingerprint(t *testing.T) {
 	}
 	if saved.HostKey != "" {
 		t.Fatal(saved.HostKey)
+	}
+}
+
+type removedProbes struct{ ids []string }
+
+func (r *removedProbes) Remove(id string) error {
+	r.ids = append(r.ids, id)
+	return nil
+}
+
+func panelArgs(v map[string]any) string {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return string(raw)
+}
+
+func TestPanelDeletesAServerAfterApproval(t *testing.T) {
+	ctx := context.Background()
+	mem := store.NewMemory()
+	if _, err := mem.CreateServer(ctx, store.ServerRec{Server: model.Server{ID: "old", Name: "panstar-usp-dc2", Host: "154.21.205.100", Port: 22}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mem.CreateServer(ctx, store.ServerRec{Server: model.Server{ID: "dc2", Name: "DC2", Host: "203.0.113.20"}}); err != nil {
+		t.Fatal(err)
+	}
+	probes := &removedProbes{}
+	agent := &Agent{Store: mem, Probes: probes}
+	speaker := model.Bot{ID: "main", Name: "主控"}
+
+	ev := agent.panelAct(ctx, speaker, callPanel(panelArgs(map[string]any{"action": "delete_server", "id": "panstar-usp-dc2"})))
+	if ev.OK || !strings.Contains(ev.Output, "没有删除") {
+		t.Fatal(ev.Output)
+	}
+	if _, err := mem.GetServer(ctx, "old"); err != nil {
+		t.Fatal("refused delete removed the server")
+	}
+
+	plan := context.WithValue(ctx, optionsKey{}, Options{ApprovalMode: preferences.ModePlan})
+	ev = agent.panelAct(plan, speaker, callPanel(panelArgs(map[string]any{"action": "delete_server", "id": "old"})))
+	if ev.OK || !strings.Contains(ev.Output, "仅规划") {
+		t.Fatal(ev.Output)
+	}
+
+	denied := context.WithValue(ctx, optionsKey{}, Options{Approver: func(context.Context, ApprovalRequest) (bool, string) {
+		return false, "先留着"
+	}})
+	ev = agent.panelAct(denied, speaker, callPanel(panelArgs(map[string]any{"action": "delete_server", "id": "old"})))
+	if ev.OK || !strings.Contains(ev.Output, "先留着") {
+		t.Fatal(ev.Output)
+	}
+	if _, err := mem.GetServer(ctx, "old"); err != nil {
+		t.Fatal(err)
+	}
+
+	approved := context.WithValue(ctx, optionsKey{}, Options{Approver: func(_ context.Context, req ApprovalRequest) (bool, string) {
+		if !strings.Contains(req.Command, "panstar-usp-dc2") || !strings.Contains(req.Command, "154.21.205.100") || !strings.Contains(req.Command, "探针") {
+			t.Fatalf("approval card: %s", req.Command)
+		}
+		return true, "用户已批准"
+	}})
+	ev = agent.panelAct(approved, speaker, callPanel(panelArgs(map[string]any{"action": "delete_server", "id": "panstar-usp-dc2", "uninstall_probe": false})))
+	if !ev.OK || ev.ServerID != "old" || !strings.Contains(ev.Output, "已删除") || !strings.Contains(ev.Output, "未卸载探针") {
+		t.Fatalf("%#v", ev)
+	}
+	if _, err := mem.GetServer(ctx, "old"); err == nil {
+		t.Fatal("server still present")
+	}
+	if _, err := mem.GetServer(ctx, "dc2"); err != nil {
+		t.Fatal("kept server was removed")
+	}
+	if len(probes.ids) != 1 || probes.ids[0] != "old" {
+		t.Fatalf("probes %#v", probes.ids)
+	}
+	if !strings.Contains(agent.leaderPrompt(ctx, speaker, ""), "delete_server") {
+		t.Fatal("prompt does not mention delete_server")
+	}
+
+	keep := context.WithValue(ctx, optionsKey{}, Options{Approver: func(_ context.Context, req ApprovalRequest) (bool, string) {
+		if !strings.Contains(req.Command, "尝试卸载") {
+			t.Fatalf("default should uninstall the probe: %s", req.Command)
+		}
+		return true, "用户已批准"
+	}})
+	ev = agent.panelAct(keep, speaker, callPanel(panelArgs(map[string]any{"action": "delete_server", "id": "DC2"})))
+	if !ev.OK || !strings.Contains(ev.Output, "未卸载探针") || !strings.Contains(ev.Output, "SSH") {
+		t.Fatal(ev.Output)
+	}
+
+	if _, err := mem.CreateServer(ctx, store.ServerRec{Server: model.Server{ID: "a", Name: "same", Host: "203.0.113.1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mem.CreateServer(ctx, store.ServerRec{Server: model.Server{ID: "b", Name: "same", Host: "203.0.113.2"}}); err != nil {
+		t.Fatal(err)
+	}
+	ev = agent.panelAct(keep, speaker, callPanel(panelArgs(map[string]any{"action": "delete_server", "id": "same"})))
+	if ev.OK || !strings.Contains(ev.Output, "id=a") || !strings.Contains(ev.Output, "id=b") {
+		t.Fatal(ev.Output)
+	}
+	if _, err := mem.GetServer(ctx, "a"); err != nil {
+		t.Fatal(err)
 	}
 }

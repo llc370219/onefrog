@@ -115,7 +115,84 @@ func (a *Agent) converse(ctx context.Context, speaker model.Bot, creds credentia
 			return msg.Content, nil
 		}
 	}
-	return "这轮步骤太多，先停在这里。", nil
+	return a.pauseForBudget(ctx, speaker, creds, messages), nil
+}
+
+// pauseForBudget runs when the tool loop hits its limit. The tool results are
+// still only in this turn, so a tool-free call writes them down. That note is
+// what the next "继续" sees; otherwise the model starts the task over and hits
+// the same limit.
+func (a *Agent) pauseForBudget(ctx context.Context, speaker model.Bot, creds credentials, messages []map[string]any) string {
+	facts := budgetHandoff(messages)
+	prompt := "步骤预算已经用完，不要再调用工具。根据上面已经拿到的结果，用中文写三段：做到哪了、关键发现、用户说「继续」时要做的下一步。不要复述密钥明文，不要把已经成功的命令再做一遍。"
+	callMessages := append(append([]map[string]any{}, messages...), map[string]any{"role": "user", "content": prompt})
+	purpose := "conversation"
+	if actor, ok := ctx.Value(usageKey{}).(usageActor); ok {
+		purpose = actor.Purpose
+	}
+	msg, err := a.chat(usageContext(ctx, speaker.ID, purpose, creds.provider), creds.base, creds.model, creds.key, callMessages, nil)
+	summary := ""
+	if err == nil {
+		summary = strings.TrimSpace(a.redact(ctx, msg.Content))
+	}
+	var b strings.Builder
+	b.WriteString("这轮步骤用完了，先停在这里。说「继续」会从下面接着做，已经完成的不要重做。")
+	if summary != "" {
+		b.WriteString("\n\n")
+		b.WriteString(summary)
+	}
+	if facts != "" {
+		b.WriteString("\n\n已完成：\n")
+		b.WriteString(facts)
+	}
+	return clip(strings.TrimSpace(a.redact(ctx, b.String())), 4000)
+}
+
+// budgetHandoff lists the tool calls already made in this turn, so a failed
+// summary still leaves the next turn something to continue from.
+func budgetHandoff(messages []map[string]any) string {
+	pending := map[string]toolCall{}
+	var lines []string
+	for _, m := range messages {
+		role, _ := m["role"].(string)
+		switch role {
+		case "assistant":
+			calls, _ := m["tool_calls"].([]toolCall)
+			for _, call := range calls {
+				pending[call.ID] = call
+			}
+		case "tool":
+			id, _ := m["tool_call_id"].(string)
+			out, _ := m["content"].(string)
+			lines = append(lines, "- "+toolLabel(pending[id])+" → "+clip(strings.Join(strings.Fields(out), " "), 180))
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	omitted := ""
+	if len(lines) > 6 {
+		omitted = "（更早的步骤已省略）\n"
+		lines = lines[len(lines)-6:]
+	}
+	return omitted + strings.Join(lines, "\n")
+}
+
+func toolLabel(call toolCall) string {
+	name := call.Function.Name
+	if name == "" {
+		name = "工具"
+	}
+	var args map[string]any
+	_ = json.Unmarshal([]byte(call.Function.Arguments), &args)
+	for _, key := range []string{"command", "task", "action"} {
+		s, ok := args[key].(string)
+		s = strings.Join(strings.Fields(s), " ")
+		if ok && s != "" {
+			return name + " " + clip(s, 160)
+		}
+	}
+	return name
 }
 
 func (a *Agent) execCall(ctx context.Context, speaker model.Bot, creds credentials, serverID string, call toolCall, canDelegate bool, tr *trace) string {

@@ -272,7 +272,7 @@ func (m *Manager) Save(in Input) (State, error) {
 	}
 	next.State.Approval.Mode = mode
 	e := in.Execution
-	if e.TimeoutSeconds < 5 || e.TimeoutSeconds > 180 || e.CommandTimeoutSeconds < 5 || e.CommandTimeoutSeconds > 300 || e.MaxSteps < 1 || e.MaxSteps > 12 || e.ContextMessages < 2 || e.ContextMessages > 100 {
+	if e.TimeoutSeconds < 5 || e.TimeoutSeconds > 180 || e.CommandTimeoutSeconds < 5 || e.CommandTimeoutSeconds > 300 || e.MaxSteps < 1 || e.MaxSteps > 24 || e.ContextMessages < 2 || e.ContextMessages > 100 {
 		return State{}, errors.New("执行参数超出范围")
 	}
 	if err := m.persist(next); err != nil {

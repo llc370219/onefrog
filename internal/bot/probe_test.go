@@ -223,7 +223,21 @@ func TestInstallProbeWaitsForFingerprint(t *testing.T) {
 	if saved.HostKey != "" {
 		t.Fatal("wrong fingerprint was accepted")
 	}
-	good := agent.installProbe(ctx, "main", callInstall("{"+"\"action\":\"confirm\",\"request_id\":\""+id+"\",\"fingerprint\":\"SHA256:fresh\""+"}"))
+	unapproved := agent.installProbe(ctx, "main", callInstall("{"+"\"action\":\"confirm\",\"request_id\":\""+id+"\",\"fingerprint\":\"SHA256:fresh\""+"}"))
+	if unapproved.OK || !strings.Contains(unapproved.Output, "没有确认") {
+		t.Fatal(unapproved.Output)
+	}
+	saved, _ = mem.GetServer(ctx, "matrix")
+	if saved.HostKey != "" {
+		t.Fatal("fingerprint stored without approval")
+	}
+	approved := context.WithValue(ownerCtx(), optionsKey{}, Options{OwnerID: "owner", Approver: func(_ context.Context, req ApprovalRequest) (bool, string) {
+		if !strings.Contains(req.Command, "SHA256:fresh") || !strings.Contains(req.Command, "matrix") {
+			t.Fatalf("approval card: %s", req.Command)
+		}
+		return true, "用户已批准"
+	}})
+	good := agent.installProbe(approved, "main", callInstall("{"+"\"action\":\"confirm\",\"request_id\":\""+id+"\",\"fingerprint\":\"SHA256:fresh\""+"}"))
 	if !good.OK || strings.Contains(strings.ToLower(good.Output), "token") || !strings.Contains(good.Output, "partial") {
 		t.Fatalf("confirm: %#v", good)
 	}

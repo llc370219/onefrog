@@ -308,6 +308,49 @@ func (m *Manager) SetApprovalMode(mode string) (State, error) {
 	return clone(next.State), nil
 }
 
+// SetProviderKey replaces one provider's API key. The plaintext is encrypted
+// before it is stored and is never returned. OAuth providers do not take a key.
+func (m *Manager) SetProviderKey(id, key string) (Provider, error) {
+	id = strings.TrimSpace(id)
+	key = strings.TrimSpace(key)
+	if id == "" {
+		return Provider{}, errors.New("缺少渠道")
+	}
+	if err := secret.ValidValue(key); err != nil {
+		return Provider{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	idx := -1
+	for i, item := range m.data.State.Providers {
+		if item.ID == id {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return Provider{}, errors.New("渠道不存在")
+	}
+	if strings.HasPrefix(m.data.State.Providers[idx].AuthKind, "oauth-") {
+		return Provider{}, errors.New("OAuth 渠道不使用手动 API Key")
+	}
+	enc, err := m.box.Encrypt(key)
+	if err != nil {
+		return Provider{}, err
+	}
+	next := diskState{State: clone(m.data.State), Keys: map[string]string{}}
+	for k, v := range m.data.Keys {
+		next.Keys[k] = v
+	}
+	next.Keys[id] = enc
+	next.State.Providers[idx].HasAPIKey = true
+	if err = m.persist(next); err != nil {
+		return Provider{}, err
+	}
+	m.data = next
+	return next.State.Providers[idx], nil
+}
+
 // firstUsableRoute returns the first enabled provider's first visible model.
 func firstUsableRoute(s State) (Route, bool) {
 	for _, p := range s.Providers {

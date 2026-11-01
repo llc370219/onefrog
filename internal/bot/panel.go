@@ -13,6 +13,7 @@ import (
 	"onefrog/internal/onboarding"
 	"onefrog/internal/preferences"
 	"onefrog/internal/remote"
+	"onefrog/internal/secret"
 	"onefrog/internal/store"
 	"onefrog/internal/update"
 )
@@ -35,9 +36,14 @@ func (a *Agent) settingsWriter() *preferences.Manager {
 func (a *Agent) panelAct(ctx context.Context, speaker model.Bot, call toolCall) ToolEvent {
 	ev := ToolEvent{Name: "panel"}
 	var args struct {
-		Action  string `json:"action"`
-		ID      string `json:"id"`
-		Enabled *bool  `json:"enabled"`
+		Action       string  `json:"action"`
+		ID           string  `json:"id"`
+		Enabled      *bool   `json:"enabled"`
+		Fingerprint  string  `json:"fingerprint"`
+		SecretName   string  `json:"secret_name"`
+		Mode         string  `json:"mode"`
+		SystemPrompt *string `json:"system_prompt"`
+		Description  *string `json:"description"`
 	}
 	if json.Unmarshal([]byte(call.Function.Arguments), &args) != nil {
 		ev.Output = "panel 参数不是有效的 JSON"
@@ -45,7 +51,10 @@ func (a *Agent) panelAct(ctx context.Context, speaker model.Bot, call toolCall) 
 	}
 	args.Action = strings.TrimSpace(args.Action)
 	args.ID = strings.TrimSpace(args.ID)
-	ev.Command = panelCommand(args.Action, args.ID, args.Enabled)
+	args.Fingerprint = strings.TrimSpace(args.Fingerprint)
+	args.SecretName = strings.TrimSpace(args.SecretName)
+	args.Mode = strings.TrimSpace(args.Mode)
+	ev.Command = panelCommand(args.Action, args.ID, args.Enabled, args.Fingerprint, args.SecretName, args.Mode)
 	switch args.Action {
 	case "overview":
 		ev.OK = true
@@ -56,20 +65,30 @@ func (a *Agent) panelAct(ctx context.Context, speaker model.Bot, call toolCall) 
 		ev.Output, ev.OK = a.panelSetBot(ctx, speaker, args.ID, args.Enabled)
 	case "test_server":
 		ev.ServerID, ev.Output, ev.OK = a.panelTestServer(ctx, speaker.ID, args.ID)
+	case "confirm_fingerprint":
+		ev.ServerID, ev.Output, ev.OK = a.panelConfirmFingerprint(ctx, speaker.ID, args.ID, args.Fingerprint)
+	case "reset_fingerprint":
+		ev.ServerID, ev.Output, ev.OK = a.panelResetFingerprint(ctx, speaker.ID, args.ID)
 	case "delete_server":
 		ev.ServerID, ev.Output, ev.OK = a.panelDeleteServer(ctx, speaker.ID, args.ID, probeChoice(call.Function.Arguments))
 	case "check_update":
 		ev.Output, ev.OK = a.panelCheckUpdate(ctx)
 	case "apply_update":
 		ev.Output, ev.OK = a.panelApplyUpdate(ctx, speaker.ID)
+	case "set_api_key":
+		ev.Output, ev.OK = a.panelSetAPIKey(ctx, speaker.ID, args.ID, args.SecretName, call.Function.Arguments)
+	case "set_approval_mode":
+		ev.Output, ev.OK = a.panelSetApprovalMode(ctx, speaker.ID, args.Mode)
+	case "set_bot_prompt":
+		ev.Output, ev.OK = a.panelSetBotPrompt(ctx, speaker.ID, args.ID, args.SystemPrompt, args.Description)
 	default:
-		ev.Output = "panel 的 action 只能是 overview、set_module、set_bot、test_server、delete_server、check_update、apply_update"
+		ev.Output = "panel 的 action 只能是 overview、set_module、set_bot、test_server、confirm_fingerprint、reset_fingerprint、delete_server、check_update、apply_update、set_api_key、set_approval_mode、set_bot_prompt"
 	}
 	ev.Output = clip(ev.Output, 2000)
 	return ev
 }
 
-func panelCommand(action, id string, enabled *bool) string {
+func panelCommand(action, id string, enabled *bool, fingerprint, secretName, mode string) string {
 	switch action {
 	case "overview":
 		return "查看面板"
@@ -85,12 +104,22 @@ func panelCommand(action, id string, enabled *bool) string {
 		return "停用 Bot " + id
 	case "test_server":
 		return "测试服务器 " + id
+	case "confirm_fingerprint":
+		return "确认 " + id + " 的主机指纹 " + fingerprint
+	case "reset_fingerprint":
+		return "清除 " + id + " 已保存的主机指纹"
 	case "delete_server":
 		return "删除服务器 " + id
 	case "check_update":
 		return "检查更新"
 	case "apply_update":
 		return "升级面板"
+	case "set_api_key":
+		return "更新渠道 " + id + " 的 API Key（保险箱：" + secretName + "）"
+	case "set_approval_mode":
+		return "把审批模式改为 " + mode
+	case "set_bot_prompt":
+		return "修改 Bot " + id + " 的工作指令"
 	default:
 		return action
 	}
@@ -292,12 +321,12 @@ func (a *Agent) panelTestServer(ctx context.Context, botID, id string) (string, 
 	out = clip(a.redact(ctx, out), 500)
 	switch {
 	case errors.Is(err, remote.ErrHostKeyUnknown):
-		return rec.ID, fmt.Sprintf("%s 还不能登录：主机指纹尚未确认。指纹 %s。请用户在服务器页面核对后再确认，不要自行接受这个指纹。", rec.Name, fp), false
+		return rec.ID, fmt.Sprintf("%s 还不能登录：主机指纹尚未确认。指纹 %s。请调用 confirm_fingerprint，把这个指纹原样放进参数。会弹出审批，不要自己接受，也不要改指纹。", rec.Name, fp), false
 	case errors.Is(err, remote.ErrHostKeyMismatch):
 		rec.Status = "host_key_mismatch"
 		_, _ = a.Store.UpdateServer(ctx, rec)
 		a.notePanel(ctx, botID, rec.ID, "测试 "+rec.Name+"：指纹不一致", "failed")
-		return rec.ID, fmt.Sprintf("%s 的主机指纹和已保存的不一致，已停止连接。不要重置指纹，请用户在服务器页面核对。", rec.Name), false
+		return rec.ID, fmt.Sprintf("%s 的主机指纹和已保存的不一致，已停止连接，没有覆盖旧指纹。出示的指纹 %s。如需更换，先调用 reset_fingerprint，审批通过后再 confirm_fingerprint。", rec.Name, fp), false
 	case err != nil:
 		rec.Status = "offline"
 		_, _ = a.Store.UpdateServer(ctx, rec)
@@ -311,6 +340,136 @@ func (a *Agent) panelTestServer(ctx context.Context, botID, id string) (string, 
 		out = "ok"
 	}
 	return rec.ID, rec.Name + " SSH 正常。" + out, true
+}
+
+func (a *Agent) approveHighRisk(ctx context.Context, botID string, rec store.ServerRec, what string, reasons []string) (bool, string) {
+	if strings.TrimSpace(rec.ID) == "" {
+		rec.ID = "panel"
+	}
+	if strings.TrimSpace(rec.Name) == "" {
+		rec.Name = "面板"
+	}
+	review := a.askOperator(ctx, botID, rec, what, a.approvalMode(ctx), riskGate{Level: "high", Reasons: reasons})
+	if review.Allow {
+		return true, ""
+	}
+	if strings.TrimSpace(review.Reason) == "" {
+		return false, "未批准"
+	}
+	return false, review.Reason
+}
+
+func cleanFingerprint(raw string) (string, bool) {
+	fp := strings.TrimSpace(raw)
+	if fp == "" || len(fp) > 180 || strings.ContainsAny(fp, "\r\n\t") {
+		return "", false
+	}
+	if strings.Count(fp, " ") > 1 {
+		return "", false
+	}
+	keyType, sum := remote.SplitPin(fp)
+	if !strings.HasPrefix(sum, "SHA256:") || len(sum) < len("SHA256:")+3 {
+		return "", false
+	}
+	for _, r := range sum[len("SHA256:"):] {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '+', r == '/', r == '=', r == '-', r == '_':
+		default:
+			return "", false
+		}
+	}
+	if keyType != "" && strings.Contains(keyType, " ") {
+		return "", false
+	}
+	return fp, true
+}
+
+func (a *Agent) panelConfirmFingerprint(ctx context.Context, botID, id, fingerprint string) (string, string, bool) {
+	if msg := a.panelPlanBlocked(ctx); msg != "" {
+		return "", msg, false
+	}
+	if a.SSH == nil {
+		return "", "没有 SSH 执行器", false
+	}
+	fp, ok := cleanFingerprint(fingerprint)
+	if !ok {
+		return "", "confirm_fingerprint 需要 test_server 汇报的主机指纹，形如 ssh-ed25519 SHA256:… 或 SHA256:…", false
+	}
+	rec, err := a.oneServer(ctx, id)
+	if err != nil {
+		return "", err.Error(), false
+	}
+	if rec.HostKey != "" && rec.HostKey != fp {
+		return rec.ID, fmt.Sprintf("%s 已保存的指纹和要确认的不一致，没有覆盖。已保存：%s。这次：%s。如需更换，先 reset_fingerprint。", rec.Name, rec.HostKey, fp), false
+	}
+	if rec.HostKey == fp {
+		return rec.ID, rec.Name + " 的主机指纹已经是这个，没有改动。", true
+	}
+	what := fmt.Sprintf("确认 %s（%s）的 SSH 主机指纹为 %s。只有用这个指纹钉住并且登录成功后才会保存。", rec.Name, rec.Host, fp)
+	allow, why := a.approveHighRisk(ctx, botID, rec, what, []string{"首次信任这台机器的 SSH 主机指纹，请对照 ssh-keygen -lf 的结果"})
+	if !allow {
+		return rec.ID, "没有保存指纹：" + why, false
+	}
+	plain := ""
+	if rec.EncryptedKey != "" {
+		if a.Box == nil {
+			return rec.ID, "登录密钥无法解密，没有保存指纹", false
+		}
+		plain, err = a.Box.Decrypt(rec.EncryptedKey)
+		if err != nil {
+			return rec.ID, "登录密钥无法解密，没有保存指纹", false
+		}
+	}
+	runCtx, cancel := context.WithTimeout(ctx, time.Duration(a.execution().CommandTimeoutSeconds)*time.Second)
+	defer cancel()
+	_, seen, err := a.SSH.Run(runCtx, rec.Host, rec.Port, rec.Username, rec.AuthType, plain, fp, "echo ok")
+	if errors.Is(err, remote.ErrHostKeyUnknown) || errors.Is(err, remote.ErrHostKeyMismatch) || (err == nil && seen != "" && seen != fp) {
+		shown := seen
+		if shown == "" {
+			shown = "未知"
+		}
+		return rec.ID, fmt.Sprintf("%s 出示的指纹和要确认的不一致，没有保存。要确认的是 %s，出示的是 %s。", rec.Name, fp, shown), false
+	}
+	if err != nil {
+		rec.Status = "offline"
+		_, _ = a.Store.UpdateServer(ctx, rec)
+		a.notePanel(ctx, botID, rec.ID, "确认 "+rec.Name+" 的指纹失败", "failed")
+		return rec.ID, fmt.Sprintf("%s 没有连上，指纹未保存：%s", rec.Name, clip(err.Error(), 300)), false
+	}
+	rec.HostKey = fp
+	rec.Status = "online"
+	if _, err = a.Store.UpdateServer(ctx, rec); err != nil {
+		return rec.ID, "指纹没有写成：" + err.Error(), false
+	}
+	a.notePanel(ctx, botID, rec.ID, "已确认 "+rec.Name+" 的主机指纹", "host_key_confirmed")
+	return rec.ID, fmt.Sprintf("已确认 %s 的主机指纹 %s。", rec.Name, fp), true
+}
+
+func (a *Agent) panelResetFingerprint(ctx context.Context, botID, id string) (string, string, bool) {
+	if msg := a.panelPlanBlocked(ctx); msg != "" {
+		return "", msg, false
+	}
+	rec, err := a.oneServer(ctx, id)
+	if err != nil {
+		return "", err.Error(), false
+	}
+	if strings.TrimSpace(rec.HostKey) == "" {
+		return rec.ID, rec.Name + " 没有已保存的主机指纹。", false
+	}
+	old := rec.HostKey
+	what := fmt.Sprintf("清除 %s（%s）已保存的 SSH 主机指纹 %s。清除后不能登录，直到重新确认；不会自动信任新指纹。", rec.Name, rec.Host, old)
+	allow, why := a.approveHighRisk(ctx, botID, rec, what, []string{"清除后，下次连接必须重新核对主机指纹"})
+	if !allow {
+		return rec.ID, "没有清除指纹：" + why, false
+	}
+	rec.HostKey = ""
+	rec.ClearHostKey = true
+	rec.Status = "unknown"
+	if _, err = a.Store.UpdateServer(ctx, rec); err != nil {
+		return rec.ID, "指纹没有清除：" + err.Error(), false
+	}
+	a.notePanel(ctx, botID, rec.ID, "已清除 "+rec.Name+" 的主机指纹", "host_key_reset")
+	return rec.ID, fmt.Sprintf("已清除 %s 的主机指纹。请再 test_server，然后 confirm_fingerprint。", rec.Name), true
 }
 
 func (a *Agent) panelCheckUpdate(ctx context.Context) (string, bool) {
@@ -487,6 +646,201 @@ func (a *Agent) panelApplyUpdate(ctx context.Context, botID string) (string, boo
 	return "已请求升级到 " + tag + "。容器会重启，请稍等后刷新。账号和数据保留。", true
 }
 
+func panelHasRawSecret(raw string) bool {
+	var bag map[string]json.RawMessage
+	if json.Unmarshal([]byte(raw), &bag) != nil {
+		return false
+	}
+	for _, key := range []string{"api_key", "apikey", "key", "token", "password", "secret", "value", "plaintext", "credential"} {
+		encoded, ok := bag[key]
+		if !ok {
+			continue
+		}
+		s := strings.TrimSpace(string(encoded))
+		if s != "" && s != "null" && s != `""` {
+			return true
+		}
+	}
+	return false
+}
+
+func vaultName(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if strings.HasPrefix(raw, "{{secret:") && strings.HasSuffix(raw, "}}") {
+		raw = strings.TrimSuffix(strings.TrimPrefix(raw, "{{secret:"), "}}")
+	}
+	return secret.ValidName(raw)
+}
+
+func (a *Agent) findProvider(idOrName string) (preferences.Provider, error) {
+	writer := a.settingsWriter()
+	if writer == nil {
+		return preferences.Provider{}, errors.New("没有设置存储")
+	}
+	idOrName = strings.TrimSpace(idOrName)
+	if idOrName == "" {
+		return preferences.Provider{}, errors.New("需要渠道 id 或名称")
+	}
+	var matches []preferences.Provider
+	for _, item := range writer.Snapshot().Providers {
+		if item.ID == idOrName || item.Name == idOrName {
+			matches = append(matches, item)
+		}
+	}
+	if len(matches) == 0 {
+		return preferences.Provider{}, errors.New("没有这个渠道")
+	}
+	if len(matches) > 1 {
+		return preferences.Provider{}, errors.New("有多个同名渠道，请用 id")
+	}
+	return matches[0], nil
+}
+
+func (a *Agent) panelSetAPIKey(ctx context.Context, botID, id, secretName, raw string) (string, bool) {
+	if msg := a.panelPlanBlocked(ctx); msg != "" {
+		return msg, false
+	}
+	if panelHasRawSecret(raw) {
+		return "不要在参数或附件里写 API Key 明文。先用 request_secret 放进保险箱，再把 secret_name 设成那个名称。", false
+	}
+	p, err := a.findProvider(id)
+	if err != nil {
+		return err.Error(), false
+	}
+	if strings.HasPrefix(p.AuthKind, "oauth-") {
+		return "OAuth 渠道不使用手动 API Key", false
+	}
+	name, err := vaultName(secretName)
+	if err != nil {
+		return "set_api_key 需要 secret_name，填保险箱里的名称，不要填明文。", false
+	}
+	item, err := a.Store.SecretByName(ctx, name)
+	if err != nil {
+		return "保险箱里没有密钥「" + name + "」。先 request_secret，等用户在密码卡片里保存后再调用。不要让用户把密钥打进对话。", false
+	}
+	what := fmt.Sprintf("把保险箱密钥「%s」写入渠道「%s」（id=%s）的 API Key。审批卡片不显示密钥明文。", name, p.Name, p.ID)
+	allow, why := a.approveHighRisk(ctx, botID, store.ServerRec{Server: model.Server{ID: "panel", Name: "面板"}}, what, []string{"会替换这个渠道保存的 API Key"})
+	if !allow {
+		return "没有更新 API Key：" + why, false
+	}
+	if a.Box == nil {
+		return "保险箱未配置，没有更新 API Key", false
+	}
+	plain, err := a.Box.Decrypt(item.EncryptedValue)
+	if err != nil || secret.ValidValue(plain) != nil {
+		return "保险箱里的这项密钥无法使用，没有更新 API Key", false
+	}
+	saved, err := a.settingsWriter().SetProviderKey(p.ID, plain)
+	if err != nil {
+		return "API Key 没有保存：" + err.Error(), false
+	}
+	a.notePanel(ctx, botID, "", "已更新渠道 "+saved.Name+" 的 API Key", "success")
+	return fmt.Sprintf("已更新渠道 %s（id=%s）的 API Key。明文没有进入对话。", saved.Name, saved.ID), true
+}
+
+func approvalModeLabel(mode string) string {
+	switch mode {
+	case preferences.ModeOff:
+		return "关闭审批"
+	case preferences.ModeSmart:
+		return "智能审批"
+	case preferences.ModeManual:
+		return "逐条确认"
+	case preferences.ModeModel:
+		return "替我审批"
+	case preferences.ModePlan:
+		return "仅规划"
+	default:
+		return "尚未选择（按智能审批）"
+	}
+}
+
+func approvalModeEffect(mode string) string {
+	switch mode {
+	case preferences.ModeOff:
+		return "关闭后，命令不再弹出审批卡片，只有极少数灾难性命令会被拒绝。"
+	case preferences.ModePlan:
+		return "之后的对话只规划，不执行远程命令。"
+	case preferences.ModeManual:
+		return "之后每条命令都要确认。"
+	case preferences.ModeModel:
+		return "之后由独立审批模型决定是否执行。"
+	default:
+		return "之后只读命令直接执行，有风险的命令仍会审批。"
+	}
+}
+
+func (a *Agent) panelSetApprovalMode(ctx context.Context, botID, mode string) (string, bool) {
+	if msg := a.panelPlanBlocked(ctx); msg != "" {
+		return msg, false
+	}
+	next, ok := preferences.NormalizeMode(mode)
+	if !ok || next == preferences.ModeUnset {
+		return "审批模式只能是 off、smart、manual、model、plan", false
+	}
+	writer := a.settingsWriter()
+	if writer == nil {
+		return "没有设置存储，不能改审批模式", false
+	}
+	stored := writer.Snapshot().Approval.Mode
+	if stored == next {
+		return "审批模式已经是" + approvalModeLabel(next) + "。", true
+	}
+	if next == preferences.ModeModel {
+		route := writer.Snapshot().Approval.Route
+		if route.ProviderID == "" || strings.TrimSpace(route.Model) == "" {
+			return "改成「替我审批」前要先在设置里选好独立审批模型。这次没有改。", false
+		}
+	}
+	what := fmt.Sprintf("把审批模式从「%s」改为「%s」。%s这一轮对话仍按原来的模式执行，下一轮才生效。", approvalModeLabel(stored), approvalModeLabel(next), approvalModeEffect(next))
+	allow, why := a.approveHighRisk(ctx, botID, store.ServerRec{Server: model.Server{ID: "panel", Name: "面板"}}, what, []string{"审批模式决定之后的命令还要不要你确认"})
+	if !allow {
+		return "没有更改审批模式：" + why, false
+	}
+	if _, err := writer.SetApprovalMode(next); err != nil {
+		return "审批模式没有保存：" + err.Error(), false
+	}
+	a.notePanel(ctx, botID, "", "审批模式改为 "+approvalModeLabel(next), "success")
+	return fmt.Sprintf("已把审批模式从「%s」改为「%s」。这一轮仍按原来的模式，下一轮生效。", approvalModeLabel(stored), approvalModeLabel(next)), true
+}
+
+func (a *Agent) panelSetBotPrompt(ctx context.Context, botID, id string, systemPrompt, description *string) (string, bool) {
+	if msg := a.panelPlanBlocked(ctx); msg != "" {
+		return msg, false
+	}
+	if systemPrompt == nil && description == nil {
+		return "set_bot_prompt 需要 system_prompt 或 description", false
+	}
+	target, err := a.findBot(ctx, id)
+	if err != nil {
+		return "没有这个 Bot", false
+	}
+	next := target
+	shown := []string{}
+	if description != nil {
+		next.Description = clip(a.redact(ctx, strings.TrimSpace(*description)), 400)
+		shown = append(shown, "简介："+next.Description)
+	}
+	if systemPrompt != nil {
+		next.SystemPrompt = clip(a.redact(ctx, *systemPrompt), 4000)
+		shown = append(shown, "工作指令："+clip(oneLinePrompt(next.SystemPrompt), 800))
+	}
+	what := fmt.Sprintf("修改 Bot %s（id=%s）。内置安全规则仍然在前面，工作指令只能补充，不能放宽。%s", next.Name, next.ID, strings.Join(shown, " "))
+	allow, why := a.approveHighRisk(ctx, botID, store.ServerRec{Server: model.Server{ID: "panel", Name: "面板"}}, what, []string{"会改变这个 Bot 之后怎么工作"})
+	if !allow {
+		return "没有修改 Bot：" + why, false
+	}
+	if _, err = a.Store.UpdateBot(ctx, next); err != nil {
+		return "Bot 没有保存：" + err.Error(), false
+	}
+	a.notePanel(ctx, botID, "", "已修改 Bot "+next.Name+" 的工作指令", "success")
+	return fmt.Sprintf("已修改 Bot %s（id=%s）的工作指令。内置规则没有变。", next.Name, next.ID), true
+}
+
+func oneLinePrompt(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
 func (a *Agent) notePanel(ctx context.Context, botID, serverID, action, status string) {
 	_, _ = a.Store.AddHistory(ctx, store.HistoryRec{History: model.History{BotID: botID, ServerID: serverID, Action: action, Command: action, Status: status}})
 }
@@ -499,9 +853,14 @@ var panelTool = map[string]any{
 		"parameters": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"action":          map[string]any{"type": "string", "enum": []string{"overview", "set_module", "set_bot", "test_server", "delete_server", "check_update", "apply_update"}},
-				"id":              map[string]string{"type": "string", "description": "模块 id 或名称、Bot id 或名称、服务器 id 或名称"},
+				"action":          map[string]any{"type": "string", "enum": []string{"overview", "set_module", "set_bot", "test_server", "confirm_fingerprint", "reset_fingerprint", "delete_server", "check_update", "apply_update", "set_api_key", "set_approval_mode", "set_bot_prompt"}},
+				"id":              map[string]string{"type": "string", "description": "模块、Bot、服务器或渠道的 id 或名称"},
 				"enabled":         map[string]string{"type": "boolean"},
+				"fingerprint":     map[string]string{"type": "string", "description": "仅 confirm_fingerprint。test_server 汇报的主机指纹，原样填写"},
+				"secret_name":     map[string]string{"type": "string", "description": "仅 set_api_key。保险箱里的名称，不要填明文"},
+				"mode":            map[string]string{"type": "string", "description": "仅 set_approval_mode。off、smart、manual、model 或 plan"},
+				"system_prompt":   map[string]string{"type": "string", "description": "仅 set_bot_prompt。新的工作指令，只能补充内置规则"},
+				"description":     map[string]string{"type": "string", "description": "仅 set_bot_prompt。Bot 简介"},
 				"uninstall_probe": map[string]string{"type": "boolean", "description": "仅 delete_server。省略或 true 时尝试卸载节点探针；用户要求保留探针时为 false"},
 			},
 			"required": []string{"action"},

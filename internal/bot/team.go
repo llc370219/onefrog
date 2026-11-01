@@ -538,7 +538,7 @@ func (a *Agent) writeServers(b *strings.Builder, ctx context.Context, serverID s
 		return
 	}
 	if options(ctx).RestrictServers && serverID == "" {
-		b.WriteString("用户尚未手动选择已有服务器，不要对它们执行命令。用户这条消息里如果给出了新的地址和登录信息，调用 connect_server；接入成功后本轮可以操作这台新机器。\n")
+		b.WriteString("用户尚未手动选择已有服务器。用户点名某台时直接 run_command，审批卡片会请用户确认这台机器。用户这条消息里如果给出了新的地址和登录信息，调用 connect_server；接入成功后本轮可以操作这台新机器。\n")
 		return
 	}
 	b.WriteString("已接入服务器：\n")

@@ -369,6 +369,10 @@ func (a *Agent) runTool(ctx context.Context, botID, fallbackServer string, call 
 		ev.Output = "已拦截：不要下载或搜索面板自己的网页和前端代码。安装或重装只读探针请主控调用 install_probe。"
 		return ev
 	}
+	if readsVault(args.Command) {
+		ev.Output = "已拦截：不能读取密钥保险箱或主密钥。需要密钥时在命令里写 {{secret:名称}}，不要把明文读出来。"
+		return ev
+	}
 	rec, err := a.Store.GetServer(ctx, args.ServerID)
 	if err != nil {
 		rec, err = a.serverByName(ctx, args.ServerID)
@@ -377,19 +381,14 @@ func (a *Agent) runTool(ctx context.Context, botID, fallbackServer string, call 
 			return ev
 		}
 	}
-	if options(ctx).RestrictServers && (fallbackServer == "" || rec.ID != fallbackServer) {
-		if !serverGranted(ctx, rec.ID) {
-			ev.Output = "请先手动选择目标服务器；本轮只能操作选中的服务器"
-			return ev
-		}
-	}
+	unselected := options(ctx).RestrictServers && (fallbackServer == "" || rec.ID != fallbackServer) && !serverGranted(ctx, rec.ID)
 	expanded, err := a.expand(ctx, args.Command)
 	if err != nil {
 		ev.Output = err.Error()
 		return ev
 	}
 	if rec.HostKey == "" {
-		ev.Output = "该服务器的 SSH 主机指纹尚未确认：请先在服务器页面点“测试连接”核对并确认指纹"
+		ev.Output = rec.Name + " 的 SSH 主机指纹还没确认，命令没有执行。请主控先用 panel 的 test_server 拿到指纹，再 confirm_fingerprint。确认会弹出审批，不要自己接受指纹。"
 		return ev
 	}
 	mode := a.approvalMode(ctx)
@@ -398,10 +397,28 @@ func (a *Agent) runTool(ctx context.Context, botID, fallbackServer string, call 
 		reason = args.Purpose
 	}
 	gate := a.assess(ctx, args.Command, args.Risk, reason)
+	if unselected {
+		gate.Ask = true
+		if riskRank[gate.Level] < riskRank["high"] {
+			gate.Level = "high"
+		}
+		gate.Reasons = append([]string{"这台服务器不是本轮手动选中的"}, gate.Reasons...)
+	}
 	blocked := func(why string) ToolEvent {
 		ev.Output = "已拦截：" + why + "。不要换一种写法重试同一操作；请向用户说明情况并询问下一步。"
 		_, _ = a.Store.AddHistory(ctx, store.HistoryRec{History: model.History{BotID: botID, ServerID: rec.ID, Action: ev.Command, Command: ev.Command, Status: "blocked"}})
 		return ev
+	}
+	denied := func(why string) ToolEvent {
+		if unselected {
+			if strings.TrimSpace(why) == "" {
+				why = "未批准"
+			}
+			ev.Output = "已拦截：未手动选择的服务器 " + rec.Name + " 需要审批后才能执行。" + why
+			_, _ = a.Store.AddHistory(ctx, store.HistoryRec{History: model.History{BotID: botID, ServerID: rec.ID, Action: ev.Command, Command: ev.Command, Status: "blocked"}})
+			return ev
+		}
+		return blocked(why)
 	}
 	switch mode {
 	case preferences.ModeSmart, preferences.ModeManual:
@@ -414,13 +431,23 @@ func (a *Agent) runTool(ctx context.Context, botID, fallbackServer string, call 
 			gate.Level = "high"
 		}
 		if decision := a.askOperator(ctx, botID, rec, ev.Command, mode, gate); !decision.Allow {
-			return blocked(decision.Reason)
+			return denied(decision.Reason)
+		}
+		if unselected {
+			grantServer(ctx, rec.ID)
 		}
 	default:
 		// off, model, plan: the built-in catastrophic list is a hard block.
 		if hard := audit.Decide(expanded); !hard.Allow {
 			a.recordReview(ctx, botID, rec.ID, ev.Command, Review{Allow: false, Reason: hard.Reason, Risk: "high", Mode: mode, Findings: gate.Findings})
 			return blocked(hard.Reason)
+		}
+		if unselected && mode != preferences.ModePlan {
+			if decision := a.askOperator(ctx, botID, rec, ev.Command, mode, gate); !decision.Allow {
+				return denied(decision.Reason)
+			}
+			grantServer(ctx, rec.ID)
+			break
 		}
 		if mode != preferences.ModeOff {
 			if decision := a.approve(ctx, botID, rec.ID, args.Command, gate); !decision.Allow {
@@ -450,7 +477,7 @@ func (a *Agent) runTool(ctx context.Context, botID, fallbackServer string, call 
 			rec.Status = "host_key_mismatch"
 			_, _ = a.Store.UpdateServer(ctx, rec)
 		}
-		ev.Output = "已停止：" + rec.Name + " 的 SSH 主机指纹与已保存的不一致，命令没有执行。请告诉用户到服务器页面点“测试连接”核对新指纹（重装系统或部分服务商重启后会更换主机密钥），确认无误后再重置指纹。"
+		ev.Output = "已停止：" + rec.Name + " 的 SSH 主机指纹与已保存的不一致，命令没有执行，旧指纹没有被覆盖。请主控先 reset_fingerprint，审批通过后再 test_server 和 confirm_fingerprint。"
 		_, _ = a.Store.AddHistory(ctx, store.HistoryRec{History: model.History{BotID: botID, ServerID: rec.ID, Action: ev.Command, Command: ev.Command, Status: "blocked"}})
 		return ev
 	}

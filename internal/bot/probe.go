@@ -3,12 +3,15 @@ package bot
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"strings"
 	"time"
 
+	"onefrog/internal/model"
 	"onefrog/internal/onboarding"
 	"onefrog/internal/preferences"
+	"onefrog/internal/store"
 )
 
 func nl() string { return string([]byte{10}) }
@@ -25,6 +28,16 @@ func (a *Agent) readsOwnPanel(command string) bool {
 		return false
 	}
 	return strings.Contains(low, ".js") || strings.Contains(low, ".html") || strings.Contains(low, "/assets/")
+}
+
+func readsVault(command string) bool {
+	low := strings.ToLower(command)
+	for _, name := range []string{"master.key", "settings.enc", "secrets.enc", "oauth.enc"} {
+		if strings.Contains(low, name) {
+			return true
+		}
+	}
+	return false
 }
 
 func panelHost(raw string) string {
@@ -74,7 +87,38 @@ func (a *Agent) installProbe(ctx context.Context, botID string, call toolCall) T
 		owner = "panel"
 	}
 	if action == "confirm" {
-		v, err := a.Onboarding.Confirm(owner, strings.TrimSpace(args.RequestID), args.Fingerprint)
+		fp := strings.TrimSpace(args.Fingerprint)
+		requestID := strings.TrimSpace(args.RequestID)
+		serverName := "服务器"
+		rec := store.ServerRec{Server: model.Server{ID: "panel", Name: "面板"}}
+		if view, getErr := a.Onboarding.Get(owner, requestID); getErr == nil {
+			if view.Fingerprint != "" && fp != "" && view.Fingerprint != fp {
+				ev.Output = "指纹与服务器提供的不一致，没有确认。"
+				return ev
+			}
+			if fp == "" {
+				fp = view.Fingerprint
+			}
+			if saved, err := a.Store.GetServer(ctx, view.ServerID); err == nil {
+				rec = saved
+				if strings.TrimSpace(saved.Name) != "" {
+					serverName = saved.Name
+				} else if saved.Host != "" {
+					serverName = saved.Host
+				}
+			}
+		}
+		if fp == "" {
+			ev.Output = "confirm 需要结果里的主机指纹"
+			return ev
+		}
+		what := fmt.Sprintf("确认 %s 的 SSH 主机指纹 %s。只有这个指纹才会被接受。", serverName, fp)
+		allow, why := a.approveHighRisk(ctx, botID, rec, what, []string{"安装探针前先核对 SSH 主机指纹"})
+		if !allow {
+			ev.Output = "没有确认指纹：" + why
+			return ev
+		}
+		v, err := a.Onboarding.Confirm(owner, requestID, fp)
 		if err != nil {
 			ev.Output = err.Error()
 			return ev
@@ -192,7 +236,7 @@ func (a *Agent) finishProbe(ctx context.Context, botID string, ev ToolEvent, v o
 
 func formatOnboarding(v onboarding.View) string {
 	if v.Status == "fingerprint_required" {
-		return "需要用户确认 SSH 主机指纹后才能继续。指纹：" + v.Fingerprint + nl() + "request_id=" + v.ID + nl() + "请把指纹原样告诉用户，等用户确认后再用 action=confirm 提交。不要自己确认。"
+		return "需要确认 SSH 主机指纹后才能继续。指纹：" + v.Fingerprint + nl() + "request_id=" + v.ID + nl() + "请调用 action=confirm，带上这个 request_id 和上面的指纹。会弹出审批，不要自己确认，也不要改指纹。"
 	}
 	parts := []string{"状态：" + v.Status}
 	if v.Message != "" {

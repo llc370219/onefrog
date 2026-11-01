@@ -16,6 +16,7 @@ import (
 	"onefrog/internal/attachment"
 	"onefrog/internal/audit"
 	"onefrog/internal/model"
+	"onefrog/internal/onboarding"
 	"onefrog/internal/preferences"
 	"onefrog/internal/providerlogin"
 	"onefrog/internal/remote"
@@ -29,15 +30,19 @@ type Exec interface {
 }
 
 type Agent struct {
-	OAuth    *providerlogin.Manager
-	Files    *attachment.Manager
-	Usage    *usage.Manager
-	Assets   *asset.Ledger
-	Store    store.Store
-	Box      *secret.Box
-	SSH      Exec
-	HTTP     *http.Client
-	Settings *preferences.Manager
+	OAuth  *providerlogin.Manager
+	Files  *attachment.Manager
+	Usage  *usage.Manager
+	Assets *asset.Ledger
+	Store  store.Store
+	Box    *secret.Box
+	SSH    Exec
+	// Onboarding installs the read-only probe. PublicURL is the panel address
+	// a node can reach; install_probe uses it when the model omits report_base.
+	Onboarding *onboarding.Manager
+	PublicURL  string
+	HTTP       *http.Client
+	Settings   *preferences.Manager
 	// SettingsLive is the process-wide settings store. Settings may be a
 	// frozen snapshot for one turn; panel changes must hit the live store.
 	SettingsLive *preferences.Manager
@@ -339,6 +344,10 @@ func (a *Agent) runTool(ctx context.Context, botID, fallbackServer string, call 
 	ev := ToolEvent{Name: "run_command", Command: a.redact(ctx, args.Command), ServerID: args.ServerID}
 	if call.Function.Name != "run_command" {
 		ev.Output = "未知工具"
+		return ev
+	}
+	if a.readsOwnPanel(args.Command) {
+		ev.Output = "已拦截：不要下载或搜索面板自己的网页和前端代码。安装或重装只读探针请主控调用 install_probe。"
 		return ev
 	}
 	rec, err := a.Store.GetServer(ctx, args.ServerID)

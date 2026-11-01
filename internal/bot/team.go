@@ -91,7 +91,7 @@ func (a *Agent) converse(ctx context.Context, speaker model.Bot, creds credentia
 	limit := a.execution().MaxSteps
 	spec := toolDefs(canDelegate, a.managesAssets(speaker))
 	if !a.managesAssets(speaker) && !isWorker(ctx) {
-		spec = append(spec, askUserTool, requestSecretTool, panelTool)
+		spec = append(spec, askUserTool, requestSecretTool, panelTool, installProbeTool)
 	}
 	for i := 0; i < limit; i++ {
 		purpose := "conversation"
@@ -272,6 +272,15 @@ func (a *Agent) execCall(ctx context.Context, speaker model.Bot, creds credentia
 			tr.noteTool(speaker.Name, ev)
 		}
 		return ev.Output
+	case "install_probe":
+		if isWorker(ctx) || a.managesAssets(speaker) {
+			return "只有主控可以安装探针"
+		}
+		ev := a.installProbe(ctx, speaker.ID, call)
+		if tr != nil {
+			tr.noteTool(speaker.Name, ev)
+		}
+		return ev.Output
 	case "manage_module_record":
 		if !a.managesAssets(speaker) {
 			return "只有模块构建 Bot 可以修改资产与订阅"
@@ -424,6 +433,7 @@ func (a *Agent) leaderPrompt(ctx context.Context, bot model.Bot, serverID string
 	b.WriteString(promptRequestSecret)
 	b.WriteString(promptConnect)
 	b.WriteString(promptPanel)
+	b.WriteString(promptProbe)
 	writeExtra(&b, bot)
 	a.writePeers(&b, ctx, bot.ID)
 	b.WriteString(promptMemory)
@@ -443,6 +453,7 @@ func (a *Agent) workerPrompt(ctx context.Context, bot model.Bot, serverID string
 	fmt.Fprintf(&b, promptWorker, bot.Name, strings.TrimSpace(bot.Description))
 	a.writeOperations(&b, ctx)
 	b.WriteString(promptConnect)
+	b.WriteString(promptNoPanelSource)
 	b.WriteString(promptMemory)
 	a.writeOwnMemory(&b, ctx, bot)
 	writeExtra(&b, bot)

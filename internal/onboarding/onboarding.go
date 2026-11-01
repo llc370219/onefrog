@@ -148,6 +148,28 @@ func (m *Manager) Get(owner, key string) (View, error) {
 	return v, nil
 }
 
+// ActiveForServer returns the job still installing or waiting for a host
+// fingerprint on this server. Finished jobs are ignored.
+func (m *Manager) ActiveForServer(owner, serverID string) (View, bool) {
+	if serverID == "" {
+		return View{}, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, j := range m.jobs {
+		if j.Owner != owner || j.ServerID != serverID {
+			continue
+		}
+		if j.Status != "running" && j.Status != "fingerprint_required" {
+			continue
+		}
+		v := j.View
+		v.Steps = append([]Step{}, j.Steps...)
+		return v, true
+	}
+	return View{}, false
+}
+
 var hostPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$`)
 
 func Validate(r *Request) error {

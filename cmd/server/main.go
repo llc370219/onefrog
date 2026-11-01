@@ -129,6 +129,8 @@ func main() {
 			Usage:        usageLog,
 			Assets:       ledger,
 			Updates:      updates,
+			Onboarding:   onboard,
+			PublicURL:    cfg.PublicURL,
 		},
 	}
 	log.Printf("listening on %s", cfg.Addr)

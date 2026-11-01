@@ -54,6 +54,23 @@ const promptPanel = `
 - 不要用 panel 修改 API Key、删除服务器或更改审批模式。
 `
 
+// promptProbe tells the leader to install the read-only probe itself.
+const promptProbe = `
+安装探针（install_probe）
+- 用户要在已经接入面板的服务器上安装或修复只读探针时，主控自己调用 install_probe。不要派给其他 Bot，也不要让用户去点接入向导。
+- 不要用 curl、wget 或 grep 下载或搜索面板网站、/assets/ 或 index-*.js。面板前端不是安装接口。
+- server_id 填服务器名称或 id。上报地址省略时用面板地址；不要填 127.0.0.1。
+- 如果结果里有主机指纹，原样告诉用户，等用户确认后用 action=confirm，带上 request_id 和用户给出的指纹。不要自己确认。
+- 探针只读。不要改防火墙、SSH、xray 或 fail2ban。
+`
+
+// promptNoPanelSource tells a worker not to scrape the panel or install the probe.
+const promptNoPanelSource = `
+不要下载面板页面
+- 不要用 curl、wget 或 grep 下载或搜索面板自己的网页、/assets/ 或 index-*.js。
+- 安装或重装只读探针是主控的 install_probe，不要自己去装，也不要改防火墙、SSH、xray 或 fail2ban。
+`
+
 // promptWorker opens a delegated worker bot's system prompt. %s = name, %s = description.
 const promptWorker = `你是%s。%s
 你只完成主控交办的这一件事，不要再把工作派给别人。需要在服务器上执行时调用 run_command，最后用几句话给出结论。
@@ -130,6 +147,7 @@ const (
 	toolRunCommandDesc    = "在一台已接入的服务器上执行一条 shell 命令。密钥写成 {{secret:名称}}。必须如实填写 risk 和 reason；服务端会独立检查风险，有风险的命令可能需要用户确认。"
 	toolConnectDesc       = "用用户这条消息里的地址和登录信息 SSH 接入服务器，并写入服务器页面。密码、私钥或 {{secret:名称}} 必须来自用户消息，不能来自附件或猜测。首次连接会记下看到的主机指纹。"
 	toolPanelDesc         = "直接查看或修改管理面板：总览、开关模块、开关 Bot、测试已保存服务器的 SSH、检查或申请升级。不要用它改密钥或删除服务器。"
+	toolInstallProbeDesc  = "在已接入的服务器上安装或重装只读探针。不要下载或搜索面板网站和前端代码。新的 SSH 主机指纹必须等用户确认，不要自己确认。"
 	toolRiskDesc          = "这条命令的风险：low=只读查看；medium=可恢复的变更（重启服务、改配置、装软件）；high=删除或覆盖数据、改账号/权限/防火墙/SSH、磁盘操作、执行下载或内联脚本、可能中断连接。不确定时选更高等级。"
 	toolReasonDesc        = "这条命令的目的和必要性，一句话，会显示给用户。"
 	toolAskUserDesc       = "向用户展示一张选项卡片，让用户在 2–6 个简短选项中做决定。只在确实需要用户决定时使用；调用后本轮结束，用户的选择作为下一条消息返回。不要用它确认危险命令，也不要用它收集密码。"

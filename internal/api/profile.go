@@ -104,3 +104,10 @@ func (s *Server) listSessions(c *gin.Context) {
 	}
 	c.JSON(200, items)
 }
+
+func (s *Server) deleteChatSession(c *gin.Context) {
+	if mapStore(c, s.Store.DeleteChatSession(c.Request.Context(), c.Param("id"))) {
+		return
+	}
+	c.Status(http.StatusNoContent)
+}

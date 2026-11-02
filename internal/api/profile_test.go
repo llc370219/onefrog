@@ -132,4 +132,39 @@ func TestConversationDirectory(t *testing.T) {
 	if len(messages) != 2 || messages[0].Content != "检查磁盘" {
 		t.Fatal(messages)
 	}
+	var second struct {
+		SessionID string `json:"session_id"`
+	}
+	postJSON(t, c, s.URL+"/api/chat", map[string]string{"content": "另一条"}, 200, &second)
+	if second.SessionID == "" || second.SessionID == reply.SessionID {
+		t.Fatal(second.SessionID)
+	}
+	req, err := http.NewRequest(http.MethodDelete, s.URL+"/api/sessions/"+reply.SessionID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete chat %d", res.StatusCode)
+	}
+	getJSON(t, c, s.URL+"/api/sessions", &sessions)
+	if len(sessions) != 1 || sessions[0].ID != second.SessionID {
+		t.Fatalf("left %+v", sessions)
+	}
+	req, err = http.NewRequest(http.MethodGet, s.URL+"/api/sessions/"+reply.SessionID+"/messages", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err = c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("deleted messages %d", res.StatusCode)
+	}
 }

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -249,6 +250,40 @@ func (m *Memory) saveChatLocked(id string) error {
 		m.messages[id] = append([]model.Message(nil), msgs[len(msgs)-MaxMessagesPerChat:]...)
 	}
 	return writeEncryptedJSON(m.chatFile(id), m.dataBox, persistedChat{Session: m.chats[id], Messages: m.messages[id]})
+}
+
+func (m *Memory) GetChatSession(_ context.Context, idv string) (model.Session, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess, ok := m.chats[idv]
+	if !ok {
+		return model.Session{}, ErrNotFound
+	}
+	return sess, nil
+}
+
+func (m *Memory) DeleteChatSession(_ context.Context, idv string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess, ok := m.chats[idv]
+	if !ok {
+		return ErrNotFound
+	}
+	msgs := m.messages[idv]
+	delete(m.chats, idv)
+	delete(m.messages, idv)
+	if !m.persisting() {
+		return nil
+	}
+	err := os.Remove(m.chatFile(idv))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		m.chats[idv] = sess
+		if msgs != nil {
+			m.messages[idv] = msgs
+		}
+		return err
+	}
+	return nil
 }
 
 func (m *Memory) chatUpdatedLocked(id string) time.Time {

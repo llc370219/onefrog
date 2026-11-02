@@ -278,3 +278,40 @@ func TestSecretCardSurvivesRestart(t *testing.T) {
 		t.Fatal("card stored a value")
 	}
 }
+
+func TestDeleteChatRemovesTheFile(t *testing.T) {
+	dir, box, ctx := t.TempDir(), persistBox(t), context.Background()
+	m := reopen(t, dir, box)
+	keep, err := m.EnsureSession(ctx, "keep", "main", "留下")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone, err := m.EnsureSession(ctx, "gone", "main", "删掉")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = m.AddMessage(ctx, model.Message{SessionID: keep.ID, Role: "user", Content: "还在"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = m.AddMessage(ctx, model.Message{SessionID: gone.ID, Role: "user", Content: "走了"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = m.DeleteChatSession(ctx, gone.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = m.ListMessages(ctx, gone.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatal(err)
+	}
+	m = reopen(t, dir, box)
+	if _, err = m.GetChatSession(ctx, gone.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatal(err)
+	}
+	msgs, err := m.ListMessages(ctx, keep.ID)
+	if err != nil || len(msgs) != 1 || msgs[0].Content != "还在" {
+		t.Fatal(msgs, err)
+	}
+	entries, _ := os.ReadDir(filepath.Join(dir, chatsDir))
+	if len(entries) != 1 {
+		t.Fatal(len(entries))
+	}
+}

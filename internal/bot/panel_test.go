@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -512,5 +513,142 @@ func TestUnselectedServerAndVaultNeedAGate(t *testing.T) {
 	ev = agent.runTool(approved, "main", "web", dump)
 	if ev.OK || !strings.Contains(ev.Output, "密钥保险箱") {
 		t.Fatal(ev.Output)
+	}
+}
+
+func TestPanelCreatesBotsAndDeletesChats(t *testing.T) {
+	ctx := context.Background()
+	mem := store.NewMemory()
+	box, err := secret.New(bytesRepeat())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = mem.CreateBot(ctx, model.Bot{ID: "main", Name: "主控", SystemPrompt: "old"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = mem.CreateBot(ctx, model.Bot{ID: "check", Name: "巡检"}); err != nil {
+		t.Fatal(err)
+	}
+	enc, err := box.Encrypt("sk-live-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = mem.CreateSecret(ctx, store.SecretRec{Secret: model.Secret{Name: "渠道密钥"}, EncryptedValue: enc}); err != nil {
+		t.Fatal(err)
+	}
+	agent := &Agent{Store: mem, Box: box}
+	speaker := model.Bot{ID: "main", Name: "主控"}
+
+	ev := agent.panelAct(ctx, speaker, callPanel(panelArgs(map[string]any{"action": "create_bot", "name": "报表", "description": "看报表", "system_prompt": "只做只读，不要写出 sk-live-secret"})))
+	if !ev.OK || strings.Contains(ev.Output, "sk-live-secret") {
+		t.Fatal(ev.Output)
+	}
+	bots, _ := mem.ListBots(ctx)
+	var created model.Bot
+	for _, item := range bots {
+		if item.Name == "报表" {
+			created = item
+		}
+	}
+	if created.ID == "" || created.APIKeySecretID != "" || created.BaseURL != "" || !strings.Contains(created.SystemPrompt, "只做只读") || strings.Contains(created.SystemPrompt, "sk-live-secret") {
+		t.Fatalf("created %#v", created)
+	}
+
+	ev = agent.panelAct(ctx, speaker, callPanel(panelArgs(map[string]any{"action": "create_bot", "name": "坏的", "api_key": "sk-live-secret"})))
+	if ev.OK || !strings.Contains(ev.Output, "不接受") {
+		t.Fatal(ev.Output)
+	}
+	bots, _ = mem.ListBots(ctx)
+	for _, item := range bots {
+		if item.Name == "坏的" {
+			t.Fatal("raw key created a bot")
+		}
+	}
+
+	plan := context.WithValue(ctx, optionsKey{}, Options{ApprovalMode: preferences.ModePlan})
+	ev = agent.panelAct(plan, speaker, callPanel(panelArgs(map[string]any{"action": "create_bot", "name": "规划里的"})))
+	if ev.OK || !strings.Contains(ev.Output, "仅规划") {
+		t.Fatal(ev.Output)
+	}
+
+	ev = agent.panelAct(ctx, speaker, callPanel(panelArgs(map[string]any{"action": "delete_bot", "id": "主控"})))
+	if ev.OK || !strings.Contains(ev.Output, "不能删除") {
+		t.Fatal(ev.Output)
+	}
+	if _, err = mem.GetBot(ctx, "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	ev = agent.panelAct(ctx, speaker, callPanel(panelArgs(map[string]any{"action": "delete_bot", "id": "报表"})))
+	if ev.OK {
+		t.Fatal("deleted without approval")
+	}
+	if _, err = mem.GetBot(ctx, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	approved := context.WithValue(ctx, optionsKey{}, Options{Approver: func(_ context.Context, req ApprovalRequest) (bool, string) {
+		if !strings.Contains(req.Command, "报表") || strings.Contains(req.Command, "sk-live-secret") {
+			t.Fatalf("delete bot card: %s", req.Command)
+		}
+		return true, "用户已批准"
+	}})
+	ev = agent.panelAct(approved, speaker, callPanel(panelArgs(map[string]any{"action": "delete_bot", "id": created.ID})))
+	if !ev.OK {
+		t.Fatal(ev.Output)
+	}
+	if _, err = mem.GetBot(ctx, created.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal(err)
+	}
+	if _, err = mem.GetBot(ctx, "check"); err != nil {
+		t.Fatal("other bot removed")
+	}
+
+	keep, err := mem.EnsureSession(ctx, "keep", "main", "留下")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone, err := mem.EnsureSession(ctx, "gone", "main", "磁盘检查")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = mem.AddMessage(ctx, model.Message{SessionID: gone.ID, Role: "user", Content: "正文里有 sk-live-secret 不要进卡片"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = mem.AddMessage(ctx, model.Message{SessionID: keep.ID, Role: "user", Content: "这条要留下"}); err != nil {
+		t.Fatal(err)
+	}
+	ev = agent.panelAct(ctx, speaker, callPanel(panelArgs(map[string]any{"action": "delete_chat", "id": "磁盘检查"})))
+	if ev.OK {
+		t.Fatal("chat deleted without approval")
+	}
+	if _, err = mem.GetChatSession(ctx, gone.ID); err != nil {
+		t.Fatal(err)
+	}
+	chatOK := context.WithValue(ctx, optionsKey{}, Options{Approver: func(_ context.Context, req ApprovalRequest) (bool, string) {
+		if !strings.Contains(req.Command, "磁盘检查") || strings.Contains(req.Command, "sk-live-secret") || strings.Contains(req.Command, "不要进卡片") {
+			t.Fatalf("chat card leaked: %s", req.Command)
+		}
+		return true, "用户已批准"
+	}})
+	ev = agent.panelAct(chatOK, speaker, callPanel(panelArgs(map[string]any{"action": "delete_chat", "id": "gone"})))
+	if !ev.OK || strings.Contains(ev.Output, "sk-live-secret") {
+		t.Fatal(ev.Output)
+	}
+	if _, err = mem.GetChatSession(ctx, gone.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal(err)
+	}
+	msgs, err := mem.ListMessages(ctx, keep.ID)
+	if err != nil || len(msgs) != 1 || msgs[0].Content != "这条要留下" {
+		t.Fatal(msgs, err)
+	}
+	ev = agent.panelAct(plan, speaker, callPanel(panelArgs(map[string]any{"action": "delete_chat", "id": "keep"})))
+	if ev.OK || !strings.Contains(ev.Output, "仅规划") {
+		t.Fatal(ev.Output)
+	}
+	if _, err = mem.GetChatSession(ctx, keep.ID); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(agent.leaderPrompt(ctx, speaker, ""), "create_bot") || !strings.Contains(agent.leaderPrompt(ctx, speaker, ""), "delete_chat") {
+		t.Fatal("prompt missing create_bot or delete_chat")
 	}
 }

@@ -38,6 +38,7 @@ func (a *Agent) panelAct(ctx context.Context, speaker model.Bot, call toolCall) 
 	var args struct {
 		Action       string  `json:"action"`
 		ID           string  `json:"id"`
+		Name         string  `json:"name"`
 		Enabled      *bool   `json:"enabled"`
 		Fingerprint  string  `json:"fingerprint"`
 		SecretName   string  `json:"secret_name"`
@@ -51,10 +52,11 @@ func (a *Agent) panelAct(ctx context.Context, speaker model.Bot, call toolCall) 
 	}
 	args.Action = strings.TrimSpace(args.Action)
 	args.ID = strings.TrimSpace(args.ID)
+	args.Name = strings.TrimSpace(args.Name)
 	args.Fingerprint = strings.TrimSpace(args.Fingerprint)
 	args.SecretName = strings.TrimSpace(args.SecretName)
 	args.Mode = strings.TrimSpace(args.Mode)
-	ev.Command = panelCommand(args.Action, args.ID, args.Enabled, args.Fingerprint, args.SecretName, args.Mode)
+	ev.Command = panelCommand(args.Action, args.ID, args.Name, args.Enabled, args.Fingerprint, args.SecretName, args.Mode)
 	switch args.Action {
 	case "overview":
 		ev.OK = true
@@ -81,14 +83,20 @@ func (a *Agent) panelAct(ctx context.Context, speaker model.Bot, call toolCall) 
 		ev.Output, ev.OK = a.panelSetApprovalMode(ctx, speaker.ID, args.Mode)
 	case "set_bot_prompt":
 		ev.Output, ev.OK = a.panelSetBotPrompt(ctx, speaker.ID, args.ID, args.SystemPrompt, args.Description)
+	case "create_bot":
+		ev.Output, ev.OK = a.panelCreateBot(ctx, speaker.ID, call.Function.Arguments, args.Name, args.SystemPrompt, args.Description)
+	case "delete_bot":
+		ev.Output, ev.OK = a.panelDeleteBot(ctx, speaker, args.ID)
+	case "delete_chat":
+		ev.Output, ev.OK = a.panelDeleteChat(ctx, speaker.ID, args.ID)
 	default:
-		ev.Output = "panel 的 action 只能是 overview、set_module、set_bot、test_server、confirm_fingerprint、reset_fingerprint、delete_server、check_update、apply_update、set_api_key、set_approval_mode、set_bot_prompt"
+		ev.Output = "panel 的 action 只能是 overview、set_module、set_bot、test_server、confirm_fingerprint、reset_fingerprint、delete_server、check_update、apply_update、set_api_key、set_approval_mode、set_bot_prompt、create_bot、delete_bot、delete_chat"
 	}
 	ev.Output = clip(ev.Output, 2000)
 	return ev
 }
 
-func panelCommand(action, id string, enabled *bool, fingerprint, secretName, mode string) string {
+func panelCommand(action, id, name string, enabled *bool, fingerprint, secretName, mode string) string {
 	switch action {
 	case "overview":
 		return "查看面板"
@@ -120,6 +128,12 @@ func panelCommand(action, id string, enabled *bool, fingerprint, secretName, mod
 		return "把审批模式改为 " + mode
 	case "set_bot_prompt":
 		return "修改 Bot " + id + " 的工作指令"
+	case "create_bot":
+		return "创建 Bot " + name
+	case "delete_bot":
+		return "删除 Bot " + id
+	case "delete_chat":
+		return "删除对话 " + id
 	default:
 		return action
 	}
@@ -167,9 +181,11 @@ func (a *Agent) panelOverview(ctx context.Context, speaker model.Bot) string {
 	}
 	bots, _ := a.Store.ListBots(ctx)
 	type botRow struct {
-		ID      string `json:"id"`
-		Name    string `json:"name"`
-		Enabled bool   `json:"enabled"`
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		Description string `json:"description,omitempty"`
+		Prompt      string `json:"prompt,omitempty"`
+		Enabled     bool   `json:"enabled"`
 	}
 	botRows := make([]botRow, 0, len(bots))
 	for _, item := range bots {
@@ -177,7 +193,28 @@ func (a *Agent) panelOverview(ctx context.Context, speaker model.Bot) string {
 		if writer := a.settingsWriter(); writer != nil {
 			enabled = writer.BotEnabled(item.ID)
 		}
-		botRows = append(botRows, botRow{ID: item.ID, Name: item.Name, Enabled: enabled})
+		prompt := clip(oneLinePrompt(a.redact(ctx, item.SystemPrompt)), 160)
+		botRows = append(botRows, botRow{
+			ID: item.ID, Name: item.Name, Enabled: enabled,
+			Description: clip(oneLinePrompt(a.redact(ctx, item.Description)), 160),
+			Prompt:      prompt,
+		})
+	}
+	type chatRow struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+	}
+	listed, _ := a.Store.ListChatSessions(ctx)
+	if len(listed) > 30 {
+		listed = listed[:30]
+	}
+	chatRows := make([]chatRow, 0, len(listed))
+	for _, item := range listed {
+		title := strings.TrimSpace(a.redact(ctx, item.Title))
+		if title == "" {
+			title = "对话"
+		}
+		chatRows = append(chatRows, chatRow{ID: item.ID, Title: title})
 	}
 	var upd any
 	if a.Updates != nil {
@@ -193,6 +230,7 @@ func (a *Agent) panelOverview(ctx context.Context, speaker model.Bot) string {
 		"servers":         rows,
 		"modules":         mods,
 		"bots":            botRows,
+		"chats":           chatRows,
 		"update":          upd,
 	})
 	return modelLine + "\n" + string(raw)
@@ -804,6 +842,150 @@ func (a *Agent) panelSetApprovalMode(ctx context.Context, botID, mode string) (s
 	return fmt.Sprintf("已把审批模式从「%s」改为「%s」。这一轮仍按原来的模式，下一轮生效。", approvalModeLabel(stored), approvalModeLabel(next)), true
 }
 
+func panelRejectsSecretFields(raw string) bool {
+	var bag map[string]json.RawMessage
+	if json.Unmarshal([]byte(raw), &bag) != nil {
+		return true
+	}
+	for key := range bag {
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "api_key", "apikey", "api_key_secret_id", "base_url", "secret", "password", "private_key", "token", "value", "master_key":
+			return true
+		}
+	}
+	return false
+}
+
+func cleanBotName(name string) (string, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" || len([]rune(name)) > 60 || strings.ContainsAny(name, "\r\n\t") {
+		return "", false
+	}
+	return name, true
+}
+
+func (a *Agent) panelCreateBot(ctx context.Context, botID, raw, name string, systemPrompt, description *string) (string, bool) {
+	if msg := a.panelPlanBlocked(ctx); msg != "" {
+		return msg, false
+	}
+	if panelRejectsSecretFields(raw) {
+		return "create_bot 不接受 API Key、私钥或保险箱明文。新 Bot 跟随默认模型，密钥只按名称调用。", false
+	}
+	name, ok := cleanBotName(name)
+	if !ok {
+		return "create_bot 需要 1–60 字的 name，不能包含换行", false
+	}
+	existing, err := a.Store.ListBots(ctx)
+	if err != nil {
+		return "Bot 列表读不出来：" + err.Error(), false
+	}
+	for _, item := range existing {
+		if item.Name == name {
+			return "已经有同名 Bot。请换一个名称，或用 set_bot_prompt 改它的工作指令。", false
+		}
+	}
+	next := model.Bot{Name: name}
+	if description != nil {
+		next.Description = clip(a.redact(ctx, strings.TrimSpace(*description)), 400)
+	}
+	if systemPrompt != nil {
+		next.SystemPrompt = clip(a.redact(ctx, *systemPrompt), 4000)
+	}
+	saved, err := a.Store.CreateBot(ctx, next)
+	if err != nil {
+		return "Bot 没有创建：" + err.Error(), false
+	}
+	a.notePanel(ctx, botID, "", "已创建 Bot "+saved.Name, "success")
+	return fmt.Sprintf("已创建 Bot %s（id=%s）。已启用，跟随默认模型，没有单独的密钥。内置安全规则仍在工作指令前面。", saved.Name, saved.ID), true
+}
+
+func (a *Agent) panelDeleteBot(ctx context.Context, speaker model.Bot, id string) (string, bool) {
+	if msg := a.panelPlanBlocked(ctx); msg != "" {
+		return msg, false
+	}
+	target, err := a.findBot(ctx, id)
+	if err != nil {
+		return "没有这个 Bot", false
+	}
+	if target.ID == speaker.ID {
+		return "不能删除当前正在使用的主控", false
+	}
+	what := fmt.Sprintf("删除 Bot %s（id=%s）。它的记忆会一起去掉，已有对话还在。不会读取密钥。", target.Name, target.ID)
+	allow, why := a.approveHighRisk(ctx, speaker.ID, store.ServerRec{Server: model.Server{ID: "panel", Name: "面板"}}, what, []string{"会删掉这个 Bot 和它的记忆"})
+	if !allow {
+		return "没有删除 Bot：" + why, false
+	}
+	if err = a.Store.DeleteBot(ctx, target.ID); err != nil {
+		return "Bot 没有删除：" + err.Error(), false
+	}
+	if writer := a.settingsWriter(); writer != nil {
+		_ = writer.SetBotEnabled(target.ID, true)
+	}
+	a.notePanel(ctx, speaker.ID, "", "已删除 Bot "+target.Name, "success")
+	return fmt.Sprintf("已删除 Bot %s（id=%s）。", target.Name, target.ID), true
+}
+
+var errAmbiguousChat = errors.New("ambiguous chat")
+
+func (a *Agent) findChat(ctx context.Context, idOrTitle string) (model.Session, error) {
+	idOrTitle = strings.TrimSpace(idOrTitle)
+	if idOrTitle == "" {
+		return model.Session{}, fmt.Errorf("empty")
+	}
+	if item, err := a.Store.GetChatSession(ctx, idOrTitle); err == nil {
+		return item, nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return model.Session{}, err
+	}
+	listed, err := a.Store.ListChatSessions(ctx)
+	if err != nil {
+		return model.Session{}, err
+	}
+	var matched []model.Session
+	for _, item := range listed {
+		if item.Title == idOrTitle {
+			matched = append(matched, item.Session)
+		}
+	}
+	if len(matched) == 1 {
+		return matched[0], nil
+	}
+	if len(matched) > 1 {
+		return model.Session{}, errAmbiguousChat
+	}
+	return model.Session{}, store.ErrNotFound
+}
+
+func (a *Agent) panelDeleteChat(ctx context.Context, botID, id string) (string, bool) {
+	if msg := a.panelPlanBlocked(ctx); msg != "" {
+		return msg, false
+	}
+	if strings.TrimSpace(id) == "" {
+		return "delete_chat 需要对话 id 或标题", false
+	}
+	sess, err := a.findChat(ctx, id)
+	if err != nil {
+		if errors.Is(err, errAmbiguousChat) {
+			return "有多条同名对话，请用 overview 里的 id", false
+		}
+		return "没有这条对话", false
+	}
+	title := strings.TrimSpace(a.redact(ctx, sess.Title))
+	if title == "" {
+		title = "对话"
+	}
+	what := fmt.Sprintf("删除对话「%s」（id=%s）。只删除这条对话和里面的消息，不删除登录、密钥或服务器。", title, sess.ID)
+	allow, why := a.approveHighRisk(ctx, botID, store.ServerRec{Server: model.Server{ID: "panel", Name: "面板"}}, what, []string{"会删掉这一条对话记录"})
+	if !allow {
+		return "没有删除对话：" + why, false
+	}
+	if err = a.Store.DeleteChatSession(ctx, sess.ID); err != nil {
+		return "对话没有删除：" + err.Error(), false
+	}
+	a.notePanel(ctx, botID, "", "已删除对话 "+title, "success")
+	return fmt.Sprintf("已删除对话「%s」。", title), true
+}
+
 func (a *Agent) panelSetBotPrompt(ctx context.Context, botID, id string, systemPrompt, description *string) (string, bool) {
 	if msg := a.panelPlanBlocked(ctx); msg != "" {
 		return msg, false
@@ -853,14 +1035,15 @@ var panelTool = map[string]any{
 		"parameters": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"action":          map[string]any{"type": "string", "enum": []string{"overview", "set_module", "set_bot", "test_server", "confirm_fingerprint", "reset_fingerprint", "delete_server", "check_update", "apply_update", "set_api_key", "set_approval_mode", "set_bot_prompt"}},
-				"id":              map[string]string{"type": "string", "description": "模块、Bot、服务器或渠道的 id 或名称"},
+				"action":          map[string]any{"type": "string", "enum": []string{"overview", "set_module", "set_bot", "test_server", "confirm_fingerprint", "reset_fingerprint", "delete_server", "check_update", "apply_update", "set_api_key", "set_approval_mode", "set_bot_prompt", "create_bot", "delete_bot", "delete_chat"}},
+				"id":              map[string]string{"type": "string", "description": "模块、Bot、服务器、渠道或对话的 id 或名称。delete_chat 也接受标题"},
+				"name":            map[string]string{"type": "string", "description": "仅 create_bot。新 Bot 的名称，1 到 60 字"},
 				"enabled":         map[string]string{"type": "boolean"},
 				"fingerprint":     map[string]string{"type": "string", "description": "仅 confirm_fingerprint。test_server 汇报的主机指纹，原样填写"},
 				"secret_name":     map[string]string{"type": "string", "description": "仅 set_api_key。保险箱里的名称，不要填明文"},
 				"mode":            map[string]string{"type": "string", "description": "仅 set_approval_mode。off、smart、manual、model 或 plan"},
-				"system_prompt":   map[string]string{"type": "string", "description": "仅 set_bot_prompt。新的工作指令，只能补充内置规则"},
-				"description":     map[string]string{"type": "string", "description": "仅 set_bot_prompt。Bot 简介"},
+				"system_prompt":   map[string]string{"type": "string", "description": "create_bot 或 set_bot_prompt。工作指令，只能补充内置规则，不要写密钥明文"},
+				"description":     map[string]string{"type": "string", "description": "create_bot 或 set_bot_prompt。Bot 简介"},
 				"uninstall_probe": map[string]string{"type": "boolean", "description": "仅 delete_server。省略或 true 时尝试卸载节点探针；用户要求保留探针时为 false"},
 			},
 			"required": []string{"action"},

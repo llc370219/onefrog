@@ -590,6 +590,23 @@ func (p *Postgres) ListChatSessions(ctx context.Context) ([]model.SessionSummary
 	return out, rows.Err()
 }
 
+func (p *Postgres) GetChatSession(ctx context.Context, idv string) (model.Session, error) {
+	var sess model.Session
+	err := p.pool.QueryRow(ctx, "SELECT id, bot_id, title, created_at, options FROM chat_sessions WHERE id=$1", idv).Scan(&sess.ID, &sess.BotID, &sess.Title, &sess.CreatedAt, &sess.Options)
+	return sess, mapErr(err)
+}
+
+func (p *Postgres) DeleteChatSession(ctx context.Context, idv string) error {
+	tag, err := p.pool.Exec(ctx, "DELETE FROM chat_sessions WHERE id=$1", idv)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (p *Postgres) SaveChatOptions(ctx context.Context, id string, options json.RawMessage) error {
 	tag, err := p.pool.Exec(ctx, "UPDATE chat_sessions SET options=$2::jsonb WHERE id=$1", id, string(options))
 	if err != nil {

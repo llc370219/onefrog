@@ -103,3 +103,8 @@
 .operator-step strong{display:block;font-size:11px;font-weight:500}
 .operator-step pre{margin-top:4px;white-space:pre-wrap;word-break:break-word;font-size:10px;line-height:1.5;color:var(--fg3);background:#00000033;border-radius:8px;padding:8px 10px}
 @media(max-width:760px){.panel-operator{padding:14px}.panel-operator-head{flex-wrap:wrap}.panel-operator-head>.btn{margin-left:50px}.operator-form{flex-wrap:wrap}.operator-form .btn{width:100%}}
+
+.directory-conversation{display:flex;align-items:center;gap:2px}
+.directory-conversation .conversation-open{flex:1;min-width:0;text-align:left;padding:0;background:transparent}
+.directory-conversation .conversation-open>span{display:flex;align-items:center;justify-content:space-between;margin-top:7px;gap:7px}
+.directory-conversation .icon-btn{width:26px;height:26px}

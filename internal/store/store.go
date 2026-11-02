@@ -87,6 +87,11 @@ type Store interface {
 	AddMessage(ctx context.Context, msg model.Message) (model.Message, error)
 	SaveChatOptions(ctx context.Context, id string, options json.RawMessage) error
 	ListChatSessions(ctx context.Context) ([]model.SessionSummary, error)
+	// GetChatSession returns one chat without its messages.
+	GetChatSession(ctx context.Context, id string) (model.Session, error)
+	// DeleteChatSession removes one chat and its messages. Login sessions,
+	// vault secrets and servers are left alone.
+	DeleteChatSession(ctx context.Context, id string) error
 	ListMessages(ctx context.Context, sessionID string) ([]model.Message, error)
 	// AnswerChoice records the one answer to a choice card. It returns
 	// ErrNotFound when the message has no card, and the stored message with

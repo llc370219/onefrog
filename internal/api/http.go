@@ -162,6 +162,7 @@ func (s *Server) Handler() http.Handler {
 	authed.POST("/history/:id/rollback", s.rollback)
 	authed.POST("/chat", s.chat)
 	authed.GET("/sessions", s.listSessions)
+	authed.DELETE("/sessions/:id", s.deleteChatSession)
 	authed.GET("/sessions/:id/messages", s.messages)
 	r.GET("/ws/chat", s.requireAuth, s.requireFreshCredentials, s.wsChat)
 	if s.WebDir != "" {

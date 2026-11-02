@@ -308,3 +308,10 @@
 .service-source-status {padding:12px 20px}
 .service-node .notice {margin:10px 20px}
 .service-node .data-table td:last-child .text-btn {white-space:nowrap}
+
+/* Fill the desktop sidebar with the asset overview beside the first modules. */
+@media(min-width:1021px) {
+ .dashboard-grid {grid-auto-flow:row dense}
+ .dashboard-grid>.module-assets {grid-column:2}
+ .module-assets .asset-glance {grid-template-columns:repeat(2,minmax(0,1fr));row-gap:20px}
+}

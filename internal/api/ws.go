@@ -130,7 +130,7 @@ func (s *Server) wsChat(c *gin.Context) {
 			_ = out.send(gin.H{"type": "error", "message": err.Error()})
 			continue
 		}
-		_ = out.send(gin.H{"type": "assistant", "content": result.Text, "message_id": result.MessageID, "choice": result.Choice, "secret_request": result.SecretRequest, "answered": result.Answered})
+		_ = out.send(gin.H{"type": "assistant", "content": result.Text, "message_id": result.MessageID, "choice": result.Choice, "secret_request": result.SecretRequest, "timeline": result.Timeline, "answered": result.Answered})
 		_ = out.send(gin.H{"type": "done"})
 	}
 }

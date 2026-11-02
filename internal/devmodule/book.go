@@ -21,9 +21,10 @@ import (
 
 const (
 	BotID          = "develop"
-	BotName        = "二次开发"
+	BotName        = "自定义模块"
+	LegacyBotName  = "二次开发"
 	ModuleID       = "develop"
-	ModuleName     = "二次开发"
+	ModuleName     = "自定义模块"
 	CustomPrefix   = "custom-"
 	maxModules     = 40
 	maxRecords     = 500
@@ -141,7 +142,7 @@ func New(path string, box *secret.Box) (*Book, error) {
 	return b, nil
 }
 
-// Bot returns the stock 二次开发 Bot definition.
+// Bot returns the stock 自定义模块 Bot definition.
 func Bot() model.Bot {
 	return model.Bot{
 		ID:          BotID,
@@ -150,9 +151,17 @@ func Bot() model.Bot {
 	}
 }
 
-// Ensure creates the stock 二次开发 Bot if missing.
-func Ensure(list func() ([]model.Bot, error), get func(string) (model.Bot, error), create func(model.Bot) (model.Bot, error)) error {
-	if _, err := get(BotID); err == nil {
+// Ensure creates the stock 自定义模块 Bot if missing, and migrates legacy 自定义模块 name.
+func Ensure(list func() ([]model.Bot, error), get func(string) (model.Bot, error), create func(model.Bot) (model.Bot, error), update func(model.Bot) (model.Bot, error)) error {
+	if item, err := get(BotID); err == nil {
+		if item.Name == LegacyBotName && update != nil {
+			item.Name = BotName
+			if strings.Contains(item.SystemPrompt, LegacyBotName) {
+				item.SystemPrompt = strings.ReplaceAll(item.SystemPrompt, LegacyBotName, BotName)
+			}
+			_, err = update(item)
+			return err
+		}
 		return nil
 	}
 	bots, err := list()
@@ -160,6 +169,14 @@ func Ensure(list func() ([]model.Bot, error), get func(string) (model.Bot, error
 		return err
 	}
 	for _, item := range bots {
+		if item.Name == LegacyBotName && update != nil {
+			item.Name = BotName
+			if strings.Contains(item.SystemPrompt, LegacyBotName) {
+				item.SystemPrompt = strings.ReplaceAll(item.SystemPrompt, LegacyBotName, BotName)
+			}
+			_, err = update(item)
+			return err
+		}
 		if item.ID == BotID || item.Name == BotName {
 			return nil
 		}
@@ -258,7 +275,7 @@ func (b *Book) List() []View {
 
 func (b *Book) Get(idOrName string) (CustomModule, error) {
 	if b == nil {
-		return CustomModule{}, errors.New("二次开发模块未就绪")
+		return CustomModule{}, errors.New("自定义模块未就绪")
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -271,7 +288,7 @@ func (b *Book) Get(idOrName string) (CustomModule, error) {
 
 func (b *Book) Create(in Input) (CustomModule, error) {
 	if b == nil {
-		return CustomModule{}, errors.New("二次开发模块未就绪")
+		return CustomModule{}, errors.New("自定义模块未就绪")
 	}
 	name, err := cleanText(in.Name, maxNameRunes, true, "模块名称")
 	if err != nil {
@@ -291,11 +308,11 @@ func (b *Book) Create(in Input) (CustomModule, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if len(b.modules) >= maxModules {
-		return CustomModule{}, errors.New("二次开发模块已达 40 个上限，请先删除不再使用的模块")
+		return CustomModule{}, errors.New("自定义模块已达 40 个上限，请先删除不再使用的模块")
 	}
 	for _, existing := range b.modules {
 		if existing.Name == name {
-			return CustomModule{}, errors.New("已经有同名的二次开发模块，可直接更新它")
+			return CustomModule{}, errors.New("已经有同名的自定义模块，可直接更新它")
 		}
 	}
 	now := b.now()
@@ -334,7 +351,7 @@ func (b *Book) Create(in Input) (CustomModule, error) {
 
 func (b *Book) Update(idOrName string, patch Patch) (CustomModule, error) {
 	if b == nil {
-		return CustomModule{}, errors.New("二次开发模块未就绪")
+		return CustomModule{}, errors.New("自定义模块未就绪")
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -353,7 +370,7 @@ func (b *Book) Update(idOrName string, patch Patch) (CustomModule, error) {
 		}
 		for _, other := range b.modules {
 			if other.ID != item.ID && other.Name == name {
-				return CustomModule{}, errors.New("已经有同名的二次开发模块")
+				return CustomModule{}, errors.New("已经有同名的自定义模块")
 			}
 		}
 		next.Name = name
@@ -383,7 +400,7 @@ func (b *Book) Update(idOrName string, patch Patch) (CustomModule, error) {
 
 func (b *Book) Delete(idOrName string) (CustomModule, error) {
 	if b == nil {
-		return CustomModule{}, errors.New("二次开发模块未就绪")
+		return CustomModule{}, errors.New("自定义模块未就绪")
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -409,7 +426,7 @@ func (b *Book) GetData(idOrName string) (DataPayload, error) {
 
 func (b *Book) SaveState(idOrName string, patch map[string]any, merge bool) (DataPayload, error) {
 	if b == nil {
-		return DataPayload{}, errors.New("二次开发模块未就绪")
+		return DataPayload{}, errors.New("自定义模块未就绪")
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -444,7 +461,7 @@ func (b *Book) SaveState(idOrName string, patch map[string]any, merge bool) (Dat
 
 func (b *Book) AddRecord(idOrName string, data map[string]any) (DataPayload, error) {
 	if b == nil {
-		return DataPayload{}, errors.New("二次开发模块未就绪")
+		return DataPayload{}, errors.New("自定义模块未就绪")
 	}
 	if data == nil {
 		data = map[string]any{}
@@ -489,7 +506,7 @@ func (b *Book) AddRecord(idOrName string, data map[string]any) (DataPayload, err
 
 func (b *Book) UpdateRecord(idOrName, recordID string, patch map[string]any) (DataPayload, error) {
 	if b == nil {
-		return DataPayload{}, errors.New("二次开发模块未就绪")
+		return DataPayload{}, errors.New("自定义模块未就绪")
 	}
 	recordID = strings.TrimSpace(recordID)
 	if recordID == "" {
@@ -543,7 +560,7 @@ func (b *Book) UpdateRecord(idOrName, recordID string, patch map[string]any) (Da
 
 func (b *Book) DeleteRecord(idOrName, recordID string) (DataPayload, error) {
 	if b == nil {
-		return DataPayload{}, errors.New("二次开发模块未就绪")
+		return DataPayload{}, errors.New("自定义模块未就绪")
 	}
 	recordID = strings.TrimSpace(recordID)
 	if recordID == "" {
@@ -581,7 +598,7 @@ func (b *Book) DeleteRecord(idOrName, recordID string) (DataPayload, error) {
 
 func (b *Book) ClearRecords(idOrName string) (DataPayload, error) {
 	if b == nil {
-		return DataPayload{}, errors.New("二次开发模块未就绪")
+		return DataPayload{}, errors.New("自定义模块未就绪")
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -615,7 +632,7 @@ func (b *Book) findLocked(idOrName string) (CustomModule, error) {
 			return item, nil
 		}
 	}
-	return CustomModule{}, errors.New("没有找到这个二次开发模块")
+	return CustomModule{}, errors.New("没有找到这个自定义模块")
 }
 
 func (b *Book) saveLocked() error {

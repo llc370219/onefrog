@@ -3,7 +3,10 @@ package bot
 import (
 	"bytes"
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"onefrog/internal/devmodule"
@@ -50,12 +53,26 @@ func TestModuleBuilderMigrationAndDevelopLifecycle(t *testing.T) {
 		func() ([]model.Bot, error) { return mem.ListBots(ctx) },
 		func(id string) (model.Bot, error) { return mem.GetBot(ctx, id) },
 		func(b model.Bot) (model.Bot, error) { return mem.CreateBot(ctx, b) },
+		func(b model.Bot) (model.Bot, error) { return mem.UpdateBot(ctx, b) },
 	); err != nil {
 		t.Fatal(err)
 	}
 	devBot, err := mem.GetBot(ctx, devmodule.BotID)
-	if err != nil || devBot.Name != "二次开发" {
+	if err != nil || devBot.Name != "自定义模块" {
 		t.Fatalf("dev bot missing: %+v %v", devBot, err)
+	}
+	// Verify legacy "二次开发" name migrates to "自定义模块".
+	devBot.Name = "二次开发"
+	_, _ = mem.UpdateBot(ctx, devBot)
+	_ = devmodule.Ensure(
+		func() ([]model.Bot, error) { return mem.ListBots(ctx) },
+		func(id string) (model.Bot, error) { return mem.GetBot(ctx, id) },
+		func(b model.Bot) (model.Bot, error) { return mem.CreateBot(ctx, b) },
+		func(b model.Bot) (model.Bot, error) { return mem.UpdateBot(ctx, b) },
+	)
+	devBot, _ = mem.GetBot(ctx, devmodule.BotID)
+	if devBot.Name != "自定义模块" {
+		t.Fatalf("legacy develop bot not renamed: %+v", devBot)
 	}
 
 	// Store a vault secret to ensure custom module creation redacts vault values.
@@ -86,12 +103,12 @@ func TestModuleBuilderMigrationAndDevelopLifecycle(t *testing.T) {
 		t.Fatalf("expected secret field rejection, got %q", out)
 	}
 
-	// Create a check-in module via 二次开发 Bot; vault secret must be redacted.
+	// Create a check-in module via 自定义模块 Bot; vault secret must be redacted.
 	createCall := toolCall{}
 	createCall.Function.Name = "develop_module"
 	createCall.Function.Arguments = `{"action":"create","name":"打卡","description":"点击记录打卡时间","html":"<div class=\"of-card\">打卡 super-secret-token-42</div>"}`
 	out := agent.execCall(ctx, devBot, credentials{}, "", createCall, false, nil)
-	if !strings.Contains(out, "已创建二次开发模块「打卡」") || strings.Contains(out, "super-secret-token-42") {
+	if !strings.Contains(out, "已创建自定义模块「打卡」") || strings.Contains(out, "super-secret-token-42") {
 		t.Fatalf("unexpected create output: %q", out)
 	}
 	saved, err := book.Get("打卡")
@@ -134,7 +151,7 @@ func TestModuleBuilderMigrationAndDevelopLifecycle(t *testing.T) {
 		t.Fatalf("expected update keeping record, got %q", out)
 	}
 
-	// 二次开发 Bot must not execute server commands.
+	// 自定义模块 Bot must not execute server commands.
 	sshCall := toolCall{}
 	sshCall.Function.Name = "run_command"
 	sshCall.Function.Arguments = `{"command":"id","risk":"low","reason":"test"}`
@@ -146,10 +163,65 @@ func TestModuleBuilderMigrationAndDevelopLifecycle(t *testing.T) {
 	delCall := toolCall{}
 	delCall.Function.Name = "develop_module"
 	delCall.Function.Arguments = `{"action":"delete","id":"打卡"}`
-	if out := agent.execCall(approvedCtx, devBot, credentials{}, "", delCall, false, nil); !strings.Contains(out, "已删除二次开发模块") {
+	if out := agent.execCall(approvedCtx, devBot, credentials{}, "", delCall, false, nil); !strings.Contains(out, "已删除自定义模块") {
 		t.Fatalf("delete failed: %q", out)
 	}
 	if _, err := mem.GetModule(ctx, saved.ID); err == nil {
 		t.Fatal("deleted custom module still in store")
+	}
+}
+
+func TestConversationalTimelineAndInlineApproval(t *testing.T) {
+	ctx := context.Background()
+	mem := store.NewMemory()
+	box, _ := secret.New(bytes.Repeat([]byte{4}, 32))
+	book, _ := devmodule.New("", box)
+	_, _ = book.Create(devmodule.Input{Name: "打卡", HTML: "<div>v1</div>"})
+
+	var turn atomic.Int32
+	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if turn.Add(1) == 1 {
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"收到，正在为你升级打卡模块界面。","tool_calls":[{"id":"c1","type":"function","function":{"name":"develop_module","arguments":"{\"action\":\"update\",\"id\":\"打卡\",\"html\":\"<div>v2</div>\"}"}}]}}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"打卡模块已升级完成，原有记录保留不变。"}}]}`))
+	}))
+	defer llm.Close()
+
+	enc, _ := box.Encrypt("test-key")
+	sec, _ := mem.CreateSecret(ctx, store.SecretRec{Secret: model.Secret{Name: "k"}, EncryptedValue: enc})
+	leader, _ := mem.CreateBot(ctx, model.Bot{
+		ID: "main", Name: "主控", ModelProvider: "openai", ModelName: "gpt-test", BaseURL: llm.URL, APIKeySecretID: sec.ID,
+	})
+
+	agent := &Agent{Store: mem, Box: box, DevModules: book, HTTP: llm.Client()}
+	var streamed []string
+	res, err := agent.ReplyWithOptions(ctx, leader.ID, "", "", "升级打卡模块", Options{
+		Approver: func(context.Context, ApprovalRequest) (bool, string) { return true, "always" },
+	}, func(s Step) {
+		streamed = append(streamed, s.Kind)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Timeline) < 3 {
+		t.Fatalf("expected say + approval + step in timeline, got %+v", res.Timeline)
+	}
+	hasSay, hasAlwaysApproval := false, false
+	for _, item := range res.Timeline {
+		if item.Kind == "say" && strings.Contains(item.Text, "正在为你升级") {
+			hasSay = true
+		}
+		if item.Kind == "approval" && item.Approval != nil && item.Approval.Status == "always" {
+			hasAlwaysApproval = true
+		}
+	}
+	if !hasSay || !hasAlwaysApproval {
+		t.Fatalf("missing say=%v or always approval=%v in %+v (streamed=%v)", hasSay, hasAlwaysApproval, res.Timeline, streamed)
+	}
+	msgs, _ := mem.ListMessages(ctx, res.SessionID)
+	if len(msgs) != 2 || len(msgs[1].Timeline) != len(res.Timeline) {
+		t.Fatalf("persisted messages missing timeline: %+v", msgs)
 	}
 }

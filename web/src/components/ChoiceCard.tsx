@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, CircleHelp } from 'lucide-react';
+import { Check } from 'lucide-react';
 import type { Choice } from '../api';
 import { Button } from './ui';
 
@@ -11,7 +11,7 @@ export function choiceAnswerText(choice: Choice, values: string[], custom: strin
   return text;
 }
 
-/** Card for an ask_user question. Labels are rendered as plain text. */
+/** Grok-style lettered option card (A / B / C rows with right checkmark). */
 export default function ChoiceCard({ choice, disabled, stale, onAnswer }: { choice: Choice; disabled?: boolean; stale?: boolean; onAnswer: (values: string[], custom: string) => void }) {
   const [picked, setPicked] = useState<string[]>([]);
   const [custom, setCustom] = useState('');
@@ -20,26 +20,80 @@ export default function ChoiceCard({ choice, disabled, stale, onAnswer }: { choi
   const skipped = !answer && !!stale;
   const locked = !!answer || !!disabled || skipped;
   const chosen = answer?.values || picked;
-  const toggle = (value: string) => {
+
+  const chooseOption = (value: string) => {
     if (locked) return;
-    if (!multi && !choice.allow_custom) { onAnswer([value], ''); return; }
-    setPicked(cur => multi ? (cur.includes(value) ? cur.filter(v => v !== value) : [...cur, value]) : (cur[0] === value ? [] : [value]));
+    if (!multi) {
+      setPicked([value]);
+      onAnswer([value], '');
+      return;
+    }
+    setPicked(cur => (cur.includes(value) ? cur.filter(v => v !== value) : [...cur, value]));
   };
-  const ready = picked.length > 0 || (!!choice.allow_custom && custom.trim().length > 0);
-  const needsSubmit = multi || !!choice.allow_custom;
-  return <div className={'choice-card' + (answer || skipped ? ' answered' : '')} role="group" aria-label={choice.prompt}>
-    <div className="choice-prompt"><CircleHelp size={16} /><span>{choice.prompt}</span>{multi && !answer && <small>可多选</small>}</div>
-    <div className="choice-options">{choice.options.map(o => {
-      const on = chosen.includes(o.value);
-      return <button type="button" key={o.value} className={on ? 'on' : ''} disabled={locked} aria-pressed={on} onClick={() => toggle(o.value)}>
-        {multi ? <span className="choice-box">{on && <Check size={11} />}</span> : on ? <Check size={14} /> : null}<span>{o.label}</span>
-      </button>;
-    })}</div>
-    {answer ? <>{answer.custom && <p className="choice-custom-answer"><Check size={13} /><span>{answer.custom}</span></p>}<p className="choice-done">已回答</p></>
-      : skipped ? <p className="choice-done">已跳过，对话已继续</p>
-      : needsSubmit && <form className="choice-submit" onSubmit={e => { e.preventDefault(); if (ready && !locked) onAnswer(picked, choice.allow_custom ? custom : ''); }}>
-        {choice.allow_custom && <input value={custom} maxLength={500} disabled={locked} onChange={e => setCustom(e.target.value)} placeholder="其他想法（可选）" aria-label="自定义回答" />}
-        <Button type="submit" variant="primary" disabled={!ready || locked}>提交选择</Button>
-      </form>}
-  </div>;
+
+  const canSubmitCustomOrMulti = (multi && picked.length > 0) || (!!choice.allow_custom && custom.trim().length > 0);
+
+  return (
+    <div className={`grok-card choice-inline-card${answer || skipped ? ' answered' : ''}`} role="group" aria-label={choice.prompt}>
+      <div className="grok-card-head">
+        <strong>{choice.prompt}</strong>
+        {multi && !answer && <span className="grok-pill muted">可多选</span>}
+        {skipped && <span className="grok-pill muted">已跳过</span>}
+      </div>
+      <div className="choice-rows">
+        {choice.options.map((o, idx) => {
+          const on = chosen.includes(o.value);
+          const letter = String.fromCharCode(65 + idx);
+          return (
+            <button
+              type="button"
+              key={o.value}
+              className={`choice-row${on ? ' on' : ''}`}
+              disabled={locked}
+              aria-pressed={on}
+              onClick={() => chooseOption(o.value)}
+            >
+              <span className="choice-letter">{letter}</span>
+              <span className="choice-label">{o.label}</span>
+              {on && <Check size={16} className="choice-check"/>}
+            </button>
+          );
+        })}
+      </div>
+      {answer?.custom && (
+        <div className="choice-row on custom-answered">
+          <span className="choice-letter">✎</span>
+          <span className="choice-label">{answer.custom}</span>
+          <Check size={16} className="choice-check"/>
+        </div>
+      )}
+      {!answer && !skipped && (multi || choice.allow_custom) && (
+        <form
+          className="choice-submit"
+          onSubmit={e => {
+            e.preventDefault();
+            if (canSubmitCustomOrMulti && !locked) {
+              onAnswer(picked, choice.allow_custom ? custom : '');
+            }
+          }}
+        >
+          {choice.allow_custom && (
+            <input
+              value={custom}
+              maxLength={500}
+              disabled={locked}
+              onChange={e => setCustom(e.target.value)}
+              placeholder={multi ? '补充说明（可选）' : '或者直接输入你的想法，回车确认…'}
+              aria-label="自定义回答"
+            />
+          )}
+          {(multi || custom.trim().length > 0) && (
+            <Button type="submit" variant="primary" disabled={!canSubmitCustomOrMulti || locked}>
+              {multi ? '确认选择' : '发送'}
+            </Button>
+          )}
+        </form>
+      )}
+    </div>
+  );
 }

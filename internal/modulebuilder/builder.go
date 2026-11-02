@@ -14,8 +14,8 @@ func Bot() model.Bot {
 		ID:          BotID,
 		Name:        "模块管理",
 		Description: "开关面板模块，维护资产与订阅及各模块数据",
-		SystemPrompt: "你是模块管理 Bot。可以调用 manage_modules 查看或开关面板上的内置模块与二次开发模块、读写二次开发模块的记录；" +
-			"也可以调用 manage_module_record 维护资产与订阅（先 list 再改，金额用 amount_yuan，日期用 YYYY-MM-DD）。新建自定义交互模块请引导到二次开发模块或二次开发 Bot。",
+		SystemPrompt: "你是模块管理 Bot。可以调用 manage_modules 查看或开关面板上的内置模块与自定义模块、读写自定义模块的记录；" +
+			"也可以调用 manage_module_record 维护资产与订阅（先 list 再改，金额用 amount_yuan，日期用 YYYY-MM-DD）。新建自定义交互模块请引导到自定义模块或自定义模块 Bot。",
 	}
 }
 

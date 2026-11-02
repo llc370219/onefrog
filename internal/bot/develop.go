@@ -14,9 +14,9 @@ import (
 	"onefrog/internal/store"
 )
 
-// developsModules reports whether item is the stock 二次开发 bot.
+// developsModules reports whether item is the stock 自定义模块 bot.
 func (a *Agent) developsModules(item model.Bot) bool {
-	return item.ID == devmodule.BotID || item.Name == devmodule.BotName
+	return item.ID == devmodule.BotID || item.Name == devmodule.BotName || item.Name == devmodule.LegacyBotName
 }
 
 func (a *Agent) developPrompt(ctx context.Context, bot model.Bot) string {
@@ -48,10 +48,10 @@ func (a *Agent) writeDevModules(b *strings.Builder) {
 	}
 	rows := a.DevModules.List()
 	if len(rows) == 0 {
-		b.WriteString("\n当前还没有二次开发模块。\n")
+		b.WriteString("\n当前还没有自定义模块。\n")
 		return
 	}
-	b.WriteString("\n当前已安装的二次开发模块：\n")
+	b.WriteString("\n当前已安装的自定义模块：\n")
 	for _, row := range rows {
 		fmt.Fprintf(b, "- id=%s name=%s 记录=%d条", row.ID, row.Name, row.RecordCount)
 		if row.Description != "" {
@@ -97,7 +97,7 @@ func (a *Agent) developModuleCall(ctx context.Context, speaker model.Bot, call t
 		}
 	}()
 	if a.DevModules == nil {
-		ev.Output = "二次开发模块未就绪"
+		ev.Output = "自定义模块未就绪"
 		return ev.Output
 	}
 	var args struct {
@@ -127,7 +127,7 @@ func (a *Agent) developModuleCall(ctx context.Context, speaker model.Bot, call t
 			return ev.Output
 		}
 		if panelRejectsSecretFields(call.Function.Arguments) {
-			ev.Output = "develop_module 不接受密码、私钥、API Key 等敏感字段，二次开发模块不能保存密钥"
+			ev.Output = "develop_module 不接受密码、私钥、API Key 等敏感字段，自定义模块不能保存密钥"
 			return ev.Output
 		}
 	}
@@ -136,7 +136,7 @@ func (a *Agent) developModuleCall(ctx context.Context, speaker model.Bot, call t
 	case "list":
 		rows := a.DevModules.List()
 		if len(rows) == 0 {
-			ev.OK, ev.Output = true, "目前还没有二次开发模块。"
+			ev.OK, ev.Output = true, "目前还没有自定义模块。"
 			return ev.Output
 		}
 		var b strings.Builder
@@ -223,9 +223,9 @@ func (a *Agent) developModuleCall(ctx context.Context, speaker model.Bot, call t
 				CreatedAt:   created.CreatedAt,
 			})
 		}
-		a.notePanel(ctx, speaker.ID, "", "新建二次开发模块 "+created.Name, "success")
+		a.notePanel(ctx, speaker.ID, "", "新建自定义模块 "+created.Name, "success")
 		ev.OK = true
-		ev.Output = fmt.Sprintf("已创建二次开发模块「%s」（id=%s），已挂载到「模块 → %s」和「二次开发」工作台，面板显示=%v。", created.Name, created.ID, created.Name, en)
+		ev.Output = fmt.Sprintf("已创建自定义模块「%s」（id=%s），已挂载到「模块 → %s」和「自定义模块」工作台，面板显示=%v。", created.Name, created.ID, created.Name, en)
 		return ev.Output
 
 	case "update":
@@ -237,7 +237,7 @@ func (a *Agent) developModuleCall(ctx context.Context, speaker model.Bot, call t
 			ev.Output = err.Error()
 			return ev.Output
 		}
-		what := fmt.Sprintf("修改二次开发模块「%s」（id=%s）的界面或配置，保留已保存的状态与 %d 条记录。", old.Name, old.ID, len(old.Records))
+		what := fmt.Sprintf("修改自定义模块「%s」（id=%s）的界面或配置，保留已保存的状态与 %d 条记录。", old.Name, old.ID, len(old.Records))
 		allow, why := a.approveHighRisk(ctx, speaker.ID, store.ServerRec{Server: model.Server{ID: "panel", Name: "面板"}}, what, []string{"会更新该自定义模块的前端界面代码"})
 		if !allow {
 			ev.Output = "没有修改模块：" + why
@@ -279,9 +279,9 @@ func (a *Agent) developModuleCall(ctx context.Context, speaker model.Bot, call t
 				CreatedAt:   updated.CreatedAt,
 			})
 		}
-		a.notePanel(ctx, speaker.ID, "", "更新二次开发模块 "+updated.Name, "success")
+		a.notePanel(ctx, speaker.ID, "", "更新自定义模块 "+updated.Name, "success")
 		ev.OK = true
-		ev.Output = fmt.Sprintf("已更新二次开发模块「%s」（id=%s），原有 %d 条记录已保留。", updated.Name, updated.ID, len(updated.Records))
+		ev.Output = fmt.Sprintf("已更新自定义模块「%s」（id=%s），原有 %d 条记录已保留。", updated.Name, updated.ID, len(updated.Records))
 		return ev.Output
 
 	case "delete":
@@ -290,8 +290,8 @@ func (a *Agent) developModuleCall(ctx context.Context, speaker model.Bot, call t
 			ev.Output = err.Error()
 			return ev.Output
 		}
-		what := fmt.Sprintf("删除二次开发模块「%s」（id=%s）以及其中的状态和 %d 条记录。", old.Name, old.ID, len(old.Records))
-		allow, why := a.approveHighRisk(ctx, speaker.ID, store.ServerRec{Server: model.Server{ID: "panel", Name: "面板"}}, what, []string{"会永久删除该二次开发模块和它的记录"})
+		what := fmt.Sprintf("删除自定义模块「%s」（id=%s）以及其中的状态和 %d 条记录。", old.Name, old.ID, len(old.Records))
+		allow, why := a.approveHighRisk(ctx, speaker.ID, store.ServerRec{Server: model.Server{ID: "panel", Name: "面板"}}, what, []string{"会永久删除该自定义模块和它的记录"})
 		if !allow {
 			ev.Output = "没有删除模块：" + why
 			return ev.Output
@@ -303,8 +303,8 @@ func (a *Agent) developModuleCall(ctx context.Context, speaker model.Bot, call t
 		if a.Store != nil {
 			_ = a.Store.DeleteModule(ctx, old.ID)
 		}
-		a.notePanel(ctx, speaker.ID, "", "删除二次开发模块 "+old.Name, "success")
-		ev.OK, ev.Output = true, fmt.Sprintf("已删除二次开发模块「%s」（id=%s）。", old.Name, old.ID)
+		a.notePanel(ctx, speaker.ID, "", "删除自定义模块 "+old.Name, "success")
+		ev.OK, ev.Output = true, fmt.Sprintf("已删除自定义模块「%s」（id=%s）。", old.Name, old.ID)
 		return ev.Output
 
 	default:
@@ -355,7 +355,7 @@ func (a *Agent) manageModulesCall(ctx context.Context, speaker model.Bot, call t
 		return out
 	case "list_records":
 		if a.DevModules == nil {
-			ev.Output = "二次开发模块未就绪"
+			ev.Output = "自定义模块未就绪"
 			return ev.Output
 		}
 		payload, err := a.DevModules.GetData(args.ID)
@@ -372,7 +372,7 @@ func (a *Agent) manageModulesCall(ctx context.Context, speaker model.Bot, call t
 		return ev.Output
 	case "add_record":
 		if a.DevModules == nil {
-			ev.Output = "二次开发模块未就绪"
+			ev.Output = "自定义模块未就绪"
 			return ev.Output
 		}
 		payload, err := a.DevModules.AddRecord(args.ID, args.Data)
@@ -384,7 +384,7 @@ func (a *Agent) manageModulesCall(ctx context.Context, speaker model.Bot, call t
 		return ev.Output
 	case "delete_record":
 		if a.DevModules == nil {
-			ev.Output = "二次开发模块未就绪"
+			ev.Output = "自定义模块未就绪"
 			return ev.Output
 		}
 		payload, err := a.DevModules.DeleteRecord(args.ID, args.RecordID)
@@ -450,7 +450,7 @@ var developModuleTool = map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"action":      map[string]any{"type": "string", "enum": []string{"list", "inspect", "create", "update", "delete"}},
-				"id":          map[string]string{"type": "string", "description": "inspect、update、delete 时填写二次开发模块的 id 或名称"},
+				"id":          map[string]string{"type": "string", "description": "inspect、update、delete 时填写自定义模块的 id 或名称"},
 				"name":        map[string]string{"type": "string", "description": "create 或 update：模块名称，1–40 字，例如 打卡"},
 				"description": map[string]string{"type": "string", "description": "create 或 update：一句话说明模块功能"},
 				"html":        map[string]string{"type": "string", "description": "create 或 update：完整的交互界面 HTML+CSS+JS 代码片段，使用 window.onefrog 持久化状态和记录"},
@@ -465,7 +465,7 @@ var manageModulesTool = map[string]any{
 	"type": "function",
 	"function": map[string]any{
 		"name":        "manage_modules",
-		"description": "查看和开关面板模块（含内置模块与二次开发模块），以及读写二次开发模块里的记录。不要用它新建界面，新建界面交给二次开发模块。",
+		"description": "查看和开关面板模块（含内置模块与自定义模块），以及读写自定义模块里的记录。不要用它新建界面，新建界面交给自定义模块。",
 		"parameters": map[string]any{
 			"type": "object",
 			"properties": map[string]any{

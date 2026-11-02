@@ -70,10 +70,11 @@ type ToolEvent struct {
 }
 
 type Result struct {
-	SessionID string      `json:"session_id"`
-	Text      string      `json:"text"`
-	Tools     []ToolEvent `json:"tools"`
-	Steps     []Step      `json:"steps"`
+	SessionID string           `json:"session_id"`
+	Text      string           `json:"text"`
+	Tools     []ToolEvent      `json:"tools"`
+	Steps     []Step           `json:"steps"`
+	Timeline  []model.TurnItem `json:"timeline,omitempty"`
 	// MessageID is the stored assistant message; Choice is set when the bot
 	// asked the user to pick an option (answer it with Options.ChoiceAnswer).
 	// SecretRequest is a password card (answer it with Options.SecretAnswer).

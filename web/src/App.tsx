@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowRight, Blocks, Bot, Check, ChevronRight, History, KeyRound, LayoutDashboard, LoaderCircle, LockKeyhole, LogOut, Menu, MessageSquare, RefreshCw, Server, Settings, Terminal, X } from 'lucide-react';
-import { api, type BotRow, type ChatLine, type ChatStep, type Hist, type Host, type Mod, type SecretRow, type SettingsState, type ServerTestResult, type ModelRoute, type Profile, type ChatSession, type Attachment, type UpdateStatus, type Choice } from './api';
-import { choiceAnswerText } from './components/ChoiceCard';
-import { secretAckText } from './components/SecretCard';
+import { api, type ApprovalDecision, type BotRow, type ChatLine, type ChatStep, type Hist, type Host, type LiveChatHandlers, type Mod, type SecretRow, type SettingsState, type ServerTestResult, type ModelRoute, type Profile, type ChatSession, type Attachment, type TurnItem, type UpdateStatus, type Choice } from './api';
+import { approvalRuleKey } from './components/ApprovalCard';
 import { Button, Field, IconButton, Modal, Notice } from './components/ui';
 import { RoutePicker } from "./components/ModelPicker";
 import SettingsPanel from "./pages/Settings";
@@ -52,6 +51,10 @@ export default function App() {
   const sendingRef = useRef(false); const [mobileNav,setMobileNav] = useState(false);
   const [panelJob, setPanelJob] = useState<PanelJob | null>(null);
   const panelSession = useRef('');
+  const chatAllowRules = useRef<Set<string>>(new Set());
+  const panelAllowRules = useRef<Set<string>>(new Set());
+  const chatApprovalResolvers = useRef<Map<string, (dec: ApprovalDecision) => void>>(new Map());
+  const panelApprovalResolvers = useRef<Map<string, (dec: ApprovalDecision) => void>>(new Map());
   const [compact,setCompact] = useState(() => window.matchMedia('(max-width:760px)').matches); const [updated,setUpdated] = useState('');
 
   const load = useCallback(async () => {
@@ -105,52 +108,161 @@ export default function App() {
     } catch(err) {setFormError(message(err));} finally {setBusy(false);}
   }
   function openChat(text?: string) {go('chat');setMobileNav(false);if(text) setDraft(text);}
-  function newChat(botID=bots.find(b=>b.id===activeBot&&b.enabled)?.id||defaultBot(bots)){if(sendingRef.current||uploadRef.current)return;chatLoad.current++;setActiveBot(botID);setSession('');setLines([]);setDraft('');setSelected('');setAttachments([]);setControls({model:{provider_id:'',model:''},excluded:[],approval:'default'});setMobileNav(false);}
-  async function removeChat(item:ChatSession){if(sendingRef.current||uploadRef.current)return;if(!window.confirm('删除对话「'+item.title+'」？这条记录和里面的消息都会去掉，不能恢复。'))return;try{await api.deleteSession(item.id);setSessions(cur=>cur.filter(s=>s.id!==item.id));if(session===item.id){chatLoad.current++;setSession('');setLines([]);setDraft('');setAttachments([]);setSelected('');}setNotice('已删除对话');}catch(err){setPageError(message(err));}}
-    async function restoreChat(item:ChatSession){if(sendingRef.current||uploadRef.current)return;const request=++chatLoad.current;setLoading(true);try{const rows=await api.messages(item.id);if(request!==chatLoad.current)return;setActiveBot(item.bot_id);setSelected('');setSession(item.id);setLines(rows.filter(r=>r.role==='user'||r.role==='assistant').map(r=>({who:r.role==='user'?'user':'bot',text:r.content,attachments:r.attachments,id:r.id,choice:r.choice||undefined,secret:r.secret_request||undefined})));setDraft('');setAttachments([]);setControls({model:item.options?.model_route||{provider_id:'',model:''},excluded:(item.options?.excluded_bot_ids||[]).filter(id=>bots.some(b=>b.id===id)),approval:item.options?.approval_mode==='rules'?'off':item.options?.approval_mode||'default',review:item.options?.approval_route});setMobileNav(false);}catch(e){setPageError(message(e));}finally{if(request===chatLoad.current)setLoading(false);}}
-  function chooseBot(id:string){if(sendingRef.current||uploadRef.current)return;chatLoad.current++;setActiveBot(id);setSession('');setLines([]);setControls(cur=>({...cur,model:{provider_id:'',model:''},excluded:cur.excluded.filter(x=>x!==id)}));}
+  function newChat(botID=bots.find(b=>b.id===activeBot&&b.enabled)?.id||defaultBot(bots)){if(sendingRef.current||uploadRef.current)return;chatLoad.current++;chatAllowRules.current.clear();setActiveBot(botID);setSession('');setLines([]);setDraft('');setSelected('');setAttachments([]);setControls({model:{provider_id:'',model:''},excluded:[],approval:'default'});setMobileNav(false);}
+  async function removeChat(item:ChatSession){if(sendingRef.current||uploadRef.current)return;if(!window.confirm('删除对话「'+item.title+'」？这条记录和里面的消息都会去掉，不能恢复。'))return;try{await api.deleteSession(item.id);setSessions(cur=>cur.filter(s=>s.id!==item.id));if(session===item.id){chatLoad.current++;chatAllowRules.current.clear();setSession('');setLines([]);setDraft('');setAttachments([]);setSelected('');}setNotice('已删除对话');}catch(err){setPageError(message(err));}}
+  async function restoreChat(item:ChatSession){if(sendingRef.current||uploadRef.current)return;const request=++chatLoad.current;setLoading(true);try{const rows=await api.messages(item.id);if(request!==chatLoad.current)return;chatAllowRules.current.clear();setActiveBot(item.bot_id);setSelected('');setSession(item.id);const visible=rows.filter((r,idx)=>{if(r.role!=='user'&&r.role!=='assistant')return false;if(r.role==='user'&&idx>0){const prev=rows[idx-1];const autoChoice=Boolean(prev.role==='assistant'&&prev.choice?.answer&&r.content.startsWith('我的选择：'));const autoSecret=Boolean(prev.role==='assistant'&&prev.secret_request?.provided_at&&r.content.startsWith('已把密钥「')&&r.content.endsWith('模型看不到明文。'));if(autoChoice||autoSecret)return false;}return true;});setLines(visible.map(r=>({who:r.role==='user'?'user':'bot',text:r.content,attachments:r.attachments,id:r.id,choice:r.choice||undefined,secret:r.secret_request||undefined,timeline:r.timeline||undefined})));setDraft('');setAttachments([]);setControls({model:item.options?.model_route||{provider_id:'',model:''},excluded:(item.options?.excluded_bot_ids||[]).filter(id=>bots.some(b=>b.id===id)),approval:item.options?.approval_mode==='rules'?'off':item.options?.approval_mode||'default',review:item.options?.approval_route});setMobileNav(false);}catch(e){setPageError(message(e));}finally{if(request===chatLoad.current)setLoading(false);}}
+  function chooseBot(id:string){if(sendingRef.current||uploadRef.current)return;chatLoad.current++;chatAllowRules.current.clear();setActiveBot(id);setSession('');setLines([]);setControls(cur=>({...cur,model:{provider_id:'',model:''},excluded:cur.excluded.filter(x=>x!==id)}));}
   async function uploadFiles(files:File[]){if(!files.length||uploadRef.current||sendingRef.current)return;if(files.some(f=>f.size>5*1024*1024)){setPageError('每个文件不能超过 5 MB');return;}if(files.length+attachments.length>4){setPageError('每轮最多上传 4 个附件');return;}if(files.reduce((n,f)=>n+f.size,0)+attachments.reduce((n,f)=>n+f.size,0)>12*1024*1024){setPageError('附件合计不能超过 12 MB');return;}uploadRef.current=true;setUploading(true);setPageError('');try{for(const file of files){const ref=await api.upload(file);setAttachments(cur=>[...cur,ref]);}}catch(e){setPageError(message(e));}finally{uploadRef.current=false;setUploading(false);}}
+
+  function makeStreamHandlers(
+    allowSet: Set<string>,
+    resolvers: Map<string, (dec: ApprovalDecision) => void>,
+    stepsOut: ChatStep[],
+    timelineOut: TurnItem[],
+    syncUI: (activeStatus: string) => void
+  ): LiveChatHandlers {
+    return {
+      onSay: (bot, content) => {
+        if (content.trim()) {
+          timelineOut.push({ kind: 'say', bot, text: content.trim() });
+          syncUI('正在继续执行…');
+        }
+      },
+      onApproval: req => {
+        const key = approvalRuleKey(req.server_id, req.command);
+        if (!req.untrusted && allowSet.has(key)) {
+          return Promise.resolve({ allow: true, always: true });
+        }
+        timelineOut.push({ kind: 'approval_pending', pending_req: req });
+        syncUI('等待你在上方卡片确认…');
+        return new Promise<ApprovalDecision>(resolve => {
+          resolvers.set(req.id, dec => {
+            if (dec.allow && dec.always && !req.untrusted) {
+              allowSet.add(key);
+            }
+            const idx = timelineOut.findIndex(x => x.kind === 'approval_pending' && x.pending_req?.id === req.id);
+            if (idx >= 0) {
+              timelineOut[idx] = {
+                kind: 'approval',
+                approval: {
+                  id: req.id,
+                  bot_name: req.bot_name || req.bot,
+                  server_id: req.server_id,
+                  server_name: req.server_name,
+                  command: req.command,
+                  mode: req.mode,
+                  risk: req.risk,
+                  reasons: req.reasons,
+                  model_reason: req.model_reason,
+                  untrusted: req.untrusted,
+                  status: dec.allow ? (dec.always ? 'always' : 'approved') : 'denied',
+                },
+              };
+            }
+            syncUI(dec.allow ? '已批准，正在继续执行…' : '已拒绝，正在整理结果…');
+            resolve(dec);
+          });
+        });
+      },
+      onApprovalResolved: card => {
+        const idx = timelineOut.findIndex(
+          x => (x.kind === 'approval' && x.approval?.id === card.id) || (x.kind === 'approval_pending' && x.pending_req?.id === card.id)
+        );
+        if (idx >= 0) timelineOut[idx] = { kind: 'approval', approval: card };
+        else timelineOut.push({ kind: 'approval', approval: card });
+        syncUI('正在继续处理…');
+      },
+      onApprovalTimeout: id => {
+        const fn = resolvers.get(id);
+        if (fn) { resolvers.delete(id); fn({ allow: false }); }
+      },
+      onStep: step => {
+        stepsOut.push(step);
+        if (step.ok && step.server && (step.command || '').includes('接入')) {
+          setSelected(step.server);
+          setAddedServer(step.server);
+        }
+        if (step.kind === 'delegate') {
+          timelineOut.push({ kind: 'delegate', bot: step.bot, target: step.target, task: step.task });
+          syncUI('已交由「' + (step.target || '协作 Bot') + '」处理…');
+        } else {
+          timelineOut.push({ kind: 'step', bot: step.bot, command: step.command, server_id: step.server, ok: step.ok, output: step.output });
+          const shortCmd = (step.command || '操作').slice(0, 32);
+          syncUI('已完成「' + shortCmd + '」，正在继续…');
+        }
+      },
+    };
+  }
+
+  function decideChatApproval(id: string, dec: ApprovalDecision) {
+    const fn = chatApprovalResolvers.current.get(id);
+    if (!fn) return;
+    chatApprovalResolvers.current.delete(id);
+    fn(dec);
+  }
+
+  function decidePanelApproval(id: string, dec: ApprovalDecision) {
+    const fn = panelApprovalResolvers.current.get(id);
+    if (!fn) return;
+    panelApprovalResolvers.current.delete(id);
+    fn(dec);
+  }
+
   async function send() {
     if(sendingRef.current || uploadRef.current || loading || (!draft.trim()&&!attachments.length)) return;chatLoad.current++;
     if(!bots.some(b=>b.id===activeBot&&b.enabled)){setPageError('请先选取一个已启用的主 Bot');return;}
     sendingRef.current = true;setSending(true);
     const text = draft.trim();const sentAttachments=[...attachments];setDraft('');setAttachments([]);
-    setLines(cur => [...cur,{who:'user',text,attachments:sentAttachments},{who:'bot',text:'',pending:true,steps:[]}]);
+    setLines(cur => [...cur,{who:'user',text,attachments:sentAttachments},{who:'bot',text:'',pending:true,activeStatus:'正在思考…',steps:[],timeline:[]}]);
     const steps: ChatStep[] = [];
-    const paint = (reply: string,pending: boolean,extra?:Partial<ChatLine>) => setLines(cur => [...cur.slice(0,-1),{who:'bot',text:reply,pending,steps:[...steps],...extra}]);
-    try {const reply = await api.chatLive({content:text,server_id:selected,session_id:session,bot_id:activeBot,model_route:controls.model,excluded_bot_ids:controls.excluded,approval_mode:controls.approval,approval_route:controls.approval==='model'?controls.review:undefined,attachment_ids:sentAttachments.map(f=>f.id)},step => {steps.push(step); if(step.ok && step.server && (step.command||'').includes('接入')){setSelected(step.server);setAddedServer(step.server);} paint('',true);});setSession(reply.session_id);paint(reply.text,false,{id:reply.message_id,choice:reply.choice,secret:reply.secret_request});await load(); if(steps.some(step => step.ok && (step.command||'').includes('接入'))) setNotice('服务器已接入，已出现在服务器页面');}
+    const timeline: TurnItem[] = [];
+    const paint = (reply: string,pending: boolean,extra?:Partial<ChatLine>) => setLines(cur => [...cur.slice(0,-1),{who:'bot',text:reply,pending,steps:[...steps],timeline:[...timeline],...extra}]);
+    try {
+      const handlers = makeStreamHandlers(chatAllowRules.current, chatApprovalResolvers.current, steps, timeline, status => paint('', true, { activeStatus: status }));
+      const reply = await api.chatLive({content:text,server_id:selected,session_id:session,bot_id:activeBot,model_route:controls.model,excluded_bot_ids:controls.excluded,approval_mode:controls.approval,approval_route:controls.approval==='model'?controls.review:undefined,attachment_ids:sentAttachments.map(f=>f.id)}, handlers);
+      setSession(reply.session_id);
+      paint(reply.text,false,{id:reply.message_id,choice:reply.choice,secret:reply.secret_request,timeline:reply.timeline||[...timeline]});
+      await load();
+      if(steps.some(step => step.ok && (step.command||'').includes('接入'))) setNotice('服务器已接入，已出现在服务器页面');
+    }
     catch(err) {paint(message(err),false);setAttachments(sentAttachments);} finally {sendingRef.current=false;setSending(false);api.sessions().then(setSessions).catch(()=>{});}
   }
   /** Answers an ask_user card once; the answer becomes the next user message and resumes the turn. */
   async function answerChoice(card: ChatLine, values: string[], custom: string) {
     if(sendingRef.current || uploadRef.current || loading || !card.id || !card.choice || card.choice.answer || !session) return;chatLoad.current++;
     sendingRef.current = true;setSending(true);
-    const sid = session, cardID = card.id, choice = card.choice;
+    const sid = session, cardID = card.id;
     const mark = (answer?: Choice['answer']) => setLines(cur => cur.map(l => l.id === cardID && l.choice ? {...l,choice:{...l.choice,answer}} : l));
     mark({values,custom:custom.trim()||undefined});
-    setLines(cur => [...cur,{who:'user',text:choiceAnswerText(choice,values,custom)},{who:'bot',text:'',pending:true,steps:[]}]);
+    setLines(cur => [...cur,{who:'bot',text:'',pending:true,activeStatus:'收到选择，正在继续…',steps:[],timeline:[]}]);
     const steps: ChatStep[] = [];
-    const paint = (reply: string,pending: boolean,extra?:Partial<ChatLine>) => setLines(cur => [...cur.slice(0,-1),{who:'bot',text:reply,pending,steps:[...steps],...extra}]);
+    const timeline: TurnItem[] = [];
+    const paint = (reply: string,pending: boolean,extra?:Partial<ChatLine>) => setLines(cur => [...cur.slice(0,-1),{who:'bot',text:reply,pending,steps:[...steps],timeline:[...timeline],...extra}]);
     const resync = async () => {try {const rows = await api.messages(sid);const row = rows.find(r => r.id === cardID);mark(row?.choice?.answer);} catch {mark(undefined);}};
-    try {const reply = await api.chatLive({content:'',server_id:selected,session_id:sid,bot_id:activeBot,model_route:controls.model,excluded_bot_ids:controls.excluded,approval_mode:controls.approval,approval_route:controls.approval==='model'?controls.review:undefined,choice_answer:{message_id:cardID,values,custom:custom.trim()||undefined}},step => {steps.push(step); if(step.ok && step.server && (step.command||'').includes('接入')){setSelected(step.server);setAddedServer(step.server);} paint('',true);});
-      if(reply.answered){setLines(cur => cur.slice(0,-2));await resync();return;}
-      paint(reply.text,false,{id:reply.message_id,choice:reply.choice,secret:reply.secret_request});await load();}
+    try {
+      const handlers = makeStreamHandlers(chatAllowRules.current, chatApprovalResolvers.current, steps, timeline, status => paint('', true, { activeStatus: status }));
+      const reply = await api.chatLive({content:'',server_id:selected,session_id:sid,bot_id:activeBot,model_route:controls.model,excluded_bot_ids:controls.excluded,approval_mode:controls.approval,approval_route:controls.approval==='model'?controls.review:undefined,choice_answer:{message_id:cardID,values,custom:custom.trim()||undefined}}, handlers);
+      if(reply.answered){setLines(cur => cur.slice(0,-1));await resync();return;}
+      paint(reply.text,false,{id:reply.message_id,choice:reply.choice,secret:reply.secret_request,timeline:reply.timeline||[...timeline]});await load();}
     catch(err) {paint(message(err),false);await resync();} finally {sendingRef.current=false;setSending(false);api.sessions().then(setSessions).catch(()=>{});}
   }
   async function answerSecret(card: ChatLine, value: string) {
     if(sendingRef.current || uploadRef.current || loading || !card.id || !card.secret || card.secret.provided_at || !session) return;chatLoad.current++;
     sendingRef.current = true;setSending(true);
-    const sid = session, cardID = card.id, name = card.secret.name;
+    const sid = session, cardID = card.id;
     const mark = (provided?: string) => setLines(cur => cur.map(l => l.id === cardID && l.secret ? {...l,secret:{...l.secret,provided_at:provided}} : l));
     mark(new Date().toISOString());
-    setLines(cur => [...cur,{who:'user',text:secretAckText(name)},{who:'bot',text:'',pending:true,steps:[]}]);
+    setLines(cur => [...cur,{who:'bot',text:'',pending:true,activeStatus:'密钥已加密保存，正在继续…',steps:[],timeline:[]}]);
     const steps: ChatStep[] = [];
-    const paint = (reply: string,pending: boolean,extra?:Partial<ChatLine>) => setLines(cur => [...cur.slice(0,-1),{who:'bot',text:reply,pending,steps:[...steps],...extra}]);
+    const timeline: TurnItem[] = [];
+    const paint = (reply: string,pending: boolean,extra?:Partial<ChatLine>) => setLines(cur => [...cur.slice(0,-1),{who:'bot',text:reply,pending,steps:[...steps],timeline:[...timeline],...extra}]);
     const resync = async () => {try {const rows = await api.messages(sid);const row = rows.find(r => r.id === cardID);mark(row?.secret_request?.provided_at);} catch {mark(undefined);}};
-    try {const reply = await api.chatLive({content:'',server_id:selected,session_id:sid,bot_id:activeBot,model_route:controls.model,excluded_bot_ids:controls.excluded,approval_mode:controls.approval,approval_route:controls.approval==='model'?controls.review:undefined,secret_answer:{message_id:cardID,value}},step => {steps.push(step); if(step.ok && step.server && (step.command||'').includes('接入')){setSelected(step.server);setAddedServer(step.server);} paint('',true);});
-      if(reply.answered){setLines(cur => cur.slice(0,-2));await resync();return;}
-      paint(reply.text,false,{id:reply.message_id,choice:reply.choice,secret:reply.secret_request});await load();}
-    catch(err) {setLines(cur => cur.slice(0,-2));setPageError(message(err));await resync();} finally {sendingRef.current=false;setSending(false);api.sessions().then(setSessions).catch(()=>{});}
+    try {
+      const handlers = makeStreamHandlers(chatAllowRules.current, chatApprovalResolvers.current, steps, timeline, status => paint('', true, { activeStatus: status }));
+      const reply = await api.chatLive({content:'',server_id:selected,session_id:sid,bot_id:activeBot,model_route:controls.model,excluded_bot_ids:controls.excluded,approval_mode:controls.approval,approval_route:controls.approval==='model'?controls.review:undefined,secret_answer:{message_id:cardID,value}}, handlers);
+      if(reply.answered){setLines(cur => cur.slice(0,-1));await resync();return;}
+      paint(reply.text,false,{id:reply.message_id,choice:reply.choice,secret:reply.secret_request,timeline:reply.timeline||[...timeline]});await load();}
+    catch(err) {setLines(cur => cur.slice(0,-1));setPageError(message(err));await resync();} finally {sendingRef.current=false;setSending(false);api.sessions().then(setSessions).catch(()=>{});}
   }
   async function runPanel(prompt: string, serverId?: string) {
     if (sendingRef.current || uploadRef.current || loading) return;
@@ -159,16 +271,14 @@ export default function App() {
     if (serverId) setSelected(serverId);
     sendingRef.current = true; setSending(true);
     const steps: ChatStep[] = [];
-    setPanelJob({ pending: true, prompt, text: '', error: '', steps, sessionId: panelSession.current, botId: botID, serverId });
-    const paint = (patch: Partial<PanelJob>) => setPanelJob(cur => cur ? { ...cur, ...patch, steps: [...steps] } : cur);
+    const timeline: TurnItem[] = [];
+    setPanelJob({ pending: true, prompt, text: '', error: '', activeStatus: '正在处理面板请求…', steps, timeline: [], sessionId: panelSession.current, botId: botID, serverId });
+    const paint = (patch: Partial<PanelJob>) => setPanelJob(cur => cur ? { ...cur, ...patch, steps: [...steps], timeline: patch.timeline || [...timeline] } : cur);
     try {
-      const reply = await api.chatLive({ content: prompt, server_id: serverId, session_id: panelSession.current, bot_id: botID, approval_mode: 'default' }, step => {
-        steps.push(step);
-        if (step.ok && step.server && (step.command || '').includes('接入')) { setSelected(step.server); setAddedServer(step.server); }
-        paint({ pending: true });
-      });
+      const handlers = makeStreamHandlers(panelAllowRules.current, panelApprovalResolvers.current, steps, timeline, status => paint({ pending: true, activeStatus: status }));
+      const reply = await api.chatLive({ content: prompt, server_id: serverId, session_id: panelSession.current, bot_id: botID, approval_mode: 'default' }, handlers);
       panelSession.current = reply.session_id || panelSession.current;
-      paint({ pending: false, text: reply.text, error: '', sessionId: panelSession.current, messageId: reply.message_id, choice: reply.choice, secret: reply.secret_request });
+      paint({ pending: false, text: reply.text, error: '', sessionId: panelSession.current, messageId: reply.message_id, choice: reply.choice, secret: reply.secret_request, timeline: reply.timeline || [...timeline] });
       await load();
     } catch (err) {
       paint({ pending: false, error: message(err) });
@@ -182,15 +292,15 @@ export default function App() {
     sendingRef.current = true; setSending(true);
     const cardID = job.messageId;
     const steps: ChatStep[] = [];
-    setPanelJob({ ...job, pending: true, error: '', steps, choice: { ...job.choice, answer: { values, custom: custom.trim() || undefined } } });
-    const paint = (patch: Partial<PanelJob>) => setPanelJob(cur => cur ? { ...cur, ...patch, steps: [...steps] } : cur);
+    const timeline: TurnItem[] = [];
+    setPanelJob({ ...job, pending: true, activeStatus: '收到选择，正在继续…', error: '', steps, timeline: [], choice: { ...job.choice, answer: { values, custom: custom.trim() || undefined } } });
+    const paint = (patch: Partial<PanelJob>) => setPanelJob(cur => cur ? { ...cur, ...patch, steps: [...steps], timeline: patch.timeline || [...timeline] } : cur);
     try {
-      const reply = await api.chatLive({ content: '', server_id: job.serverId, session_id: panelSession.current, bot_id: job.botId || defaultBot(bots), approval_mode: 'default', choice_answer: { message_id: cardID, values, custom: custom.trim() || undefined } }, step => {
-        steps.push(step); paint({ pending: true });
-      });
+      const handlers = makeStreamHandlers(panelAllowRules.current, panelApprovalResolvers.current, steps, timeline, status => paint({ pending: true, activeStatus: status }));
+      const reply = await api.chatLive({ content: '', server_id: job.serverId, session_id: panelSession.current, bot_id: job.botId || defaultBot(bots), approval_mode: 'default', choice_answer: { message_id: cardID, values, custom: custom.trim() || undefined } }, handlers);
       if (reply.answered) { paint({ pending: false, text: '这个问题已经回答过了' }); return; }
       panelSession.current = reply.session_id || panelSession.current;
-      paint({ pending: false, text: reply.text, error: '', sessionId: panelSession.current, messageId: reply.message_id, choice: reply.choice, secret: reply.secret_request });
+      paint({ pending: false, text: reply.text, error: '', sessionId: panelSession.current, messageId: reply.message_id, choice: reply.choice, secret: reply.secret_request, timeline: reply.timeline || [...timeline] });
       await load();
     } catch (err) {
       paint({ pending: false, error: message(err), choice: job.choice, secret: job.secret });
@@ -205,15 +315,15 @@ export default function App() {
     const cardID = job.messageId;
     const original = job.secret;
     const steps: ChatStep[] = [];
-    setPanelJob({ ...job, pending: true, error: '', steps, secret: { ...original, provided_at: new Date().toISOString() } });
-    const paint = (patch: Partial<PanelJob>) => setPanelJob(cur => cur ? { ...cur, ...patch, steps: [...steps] } : cur);
+    const timeline: TurnItem[] = [];
+    setPanelJob({ ...job, pending: true, activeStatus: '密钥已保存，正在继续…', error: '', steps, timeline: [], secret: { ...original, provided_at: new Date().toISOString() } });
+    const paint = (patch: Partial<PanelJob>) => setPanelJob(cur => cur ? { ...cur, ...patch, steps: [...steps], timeline: patch.timeline || [...timeline] } : cur);
     try {
-      const reply = await api.chatLive({ content: '', server_id: job.serverId, session_id: panelSession.current, bot_id: job.botId || defaultBot(bots), approval_mode: 'default', secret_answer: { message_id: cardID, value } }, step => {
-        steps.push(step); paint({ pending: true });
-      });
+      const handlers = makeStreamHandlers(panelAllowRules.current, panelApprovalResolvers.current, steps, timeline, status => paint({ pending: true, activeStatus: status }));
+      const reply = await api.chatLive({ content: '', server_id: job.serverId, session_id: panelSession.current, bot_id: job.botId || defaultBot(bots), approval_mode: 'default', secret_answer: { message_id: cardID, value } }, handlers);
       if (reply.answered) { paint({ pending: false, text: '这项密钥已经保存', secret: { ...original, provided_at: original.provided_at || new Date().toISOString() } }); return; }
       panelSession.current = reply.session_id || panelSession.current;
-      paint({ pending: false, text: reply.text, error: '', sessionId: panelSession.current, messageId: reply.message_id, choice: reply.choice, secret: reply.secret_request });
+      paint({ pending: false, text: reply.text, error: '', sessionId: panelSession.current, messageId: reply.message_id, choice: reply.choice, secret: reply.secret_request, timeline: reply.timeline || [...timeline] });
       await load();
     } catch (err) {
       paint({ pending: false, error: message(err), secret: original });
@@ -238,7 +348,7 @@ export default function App() {
     setBusy(true);setFormError('');
     try {const res = await api.login(user,password);setUser(res.username);setProfile(res);setAuthed(true);if(res.must_change_credentials)return;setPassword('');await load();} catch(err) {setFormError(message(err));} finally {setBusy(false);}
   }
-  async function logout() {try {await api.logout();chatLoad.current++;setAuthed(false);setLines([]);setSession('');setPassword('');setNotice('');setDialog(null);setPanelJob(null);panelSession.current='';} catch(err) {setPageError(message(err));}}
+  async function logout() {try {await api.logout();chatLoad.current++;chatAllowRules.current.clear();panelAllowRules.current.clear();setAuthed(false);setLines([]);setSession('');setPassword('');setNotice('');setDialog(null);setPanelJob(null);panelSession.current='';} catch(err) {setPageError(message(err));}}
 
   if(authed === null) return <div className="boot-screen"><LoaderCircle className="spin" size={23}/><span>连接工作台…</span></div>;
   if(!authed) return <div className="login-screen"><div className="login-brand"><span className="brand-icon"><img src="/assets/onefrog-logo.png" alt=""/></span><strong>OneFrog<span>OPERATIONS CONSOLE</span></strong></div><form className="login-card" onSubmit={e => {e.preventDefault();login();}}><span className="eyebrow">WELCOME BACK</span><h1>进入你的运维工作台</h1><p>服务器、Bot 和密钥，一个地方管理。</p><Field label="账号"><input value={user} autoComplete="username" onChange={e => setUser(e.target.value)} required placeholder="管理员账号"/></Field><Field label="密码"><input type="password" value={password} autoComplete="current-password" onChange={e => setPassword(e.target.value)} required placeholder="输入登录密码"/></Field>{formError && <Notice error>{formError}</Notice>}<Button type="submit" variant="primary" busy={busy}>进入工作台<ArrowRight size={16}/></Button><small><LockKeyhole size={12}/>自托管 · 你的基础设施，由你掌控</small></form><footer>ONEFROG / OPERATIONS, SIMPLIFIED.</footer></div>;
@@ -253,14 +363,14 @@ export default function App() {
     <main className="app-main" inert={Boolean(dialog) || mobileNav}><UpdateBanner status={updateStatus}/><div className="topbar"><IconButton label="展开导航" className="mobile-menu" onClick={() => setMobileNav(true)}><Menu size={20}/></IconButton><span className="breadcrumb">OneFrog<ChevronRight size={13}/><strong>{currentLabel}</strong></span><div className="topbar-right"><span className="sync-time">{updated ? `更新于 ${updated}` : '尚未同步'}</span><IconButton label="刷新数据" onClick={load} disabled={loading}><RefreshCw size={15} className={loading ? 'spin' : ''}/></IconButton><span className="topbar-divider"/><span className="connection"><span className={`live-dot ${pageError ? 'warn' : ''}`}/>{pageError ? '同步异常' : 'API 已连接'}</span></div></div>
     {pageError && <div className="global-error"><Notice error>{pageError}</Notice><IconButton label="关闭错误提示" onClick={() => setPageError('')}><X size={15}/></IconButton></div>}
     <div className={`view-container ${view === 'chat' ? 'chat-view' : ''}`}>
-    {view === 'panel' && <Dashboard hosts={hosts} mods={mods} history={history} bots={bots} settings={chatConfig} job={panelJob} sending={sending} onSelect={setSelected} onRun={runPanel} onAnswer={answerPanel} onProvide={answerPanelSecret} onModules={() => open('modules')} onSettings={openSettings} onServers={() => go('servers')} onAssets={() => {setActiveModule('assets'); go('modules');}} onOpenModule={id => {setActiveModule(id); go('modules');}}/>}
-    {view === 'chat' && <Chat onAddServer={()=>open('server')} controls={controls} onControls={setControls} settings={chatConfig} onBot={chooseBot} attachments={attachments} onFiles={uploadFiles} onRemoveFile={id=>setAttachments(cur=>cur.filter(f=>f.id!==id))} uploading={uploading} activeBot={bots.find(b=>b.id===activeBot)} hosts={hosts} bots={bots} selected={selected} onSelect={setSelected} draft={draft} onDraft={setDraft} lines={lines} onSend={send} sending={sending||loading} onNew={()=>newChat()} onNotice={setNotice} onAnswer={answerChoice} onProvide={answerSecret}/>}
+    {view === 'panel' && <Dashboard hosts={hosts} mods={mods} history={history} bots={bots} settings={chatConfig} job={panelJob} sending={sending} onSelect={setSelected} onRun={runPanel} onAnswer={answerPanel} onProvide={answerPanelSecret} onDecideApproval={decidePanelApproval} onModules={() => open('modules')} onSettings={openSettings} onServers={() => go('servers')} onAssets={() => {setActiveModule('assets'); go('modules');}} onOpenModule={id => {setActiveModule(id); go('modules');}}/>}
+    {view === 'chat' && <Chat onAddServer={()=>open('server')} controls={controls} onControls={setControls} settings={chatConfig} onBot={chooseBot} attachments={attachments} onFiles={uploadFiles} onRemoveFile={id=>setAttachments(cur=>cur.filter(f=>f.id!==id))} uploading={uploading} activeBot={bots.find(b=>b.id===activeBot)} hosts={hosts} bots={bots} selected={selected} onSelect={setSelected} draft={draft} onDraft={setDraft} lines={lines} onSend={send} sending={sending||loading} onNew={()=>newChat()} onNotice={setNotice} onAnswer={answerChoice} onProvide={answerSecret} onDecideApproval={decideChatApproval}/>}
     {view === 'servers' && <Servers addedServer={addedServer} hosts={hosts} selected={selected} onSelect={setSelected} onAdd={() => open('server')} onTest={testServer} testing={testing} onChat={() => openChat()} onChanged={load}/>}
     {view === 'agents' && <Bots bots={bots} onAdd={()=>open('agent')} onChanged={load} onChat={id=>{newChat(id);openChat();}}/>}
     {view === 'secrets' && <Secrets secrets={secrets} onAdd={() => open('secret')} onRotate={openRotate} onDelete={removeSecret}/>}
     {view === 'modules' && activeModule === 'assets' && <Assets hosts={hosts} onAsk={text => {const bot = bots.find(b => (b.id === 'module-builder' || b.name === '模块管理' || b.name === '模块构建') && b.enabled); if (bot) newChat(bot.id); go('chat'); setDraft(text);}}/>}
-    {view === 'modules' && activeModule === 'develop' && <Develop bots={bots} settings={chatConfig} onOpenChat={text => {const bot = bots.find(b => (b.id === 'develop' || b.name === '二次开发') && b.enabled); if (bot) newChat(bot.id); go('chat'); setDraft(text);}} onOpenSettings={openSettings} onOpenModule={id => setActiveModule(id)} onChanged={load}/>}
-    {view === 'modules' && activeModule !== '' && activeModule !== 'assets' && activeModule !== 'develop' && mods.find(m => m.id === activeModule)?.type === 'custom' && <CustomModulePage mod={mods.find(m => m.id === activeModule)!} onBack={() => setActiveModule('develop')} onAskDevelop={text => {const bot = bots.find(b => (b.id === 'develop' || b.name === '二次开发') && b.enabled); if (bot) newChat(bot.id); go('chat'); setDraft(text);}} onChanged={load}/>}
+    {view === 'modules' && activeModule === 'develop' && <Develop bots={bots} settings={chatConfig} onOpenChat={text => {const bot = bots.find(b => (b.id === 'develop' || b.name === '自定义模块' || b.name === '二次开发') && b.enabled); if (bot) newChat(bot.id); go('chat'); setDraft(text);}} onOpenSettings={openSettings} onOpenModule={id => setActiveModule(id)} onChanged={load}/>}
+    {view === 'modules' && activeModule !== '' && activeModule !== 'assets' && activeModule !== 'develop' && mods.find(m => m.id === activeModule)?.type === 'custom' && <CustomModulePage mod={mods.find(m => m.id === activeModule)!} onBack={() => setActiveModule('develop')} onAskDevelop={text => {const bot = bots.find(b => (b.id === 'develop' || b.name === '自定义模块' || b.name === '二次开发') && b.enabled); if (bot) newChat(bot.id); go('chat'); setDraft(text);}} onChanged={load}/>}
     {view === 'modules' && activeModule !== 'assets' && activeModule !== 'develop' && mods.find(m => m.id === activeModule)?.type !== 'custom' && <Modules mods={activeModule?mods.filter(m=>m.id===activeModule):mods} onToggle={toggle} pending={switching} onOpen={id => setActiveModule(id)}/>}
     {view === 'history' && <HistoryPage history={history} onUndo={id => {setRollback(id);open('rollback');}}/>}
     </div></main>

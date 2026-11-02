@@ -154,12 +154,54 @@ func (a *Agent) askOperator(ctx context.Context, botID string, rec store.ServerR
 	allow, reason := approver(ctx, req)
 	review.Allow = allow
 	review.Reason = reason
+	cardStatus := "denied"
+	cardNote := ""
+	if allow && reason == "always" {
+		cardStatus = "always"
+		review.Reason = "用户已批准（本对话始终放行）"
+		targetLabel := strings.TrimSpace(req.ServerName)
+		if targetLabel == "" {
+			targetLabel = strings.TrimSpace(req.ServerID)
+		}
+		if targetLabel == "" {
+			targetLabel = "面板"
+		}
+		cardNote = "已在本对话放行对「" + targetLabel + "」的同类操作（新开对话后恢复默认审批）"
+	} else if allow {
+		cardStatus = "approved"
+	} else if strings.Contains(reason, "超时") {
+		cardStatus = "timeout"
+		cardNote = reason
+	} else if reason != "" {
+		cardNote = reason
+	}
 	if review.Reason == "" {
 		if allow {
 			review.Reason = "用户已批准"
 		} else {
 			review.Reason = "用户拒绝执行"
 		}
+	}
+	if tr := traceFrom(ctx); tr != nil {
+		redactedReasons := make([]string, 0, len(req.Reasons))
+		for _, r := range req.Reasons {
+			redactedReasons = append(redactedReasons, a.redact(ctx, r))
+		}
+		card := &model.ApprovalCard{
+			ID:          req.ID,
+			BotName:     req.BotName,
+			ServerID:    req.ServerID,
+			ServerName:  req.ServerName,
+			Command:     a.redact(ctx, req.Command),
+			Mode:        req.Mode,
+			Risk:        req.Risk,
+			Reasons:     redactedReasons,
+			ModelReason: a.redact(ctx, req.ModelReason),
+			Untrusted:   a.redact(ctx, req.Untrusted),
+			Status:      cardStatus,
+			Note:        a.redact(ctx, cardNote),
+		}
+		tr.emit(Step{Kind: "approval", Bot: req.BotName, Approval: card})
 	}
 	a.recordReview(ctx, botID, rec.ID, command, review)
 	return review

@@ -49,7 +49,15 @@ func Prepare(ctx context.Context, db store.Store, cfg config.Config) error {
 		}
 	}
 	for _, item := range module.Catalog() {
-		if _, err := db.GetModule(ctx, item.ID); err == nil {
+		if old, err := db.GetModule(ctx, item.ID); err == nil {
+			if (old.Type == "" || old.Type == "builtin") && (old.Name != item.Name || old.Description != item.Description) {
+				old.Name = item.Name
+				old.Description = item.Description
+				old.Type = "builtin"
+				if _, err := db.SaveModule(ctx, old); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		if _, err := db.SaveModule(ctx, item); err != nil {
@@ -68,6 +76,7 @@ func Prepare(ctx context.Context, db store.Store, cfg config.Config) error {
 		func() ([]model.Bot, error) { return db.ListBots(ctx) },
 		func(id string) (model.Bot, error) { return db.GetBot(ctx, id) },
 		func(item model.Bot) (model.Bot, error) { return db.CreateBot(ctx, item) },
+		func(item model.Bot) (model.Bot, error) { return db.UpdateBot(ctx, item) },
 	); err != nil {
 		return err
 	}

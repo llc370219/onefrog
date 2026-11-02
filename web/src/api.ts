@@ -52,6 +52,34 @@ export type ChoiceReply = { message_id: string; values?: string[]; custom?: stri
 /** A password card. The value is never stored on the card or in the transcript. */
 export type SecretRequest = { name: string; label: string; description?: string; provided_at?: string };
 export type SecretReply = { message_id: string; value: string };
+export type ApprovalCardData = {
+  id: string;
+  bot_name?: string;
+  server_id?: string;
+  server_name?: string;
+  command: string;
+  mode?: string;
+  risk?: string;
+  reasons?: string[];
+  model_reason?: string;
+  untrusted?: string;
+  status: 'approved' | 'always' | 'denied' | 'timeout' | string;
+  note?: string;
+};
+export type TurnItem = {
+  kind: 'say' | 'step' | 'delegate' | 'approval' | 'approval_pending' | string;
+  bot?: string;
+  text?: string;
+  target?: string;
+  task?: string;
+  name?: string;
+  command?: string;
+  server_id?: string;
+  ok?: boolean;
+  output?: string;
+  approval?: ApprovalCardData;
+  pending_req?: ApprovalPrompt;
+};
 export type ChatLine = {
   who: "user" | "bot";
   text: string;
@@ -59,7 +87,9 @@ export type ChatLine = {
   choice?: Choice;
   secret?: SecretRequest;
   pending?: boolean;
+  activeStatus?: string;
   steps?: ChatStep[];
+  timeline?: TurnItem[];
   attachments?:Attachment[];
 };
 export type TokenUsage={requests:number;reported_calls:number;failed_calls:number;input_tokens:number;output_tokens:number;total_tokens:number};
@@ -67,7 +97,7 @@ export type UsageRow=TokenUsage&{bot_id:string;purpose:string;provider_id:string
 export type Attachment={id:string;name:string;mime:string;size:number};
 export type ChatOptions={approval_route?:ModelRoute;model_route?:ModelRoute;excluded_bot_ids?:string[];approval_mode?:string;attachment_ids?:string[]};
 export type ChatRequest=ChatOptions&{content:string;server_id?:string;bot_id?:string;session_id?:string;choice_answer?:ChoiceReply;secret_answer?:SecretReply};
-export type ChatResult={session_id:string;text:string;message_id?:string;choice?:Choice;secret_request?:SecretRequest;answered?:boolean};
+export type ChatResult={session_id:string;text:string;message_id?:string;choice?:Choice;secret_request?:SecretRequest;timeline?:TurnItem[];answered?:boolean};
 export type BotRow = { id:string;name:string;description:string;system_prompt?:string;enabled:boolean;model_route:ModelRoute;effective_route:ModelRoute;usage:TokenUsage;memory_count?:number };
 export type BotMemory = { id:string;bot_id:string;title:string;body:string;source:string;created_at:string;updated_at:string };
 
@@ -169,7 +199,7 @@ export const api = {
   async probeToken(id:string):Promise<{token:string;server_id:string}>{return call("/api/servers/"+encodeURIComponent(id)+"/probe/token",{method:"POST",body:"{}"});},
   async profile(body:{username:string;display_name:string;avatar:string;current_password:string;new_password:string}):Promise<Profile>{return call("/api/auth/profile",{method:"PUT",body:JSON.stringify(body)});},
   async sessions():Promise<ChatSession[]>{return (await call("/api/sessions"))||[];},
-  async messages(id:string):Promise<{id:string;role:string;content:string;attachments?:Attachment[];choice?:Choice;secret_request?:SecretRequest}[]>{return (await call("/api/sessions/"+encodeURIComponent(id)+"/messages"))||[];},
+  async messages(id:string):Promise<{id:string;role:string;content:string;attachments?:Attachment[];choice?:Choice;secret_request?:SecretRequest;timeline?:TurnItem[]}[]>{return (await call("/api/sessions/"+encodeURIComponent(id)+"/messages"))||[];},
   async deleteSession(id:string){return call("/api/sessions/"+encodeURIComponent(id),{method:"DELETE"});},
   async updateStatus():Promise<UpdateStatus>{return call("/api/update");},
   async checkUpdate():Promise<UpdateStatus>{return call("/api/update/check",{method:"POST",body:"{}"});},
@@ -283,11 +313,19 @@ export const api = {
   async chat(body: ChatRequest) {
     return call("/api/chat", { method: "POST", body: JSON.stringify(body) }) as Promise<ChatReply>;
   },
-  chatLive(body: ChatRequest, onStep: (step: ChatStep) => void) {
-    return liveChat(body, onStep);
+  chatLive(body: ChatRequest, handlers: ((step: ChatStep) => void) | LiveChatHandlers) {
+    return liveChat(body, typeof handlers === "function" ? { onStep: handlers } : handlers);
   },
 };
 
+export type ApprovalDecision = { allow: boolean; always?: boolean };
+export type LiveChatHandlers = {
+  onStep?: (step: ChatStep) => void;
+  onSay?: (bot: string, content: string) => void;
+  onApproval?: (req: ApprovalPrompt) => Promise<ApprovalDecision>;
+  onApprovalResolved?: (card: ApprovalCardData) => void;
+  onApprovalTimeout?: (id: string) => void;
+};
 type ChatReply = ChatResult & {
   steps?: {
     kind?: string;
@@ -318,7 +356,7 @@ let approvalHandler: ((req: ApprovalPrompt) => Promise<boolean>) | null = null;
 /** Registers the UI that asks the operator to allow or deny a command. */
 export function setApprovalHandler(fn: ((req: ApprovalPrompt) => Promise<boolean>) | null) { approvalHandler = fn; }
 
-function liveChat(body: ChatRequest, onStep: (step: ChatStep) => void) {
+function liveChat(body: ChatRequest, handlers: LiveChatHandlers) {
   return new Promise<ChatResult>((resolve, reject) => {
     let opened = false;
     let settled = false;
@@ -336,8 +374,8 @@ function liveChat(body: ChatRequest, onStep: (step: ChatStep) => void) {
       ws.close();
       if (!opened) {
         api.chat(body).then((res) => {
-          for (const step of res.steps || []) onStep(toStep(step));
-          resolve({ session_id: res.session_id, text: res.text, message_id: res.message_id, choice: res.choice || undefined, secret_request: res.secret_request || undefined, answered: res.answered });
+          for (const step of res.steps || []) handlers.onStep?.(toStep(step));
+          resolve({ session_id: res.session_id, text: res.text, message_id: res.message_id, choice: res.choice || undefined, secret_request: res.secret_request || undefined, timeline: res.timeline, answered: res.answered });
         }, reject);
         return;
       }
@@ -363,13 +401,37 @@ function liveChat(body: ChatRequest, onStep: (step: ChatStep) => void) {
       if (msg.type === "approval_request") {
         const req = msg as ApprovalPrompt;
         arm((req.timeout_seconds || 300) * 1000 + 180000);
-        const ask = approvalHandler ? approvalHandler(req) : Promise.resolve(window.confirm("允许执行以下命令？\n" + req.command + ((req.reasons || []).length ? "\n⚠ " + (req.reasons || []).join("\n⚠ ") : req.warning ? "\n⚠ " + req.warning : "")));
-        ask.then((allow) => { if (!settled) { ws.send(JSON.stringify({ type: "approval", id: req.id, allow })); arm(180000); } }, () => { if (!settled) ws.send(JSON.stringify({ type: "approval", id: req.id, allow: false })); });
+        const ask: Promise<ApprovalDecision> = handlers.onApproval
+          ? handlers.onApproval(req)
+          : approvalHandler
+          ? approvalHandler(req).then((allow) => ({ allow }))
+          : Promise.resolve({ allow: window.confirm("允许执行以下命令？\n" + req.command + ((req.reasons || []).length ? "\n⚠ " + (req.reasons || []).join("\n⚠ ") : req.warning ? "\n⚠ " + req.warning : "")) });
+        ask.then(
+          (dec) => {
+            if (!settled) {
+              ws.send(JSON.stringify({ type: "approval", id: req.id, allow: dec.allow, reason: dec.always ? "always" : "" }));
+              arm(180000);
+            }
+          },
+          () => { if (!settled) ws.send(JSON.stringify({ type: "approval", id: req.id, allow: false })); }
+        );
         return;
       }
-      if (msg.type === "approval_timeout") { approvalHandler && approvalTimeout(msg.id); return; }
+      if (msg.type === "approval_timeout") {
+        handlers.onApprovalTimeout?.(msg.id);
+        if (approvalHandler) approvalTimeout(msg.id);
+        return;
+      }
+      if (msg.type === "say") {
+        handlers.onSay?.(msg.bot || "", msg.content || "");
+        return;
+      }
+      if (msg.type === "approval_resolved" && msg.approval) {
+        handlers.onApprovalResolved?.(msg.approval as ApprovalCardData);
+        return;
+      }
       if (msg.type === "session") session = msg.session_id || "";
-      if (msg.type === "delegate" || msg.type === "tool") onStep(toStep({
+      if (msg.type === "delegate" || msg.type === "tool") handlers.onStep?.(toStep({
         kind: msg.type,
         bot: msg.bot,
         target: msg.target,
@@ -379,7 +441,7 @@ function liveChat(body: ChatRequest, onStep: (step: ChatStep) => void) {
         ok: msg.ok,
         output: msg.output,
       }));
-      if (msg.type === "assistant") { text = msg.content || ""; extra = { message_id: msg.message_id || undefined, choice: msg.choice || undefined, secret_request: msg.secret_request || undefined, answered: !!msg.answered }; }
+      if (msg.type === "assistant") { text = msg.content || ""; extra = { message_id: msg.message_id || undefined, choice: msg.choice || undefined, secret_request: msg.secret_request || undefined, timeline: msg.timeline || undefined, answered: !!msg.answered }; }
       if (msg.type === "error") fail(new Error(msg.message || "发送失败"));
       if (msg.type === "done") ok();
     };

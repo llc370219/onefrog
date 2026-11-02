@@ -134,7 +134,39 @@ type SecretRequest struct {
 	ProvidedAt  *time.Time `json:"provided_at,omitempty"`
 }
 
+// ApprovalCard records an inline approval prompt and its outcome inside a chat turn.
+type ApprovalCard struct {
+	ID          string   `json:"id"`
+	BotName     string   `json:"bot_name,omitempty"`
+	ServerID    string   `json:"server_id,omitempty"`
+	ServerName  string   `json:"server_name,omitempty"`
+	Command     string   `json:"command"`
+	Mode        string   `json:"mode,omitempty"`
+	Risk        string   `json:"risk,omitempty"`
+	Reasons     []string `json:"reasons,omitempty"`
+	ModelReason string   `json:"model_reason,omitempty"`
+	Untrusted   string   `json:"untrusted,omitempty"`
+	Status      string   `json:"status"`
+	Note        string   `json:"note,omitempty"`
+}
+
+// TurnItem is one chronological item in a multi-step conversational assistant turn.
+type TurnItem struct {
+	Kind     string        `json:"kind"` // "say" | "step" | "delegate" | "approval"
+	Bot      string        `json:"bot,omitempty"`
+	Text     string        `json:"text,omitempty"`
+	Target   string        `json:"target,omitempty"`
+	Task     string        `json:"task,omitempty"`
+	Name     string        `json:"name,omitempty"`
+	Command  string        `json:"command,omitempty"`
+	ServerID string        `json:"server_id,omitempty"`
+	OK       bool          `json:"ok,omitempty"`
+	Output   string        `json:"output,omitempty"`
+	Approval *ApprovalCard `json:"approval,omitempty"`
+}
+
 type Message struct {
+	Timeline      []TurnItem     `json:"timeline,omitempty"`
 	Choice        *Choice        `json:"choice,omitempty"`
 	SecretRequest *SecretRequest `json:"secret_request,omitempty"`
 	Attachments   []Attachment   `json:"attachments,omitempty"`

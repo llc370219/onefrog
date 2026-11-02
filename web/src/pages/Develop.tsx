@@ -1,8 +1,9 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, Blocks, Bot, Code2, Eraser, ExternalLink, LoaderCircle, Plus, Sparkles, Trash2 } from 'lucide-react';
-import { api, type BotRow, type ChatStep, type Choice, type DevModuleRow, type Mod, type SettingsState } from '../api';
-import ChoiceCard from '../components/ChoiceCard';
+import { ArrowLeft, ArrowRight, Blocks, Bot, Code2, Eraser, ExternalLink, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { api, type ApprovalDecision, type BotRow, type Choice, type DevModuleRow, type Mod, type SettingsState, type TurnItem } from '../api';
+import { approvalRuleKey } from '../components/ApprovalCard';
 import CustomModuleFrame from '../components/CustomModuleFrame';
+import TurnStream from '../components/TurnStream';
 import { Button, Empty, Field, Modal, Notice, PageHeading } from '../components/ui';
 
 const errText = (err: unknown) => (err instanceof Error ? err.message : '操作失败，请重试');
@@ -17,10 +18,10 @@ const quickPrompts = [
 
 function devBotReady(settings: SettingsState | null, bots: BotRow[]) {
   if (!settings) return { ok: false, label: '正在读取模型配置', botId: '' };
-  const devBot = bots.find(b => (b.id === 'develop' || b.name === '二次开发') && b.enabled)
+  const devBot = bots.find(b => (b.id === 'develop' || b.name === '自定义模块' || b.name === '二次开发') && b.enabled)
     || bots.find(b => b.id === 'main' && b.enabled)
     || bots.find(b => b.enabled && b.id !== 'module-builder');
-  if (!devBot) return { ok: false, label: '二次开发 Bot 未启用', botId: '' };
+  if (!devBot) return { ok: false, label: '自定义模块 Bot 未启用', botId: '' };
   const routed = devBot.effective_route;
   const route = routed?.provider_id && routed.model ? routed : settings.default;
   const provider = settings.providers.find(p => p.id === route?.provider_id && p.enabled);
@@ -35,14 +36,14 @@ export function DevelopGlance({ onOpenStudio, onOpenModule }: { onOpenStudio: ()
   const [rows, setRows] = useState<DevModuleRow[] | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
-    api.devModules().then(setRows).catch(() => setError('二次开发数据暂时不可用'));
+    api.devModules().then(setRows).catch(() => setError('自定义模块数据暂时不可用'));
   }, []);
   if (error) return <p className="card-foot danger">{error}</p>;
-  if (!rows) return <p className="card-foot">正在读取二次开发模块…</p>;
+  if (!rows) return <p className="card-foot">正在读取自定义模块…</p>;
   const totalRecords = rows.reduce((sum, r) => sum + (r.record_count || 0), 0);
   return (
     <div className="asset-glance">
-      <div><span>已构建模块</span><strong>{rows.length}</strong></div>
+      <div><span>已创建模块</span><strong>{rows.length}</strong></div>
       <div><span>面板启用</span><strong>{rows.filter(r => r.enabled).length}</strong></div>
       <div><span>累计数据记录</span><strong>{totalRecords}</strong></div>
       <div><span>运行隔离</span><strong>沙箱加密</strong></div>
@@ -53,8 +54,8 @@ export function DevelopGlance({ onOpenStudio, onOpenModule }: { onOpenStudio: ()
               <button key={r.id} className="text-btn develop-inline-link" onClick={() => onOpenModule(r.id)}>{r.name}</button>
             ))}
           </span>
-        ) : '还没有自定义模块，去二次开发工作台用一句话生成第一个模块。'}
-        <button className="text-btn" onClick={onOpenStudio}>进入工作台<ArrowRight size={13}/></button>
+        ) : '还没有自定义模块，可进入自定义模块页面用一句话生成。'}
+        <button className="text-btn" onClick={onOpenStudio}>进入自定义模块<ArrowRight size={13}/></button>
       </p>
     </div>
   );
@@ -116,12 +117,12 @@ export function CustomModulePage({
       <PageHeading
         eyebrow="MODULE / CUSTOM"
         title={detail?.name || mod.name}
-        note={detail?.description || mod.desc || '二次开发自定义模块'}
+        note={detail?.description || mod.desc || '自定义交互模块'}
         actions={
           <>
-            <Button onClick={onBack}><ArrowLeft size={15}/>二次开发工作台</Button>
+            <Button onClick={onBack}><ArrowLeft size={15}/>全部自定义模块</Button>
             <Button onClick={() => setEditing(true)}><Code2 size={15}/>编辑源码</Button>
-            <Button variant="primary" onClick={() => onAskDevelop('请先 inspect 二次开发模块「' + (detail?.name || mod.name) + '」（id=' + mod.id + '），保留已有数据并按以下需求改造：')}>
+            <Button variant="primary" onClick={() => onAskDevelop('请先 inspect 自定义模块「' + (detail?.name || mod.name) + '」（id=' + mod.id + '），保留已有数据并按以下需求改造：')}>
               <Bot size={15}/>AI 继续改造
             </Button>
           </>
@@ -134,7 +135,7 @@ export function CustomModulePage({
           title={detail?.name || mod.name}
           version={detail?.updated_at || '1'}
           onDataChanged={() => { void loadDetail(); }}
-          onFixError={msg => onAskDevelop('二次开发模块「' + (detail?.name || mod.name) + '」（id=' + mod.id + '）运行时报错：' + msg + '。请先 inspect 查看源码并修复这个错误，保留已有记录。')}
+          onFixError={msg => onAskDevelop('自定义模块「' + (detail?.name || mod.name) + '」（id=' + mod.id + '）运行时报错：' + msg + '。请先 inspect 查看源码并修复这个错误，保留已有记录。')}
         />
       </section>
       {editing && (
@@ -170,10 +171,13 @@ export default function Develop({
   const [error, setError] = useState('');
   const [prompt, setPrompt] = useState('');
   const [building, setBuilding] = useState(false);
-  const [steps, setSteps] = useState<ChatStep[]>([]);
+  const [activeStatus, setActiveStatus] = useState('');
+  const [timeline, setTimeline] = useState<TurnItem[]>([]);
   const [replyText, setReplyText] = useState('');
   const [choice, setChoice] = useState<{ messageId: string; card: Choice } | null>(null);
   const sessionRef = useRef('');
+  const allowRulesRef = useRef<Set<string>>(new Set());
+  const resolversRef = useRef<Map<string, (dec: ApprovalDecision) => void>>(new Map());
 
   const [modalMode, setModalMode] = useState<'create' | 'edit' | null>(null);
   const [editId, setEditId] = useState('');
@@ -199,21 +203,120 @@ export default function Develop({
 
   useEffect(() => { void reload(); }, [reload]);
 
+  function decideApproval(id: string, dec: ApprovalDecision) {
+    const fn = resolversRef.current.get(id);
+    if (!fn) return;
+    resolversRef.current.delete(id);
+    setTimeline(cur => cur.map(item => {
+      if (item.kind === 'approval_pending' && item.pending_req?.id === id) {
+        const req = item.pending_req;
+        if (dec.allow && dec.always && !req.untrusted) {
+          allowRulesRef.current.add(approvalRuleKey(req.server_id, req.command));
+        }
+        return {
+          kind: 'approval',
+          approval: {
+            id: req.id,
+            bot_name: req.bot_name || req.bot,
+            server_id: req.server_id,
+            server_name: req.server_name,
+            command: req.command,
+            risk: req.risk,
+            reasons: req.reasons,
+            model_reason: req.model_reason,
+            untrusted: req.untrusted,
+            status: dec.allow ? (dec.always ? 'always' : 'approved') : 'denied',
+          },
+        };
+      }
+      return item;
+    }));
+    setActiveStatus(dec.allow ? '已批准，正在继续执行…' : '已拒绝，正在整理结果…');
+    fn(dec);
+  }
+
+  async function runStream(reqBody: Parameters<typeof api.chatLive>[0]) {
+    const localItems: TurnItem[] = [];
+    const sync = () => setTimeline([...localItems]);
+    return api.chatLive(reqBody, {
+      onSay: (bot, content) => {
+        if (content.trim()) {
+          localItems.push({ kind: 'say', bot, text: content.trim() });
+          setActiveStatus('正在继续编写模块…');
+          sync();
+        }
+      },
+      onApproval: req => {
+        const key = approvalRuleKey(req.server_id, req.command);
+        if (!req.untrusted && allowRulesRef.current.has(key)) {
+          return Promise.resolve({ allow: true, always: true });
+        }
+        localItems.push({ kind: 'approval_pending', pending_req: req });
+        setActiveStatus('等待你在卡片确认…');
+        sync();
+        return new Promise<ApprovalDecision>(resolve => {
+          resolversRef.current.set(req.id, dec => {
+            const idx = localItems.findIndex(x => x.kind === 'approval_pending' && x.pending_req?.id === req.id);
+            if (idx >= 0) {
+              localItems[idx] = {
+                kind: 'approval',
+                approval: {
+                  id: req.id,
+                  bot_name: req.bot_name || req.bot,
+                  server_id: req.server_id,
+                  server_name: req.server_name,
+                  command: req.command,
+                  risk: req.risk,
+                  reasons: req.reasons,
+                  model_reason: req.model_reason,
+                  untrusted: req.untrusted,
+                  status: dec.allow ? (dec.always ? 'always' : 'approved') : 'denied',
+                },
+              };
+              sync();
+            }
+            resolve(dec);
+          });
+        });
+      },
+      onApprovalResolved: card => {
+        const idx = localItems.findIndex(
+          x => (x.kind === 'approval' && x.approval?.id === card.id) || (x.kind === 'approval_pending' && x.pending_req?.id === card.id)
+        );
+        if (idx >= 0) localItems[idx] = { kind: 'approval', approval: card };
+        else localItems.push({ kind: 'approval', approval: card });
+        sync();
+      },
+      onApprovalTimeout: id => {
+        const fn = resolversRef.current.get(id);
+        if (fn) { resolversRef.current.delete(id); fn({ allow: false }); }
+      },
+      onStep: step => {
+        if (step.kind === 'delegate') {
+          localItems.push({ kind: 'delegate', bot: step.bot, target: step.target, task: step.task });
+          setActiveStatus('已派给「' + (step.target || '协作 Bot') + '」处理…');
+        } else {
+          localItems.push({ kind: 'step', bot: step.bot, command: step.command, server_id: step.server, ok: step.ok, output: step.output });
+          setActiveStatus('已完成：' + (step.command || '模块构建') + '，正在收尾…');
+        }
+        sync();
+      },
+    });
+  }
+
   async function runBuild(text: string) {
     const trimmed = text.trim();
     if (!trimmed || building || !ready.ok) return;
     setBuilding(true);
+    setActiveStatus('正在构思与编写模块…');
     setError('');
     setReplyText('');
     setChoice(null);
-    const trace: ChatStep[] = [];
-    setSteps([]);
+    setTimeline([]);
     try {
-      const res = await api.chatLive(
-        { content: trimmed, session_id: sessionRef.current, bot_id: ready.botId, approval_mode: 'default' },
-        step => { trace.push(step); setSteps([...trace]); }
-      );
+      const res = await runStream({ content: trimmed, session_id: sessionRef.current, bot_id: ready.botId, approval_mode: 'default' });
       sessionRef.current = res.session_id || sessionRef.current;
+      if (res.timeline?.length) setTimeline(res.timeline);
       setReplyText(res.text);
       if (res.choice && res.message_id) {
         setChoice({ messageId: res.message_id, card: res.choice });
@@ -231,15 +334,18 @@ export default function Develop({
   async function answerBuildChoice(values: string[], custom: string) {
     if (!choice || building || !sessionRef.current) return;
     setBuilding(true);
+    setActiveStatus('收到选择，正在继续构建…');
     const cardID = choice.messageId;
     setChoice({ ...choice, card: { ...choice.card, answer: { values, custom: custom.trim() || undefined } } });
-    const trace: ChatStep[] = [];
-    setSteps([]);
     try {
-      const res = await api.chatLive(
-        { content: '', session_id: sessionRef.current, bot_id: ready.botId, approval_mode: 'default', choice_answer: { message_id: cardID, values, custom: custom.trim() || undefined } },
-        step => { trace.push(step); setSteps([...trace]); }
-      );
+      const res = await runStream({
+        content: '',
+        session_id: sessionRef.current,
+        bot_id: ready.botId,
+        approval_mode: 'default',
+        choice_answer: { message_id: cardID, values, custom: custom.trim() || undefined },
+      });
+      if (res.timeline?.length) setTimeline(res.timeline);
       setReplyText(res.text);
       setChoice(res.choice && res.message_id ? { messageId: res.message_id, card: res.choice } : null);
       await reload();
@@ -325,7 +431,7 @@ export default function Develop({
   }
 
   async function removeModule(row: DevModuleRow) {
-    if (!window.confirm('删除二次开发模块「' + row.name + '」及其 ' + row.record_count + ' 条记录？此操作不可恢复。')) return;
+    if (!window.confirm('删除自定义模块「' + row.name + '」及其 ' + row.record_count + ' 条记录？此操作不可恢复。')) return;
     try {
       await api.deleteDevModule(row.id);
       await reload();
@@ -338,12 +444,12 @@ export default function Develop({
   return (
     <div className="page develop-page">
       <PageHeading
-        eyebrow="MODULE / DEVELOP"
-        title="二次开发"
-        note="用一句话让二次开发 Bot 生成自定义交互模块，或直接编辑源码；生成的模块自动挂载到「模块」目录和「面板」首页。"
+        eyebrow="MODULE / CUSTOM"
+        title="自定义模块"
+        note="用一句话让自定义模块 Bot 生成交互功能卡片，或直接编辑源码；创建后自动挂载到「模块」目录和「面板」首页。"
         actions={
           <>
-            <Button onClick={() => onOpenChat(prompt || '帮我开发一个自定义模块：')}><Bot size={15}/>进入对话细调</Button>
+            <Button onClick={() => onOpenChat(prompt || '帮我创建一个自定义模块：')}><Bot size={15}/>进入对话细调</Button>
             <Button variant="primary" onClick={openCreate}><Plus size={15}/>新建模块</Button>
           </>
         }
@@ -353,8 +459,8 @@ export default function Develop({
         <div className="panel-operator-head">
           <div className="launch-icon"><Sparkles size={21} strokeWidth={1.5}/></div>
           <div>
-            <strong>{ready.ok ? 'AI 二次开发构建器' : ready.label}</strong>
-            <p>{ready.ok ? ready.label + ' · 创建即生效，修改或删除已有模块会先弹出审批。模块在隔离沙箱运行，数据加密保存。' : '先配置可用模型渠道，或点击右上角「新建模块」使用内置模板与源码创建。'}</p>
+            <strong>{ready.ok ? 'AI 自定义模块构建器' : ready.label}</strong>
+            <p>{ready.ok ? ready.label + ' · 创建即生效，修改或删除已有模块会弹出内联审批卡片。模块在隔离沙箱运行，数据加密保存。' : '先配置可用模型渠道，或点击右上角「新建模块」使用内置模板与源码创建。'}</p>
           </div>
           {!ready.ok && <Button variant="primary" onClick={onOpenSettings}>去接模型</Button>}
         </div>
@@ -367,7 +473,7 @@ export default function Develop({
             </div>
             <form className="operator-form" onSubmit={submitPrompt}>
               <input
-                aria-label="描述你想开发的模块"
+                aria-label="描述你想创建的自定义模块"
                 value={prompt}
                 disabled={building}
                 placeholder="例如：创建一个打卡的模块，功能简单，一个卡片点击记述"
@@ -377,17 +483,19 @@ export default function Develop({
             </form>
           </>
         )}
-        {(building || steps.length > 0 || replyText || choice) && (
+        {(building || timeline.length > 0 || replyText || choice) && (
           <div className="operator-result" aria-live="polite">
-            {building && <p className="operator-pending"><LoaderCircle size={14} className="spin"/>正在生成模块…</p>}
-            {steps.map((s, idx) => (
-              <div className="operator-step" key={idx}>
-                <strong>{s.command || s.task || '执行步骤'}</strong>
-                {s.output && <pre>{s.output.slice(0, 280)}</pre>}
-              </div>
-            ))}
-            {replyText && <p className="operator-text">{replyText}</p>}
-            {choice && <ChoiceCard choice={choice.card} disabled={building} onAnswer={answerBuildChoice}/>}
+            <TurnStream
+              timeline={timeline}
+              text={replyText}
+              pending={building}
+              activeStatus={activeStatus}
+              choice={choice?.card}
+              disabled={building}
+              animateFinal={!building}
+              onDecideApproval={decideApproval}
+              onAnswerChoice={answerBuildChoice}
+            />
           </div>
         )}
       </section>
@@ -395,13 +503,13 @@ export default function Develop({
       {error && <Notice error>{error}</Notice>}
 
       <div className="section-label">
-        <span><span className="live-dot"/>已构建模块 <small>{rows.length} 个</small></span>
+        <span><span className="live-dot"/>已创建的自定义模块 <small>{rows.length} 个</small></span>
         <span className="muted">开关控制是否同时展示在面板首页</span>
       </div>
 
       {loaded && !rows.length ? (
         <Empty
-          title="还没有二次开发模块"
+          title="还没有自定义模块"
           body="在上方输入需求（如「创建一个打卡模块，点击记录时间和备注」）一键生成，或手动创建模板模块。"
           action={<Button onClick={openCreate}><Plus size={15}/>新建第一个模块</Button>}
         />
@@ -432,12 +540,12 @@ export default function Develop({
                 title={row.name}
                 version={row.updated_at}
                 onDataChanged={() => { void reload(); }}
-                onFixError={msg => onOpenChat('二次开发模块「' + row.name + '」（id=' + row.id + '）报错：' + msg + '。请先 inspect 查看源码并修复，保留已有数据。')}
+                onFixError={msg => onOpenChat('自定义模块「' + row.name + '」（id=' + row.id + '）报错：' + msg + '。请先 inspect 查看源码并修复，保留已有数据。')}
               />
               <footer className="develop-card-foot">
                 <div className="row-actions">
                   <Button onClick={() => onOpenModule(row.id)}><ExternalLink size={13}/>独立打开</Button>
-                  <Button onClick={() => onOpenChat('请先 inspect 二次开发模块「' + row.name + '」（id=' + row.id + '），保留已有数据并按以下需求升级：')}><Bot size={13}/>AI 改造</Button>
+                  <Button onClick={() => onOpenChat('请先 inspect 自定义模块「' + row.name + '」（id=' + row.id + '），保留已有数据并按以下需求升级：')}><Bot size={13}/>AI 改造</Button>
                   <Button onClick={() => openEdit(row)}><Code2 size={13}/>源码</Button>
                 </div>
                 <div className="row-actions">
@@ -452,7 +560,7 @@ export default function Develop({
 
       {modalMode && (
         <Modal
-          title={modalMode === 'create' ? '新建二次开发模块' : '编辑模块源码'}
+          title={modalMode === 'create' ? '新建自定义模块' : '编辑模块源码'}
           note={modalMode === 'create' ? '可直接使用内置打卡记述模板，或粘贴自定义 HTML / CSS / JS。' : '修改界面代码会保留模块已保存的状态与记录。'}
           wide
           onClose={() => setModalMode(null)}
@@ -485,4 +593,3 @@ export default function Develop({
     </div>
   );
 }
-

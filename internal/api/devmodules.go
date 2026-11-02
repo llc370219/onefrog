@@ -38,7 +38,7 @@ func (s *Server) listDevModules(c *gin.Context) {
 
 func (s *Server) getDevModule(c *gin.Context) {
 	if s.DevModules == nil {
-		fail(c, http.StatusServiceUnavailable, "二次开发模块未就绪")
+		fail(c, http.StatusServiceUnavailable, "自定义模块未就绪")
 		return
 	}
 	item, err := s.DevModules.Get(c.Param("id"))
@@ -65,7 +65,7 @@ func (s *Server) getDevModule(c *gin.Context) {
 
 func (s *Server) createDevModule(c *gin.Context) {
 	if s.DevModules == nil {
-		fail(c, http.StatusServiceUnavailable, "二次开发模块未就绪")
+		fail(c, http.StatusServiceUnavailable, "自定义模块未就绪")
 		return
 	}
 	var req struct {
@@ -121,7 +121,7 @@ func (s *Server) createDevModule(c *gin.Context) {
 
 func (s *Server) updateDevModule(c *gin.Context) {
 	if s.DevModules == nil {
-		fail(c, http.StatusServiceUnavailable, "二次开发模块未就绪")
+		fail(c, http.StatusServiceUnavailable, "自定义模块未就绪")
 		return
 	}
 	var req struct {
@@ -175,7 +175,7 @@ func (s *Server) updateDevModule(c *gin.Context) {
 
 func (s *Server) deleteDevModule(c *gin.Context) {
 	if s.DevModules == nil {
-		fail(c, http.StatusServiceUnavailable, "二次开发模块未就绪")
+		fail(c, http.StatusServiceUnavailable, "自定义模块未就绪")
 		return
 	}
 	removed, err := s.DevModules.Delete(c.Param("id"))
@@ -189,7 +189,7 @@ func (s *Server) deleteDevModule(c *gin.Context) {
 
 func (s *Server) devModuleData(c *gin.Context) {
 	if s.DevModules == nil {
-		fail(c, http.StatusServiceUnavailable, "二次开发模块未就绪")
+		fail(c, http.StatusServiceUnavailable, "自定义模块未就绪")
 		return
 	}
 	var req struct {
@@ -243,7 +243,7 @@ func (s *Server) devModuleFrame(c *gin.Context) {
 		return
 	}
 	if s.DevModules == nil {
-		fail(c, http.StatusServiceUnavailable, "二次开发模块未就绪")
+		fail(c, http.StatusServiceUnavailable, "自定义模块未就绪")
 		return
 	}
 	item, err := s.DevModules.Get(c.Param("id"))

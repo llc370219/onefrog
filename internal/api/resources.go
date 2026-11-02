@@ -601,6 +601,10 @@ func stepEvent(step bot.Step) gin.H {
 	switch step.Kind {
 	case "session":
 		return gin.H{"type": "session", "session_id": step.Output}
+	case "say":
+		return gin.H{"type": "say", "bot": step.Bot, "content": step.Output}
+	case "approval":
+		return gin.H{"type": "approval_resolved", "approval": step.Approval}
 	case "delegate":
 		return gin.H{"type": "delegate", "bot": step.Bot, "target": step.Target, "task": step.Task}
 	default:

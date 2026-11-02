@@ -110,14 +110,14 @@ export default function CustomModuleFrame({
         className="custom-module-frame"
         sandbox="allow-scripts"
         referrerPolicy="no-referrer"
-        title={title || '二次开发模块'}
+        title={title || '自定义模块'}
         src={src}
         style={{ height: height + 'px' }}
       />
       {runtimeError && onFixError && (
         <div className="custom-frame-error">
           <span><TriangleAlert size={14}/>脚本报错：{runtimeError}</span>
-          <Button onClick={() => onFixError(runtimeError)}><Bot size={14}/>交给二次开发修复</Button>
+          <Button onClick={() => onFixError(runtimeError)}><Bot size={14}/>交给自定义模块修复</Button>
         </div>
       )}
     </div>

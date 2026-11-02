@@ -36,7 +36,7 @@ func TestDevModulesSandboxAndDataAPI(t *testing.T) {
 		if m.ID == created.ID && m.Type == "custom" {
 			foundCustom = true
 		}
-		if m.ID == "develop" && m.Name == "二次开发" {
+		if m.ID == "develop" && m.Name == "自定义模块" {
 			foundDevelop = true
 		}
 	}

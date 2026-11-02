@@ -10,15 +10,16 @@ import (
 )
 
 type Step struct {
-	Kind     string `json:"kind"`
-	Bot      string `json:"bot,omitempty"`
-	Target   string `json:"target,omitempty"`
-	Task     string `json:"task,omitempty"`
-	Name     string `json:"name,omitempty"`
-	Command  string `json:"command,omitempty"`
-	ServerID string `json:"server_id,omitempty"`
-	OK       bool   `json:"ok,omitempty"`
-	Output   string `json:"output,omitempty"`
+	Kind     string              `json:"kind"`
+	Bot      string              `json:"bot,omitempty"`
+	Target   string              `json:"target,omitempty"`
+	Task     string              `json:"task,omitempty"`
+	Name     string              `json:"name,omitempty"`
+	Command  string              `json:"command,omitempty"`
+	ServerID string              `json:"server_id,omitempty"`
+	OK       bool                `json:"ok,omitempty"`
+	Output   string              `json:"output,omitempty"`
+	Approval *model.ApprovalCard `json:"approval,omitempty"`
 }
 
 type credentials struct {
@@ -29,11 +30,12 @@ type credentials struct {
 }
 
 type trace struct {
-	agent *Agent
-	ctx   context.Context
-	sink  func(Step)
-	steps []Step
-	tools []ToolEvent
+	agent    *Agent
+	ctx      context.Context
+	sink     func(Step)
+	steps    []Step
+	tools    []ToolEvent
+	timeline []model.TurnItem
 	// choice is set when the leader asked the user with ask_user; the turn
 	// then ends and the card is stored with the reply.
 	choice *model.Choice
@@ -42,12 +44,30 @@ type trace struct {
 	secret *model.SecretRequest
 }
 
+type traceKey struct{}
+
+func traceFrom(ctx context.Context) *trace {
+	tr, _ := ctx.Value(traceKey{}).(*trace)
+	return tr
+}
+
+func hasInteractiveCardCall(calls []toolCall) bool {
+	for _, c := range calls {
+		if c.Function.Name == "ask_user" || c.Function.Name == "request_secret" {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *Agent) lead(ctx context.Context, leader model.Bot, serverID, sessionID string, sink func(Step)) (Result, error) {
 	leader, creds, err := a.credentialsFor(ctx, leader, false)
 	if err != nil {
 		return Result{}, err
 	}
 	tr := &trace{agent: a, ctx: ctx, sink: sink}
+	ctx = context.WithValue(ctx, traceKey{}, tr)
+	tr.ctx = ctx
 	messages, err := a.sessionMessages(ctx, sessionID, a.leaderPrompt(ctx, leader, serverID))
 	if err != nil {
 		return Result{}, err
@@ -62,11 +82,11 @@ func (a *Agent) lead(ctx context.Context, leader model.Bot, serverID, sessionID 
 		for i := range tr.choice.Options {
 			tr.choice.Options[i].Label = a.redact(ctx, tr.choice.Options[i].Label)
 		}
-		msg, err := a.Store.AddMessage(ctx, model.Message{SessionID: sessionID, Role: "assistant", Content: text, Choice: tr.choice})
+		msg, err := a.Store.AddMessage(ctx, model.Message{SessionID: sessionID, Role: "assistant", Content: text, Choice: tr.choice, Timeline: tr.timeline})
 		if err != nil {
 			return Result{}, err
 		}
-		return Result{SessionID: sessionID, Text: text, Tools: tr.tools, Steps: tr.steps, Choice: tr.choice, MessageID: msg.ID}, nil
+		return Result{SessionID: sessionID, Text: text, Tools: tr.tools, Steps: tr.steps, Timeline: tr.timeline, Choice: tr.choice, MessageID: msg.ID}, nil
 	}
 	if tr.secret != nil {
 		tr.secret.Label = a.redact(ctx, tr.secret.Label)
@@ -74,17 +94,17 @@ func (a *Agent) lead(ctx context.Context, leader model.Bot, serverID, sessionID 
 		if text == "" {
 			text = "需要一项密钥才能继续。请在卡片里输入，明文不会进入对话。"
 		}
-		msg, err := a.Store.AddMessage(ctx, model.Message{SessionID: sessionID, Role: "assistant", Content: text, SecretRequest: tr.secret})
+		msg, err := a.Store.AddMessage(ctx, model.Message{SessionID: sessionID, Role: "assistant", Content: text, SecretRequest: tr.secret, Timeline: tr.timeline})
 		if err != nil {
 			return Result{}, err
 		}
-		return Result{SessionID: sessionID, Text: text, Tools: tr.tools, Steps: tr.steps, SecretRequest: tr.secret, MessageID: msg.ID}, nil
+		return Result{SessionID: sessionID, Text: text, Tools: tr.tools, Steps: tr.steps, Timeline: tr.timeline, SecretRequest: tr.secret, MessageID: msg.ID}, nil
 	}
-	if text == "" {
+	if text == "" && len(tr.timeline) == 0 {
 		text = "没有得到模型回复。"
 	}
-	msg, _ := a.Store.AddMessage(ctx, model.Message{SessionID: sessionID, Role: "assistant", Content: text})
-	return Result{SessionID: sessionID, Text: text, Tools: tr.tools, Steps: tr.steps, MessageID: msg.ID}, nil
+	msg, _ := a.Store.AddMessage(ctx, model.Message{SessionID: sessionID, Role: "assistant", Content: text, Timeline: tr.timeline})
+	return Result{SessionID: sessionID, Text: text, Tools: tr.tools, Steps: tr.steps, Timeline: tr.timeline, MessageID: msg.ID}, nil
 }
 
 func (a *Agent) converse(ctx context.Context, speaker model.Bot, creds credentials, serverID string, messages []map[string]any, canDelegate bool, tr *trace) (string, error) {
@@ -118,6 +138,11 @@ func (a *Agent) converse(ctx context.Context, speaker model.Bot, creds credentia
 		}
 		if len(msg.ToolCalls) == 0 {
 			return joinMediaNote(mediaNote, msg.Content), nil
+		}
+		if tr != nil && !isWorker(ctx) && !hasInteractiveCardCall(msg.ToolCalls) {
+			if say := strings.TrimSpace(a.redact(ctx, msg.Content)); say != "" {
+				tr.emit(Step{Kind: "say", Bot: speaker.Name, Output: say})
+			}
 		}
 		messages = append(messages, map[string]any{"role": "assistant", "content": msg.Content, "tool_calls": msg.ToolCalls})
 		for _, call := range msg.ToolCalls {
@@ -210,10 +235,10 @@ func toolLabel(call toolCall) string {
 
 func (a *Agent) execCall(ctx context.Context, speaker model.Bot, creds credentials, serverID string, call toolCall, canDelegate bool, tr *trace) string {
 	if a.managesAssets(speaker) && call.Function.Name != "manage_module_record" && call.Function.Name != "manage_modules" {
-		return "模块管理 Bot 只负责开关面板模块与维护模块数据，不能执行命令或派工。新建自定义模块请交给二次开发 Bot。"
+		return "模块管理 Bot 只负责开关面板模块与维护模块数据，不能执行命令或派工。新建自定义模块请交给自定义模块 Bot。"
 	}
 	if a.developsModules(speaker) && call.Function.Name != "develop_module" && call.Function.Name != "remember" && call.Function.Name != "recall" && call.Function.Name != "ask_user" {
-		return "二次开发 Bot 只负责开发和维护自定义模块，不能执行服务器命令或派工"
+		return "自定义模块 Bot 只负责开发和维护自定义模块，不能执行服务器命令或派工"
 	}
 	switch call.Function.Name {
 	case "connect_server":
@@ -309,10 +334,10 @@ func (a *Agent) execCall(ctx context.Context, speaker model.Bot, creds credentia
 		return a.manageModulesCall(ctx, speaker, call, tr)
 	case "develop_module":
 		if isWorker(ctx) && !a.developsModules(speaker) {
-			return "普通协作 Bot 不能直接修改二次开发模块"
+			return "普通协作 Bot 不能直接修改自定义模块"
 		}
 		if a.managesAssets(speaker) {
-			return "模块管理 Bot 不能新建二次开发模块，请使用二次开发 Bot"
+			return "模块管理 Bot 不能新建自定义模块，请使用自定义模块 Bot"
 		}
 		return a.developModuleCall(ctx, speaker, call, tr)
 	default:
@@ -398,7 +423,28 @@ func (t *trace) emit(step Step) {
 	step.Task = t.agent.redact(t.ctx, step.Task)
 	step.Command = t.agent.redact(t.ctx, step.Command)
 	step.Output = t.agent.redact(t.ctx, step.Output)
-	t.steps = append(t.steps, step)
+	switch step.Kind {
+	case "say":
+		t.timeline = append(t.timeline, model.TurnItem{Kind: "say", Bot: step.Bot, Text: step.Output})
+	case "approval":
+		if step.Approval != nil {
+			t.timeline = append(t.timeline, model.TurnItem{Kind: "approval", Bot: step.Bot, Approval: step.Approval})
+		}
+	case "delegate":
+		t.steps = append(t.steps, step)
+		t.timeline = append(t.timeline, model.TurnItem{Kind: "delegate", Bot: step.Bot, Target: step.Target, Task: step.Task})
+	default:
+		t.steps = append(t.steps, step)
+		t.timeline = append(t.timeline, model.TurnItem{
+			Kind:     "step",
+			Bot:      step.Bot,
+			Name:     step.Name,
+			Command:  step.Command,
+			ServerID: step.ServerID,
+			OK:       step.OK,
+			Output:   clip(step.Output, 600),
+		})
+	}
 	if t.sink != nil {
 		t.sink(step)
 	}
@@ -435,6 +481,24 @@ func (a *Agent) sessionMessages(ctx context.Context, sessionID, system string) (
 		content, err := a.messageContent(ctx, item)
 		if err != nil {
 			return nil, err
+		}
+		if item.Role == "assistant" && len(item.Timeline) > 0 {
+			if s, ok := content.(string); ok {
+				var says []string
+				for _, ti := range item.Timeline {
+					if ti.Kind == "say" && strings.TrimSpace(ti.Text) != "" {
+						says = append(says, strings.TrimSpace(ti.Text))
+					}
+				}
+				if len(says) > 0 {
+					joined := strings.Join(says, "\n")
+					if strings.TrimSpace(s) == "" {
+						content = joined
+					} else {
+						content = joined + "\n" + s
+					}
+				}
+			}
 		}
 		if item.Choice != nil {
 			if s, ok := content.(string); ok {

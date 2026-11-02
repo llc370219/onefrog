@@ -478,7 +478,12 @@ func (p *Postgres) AddMessage(ctx context.Context, msg model.Message) (model.Mes
 		raw, _ := json.Marshal(msg.SecretRequest)
 		secretReq = string(raw)
 	}
-	_, err := p.pool.Exec(ctx, "INSERT INTO messages (id, session_id, role, content, created_at,attachments,choice,secret_request) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb)", msg.ID, msg.SessionID, msg.Role, msg.Content, msg.CreatedAt, string(attachments), choice, secretReq)
+	var timeline any
+	if len(msg.Timeline) > 0 {
+		raw, _ := json.Marshal(msg.Timeline)
+		timeline = string(raw)
+	}
+	_, err := p.pool.Exec(ctx, "INSERT INTO messages (id, session_id, role, content, created_at,attachments,choice,secret_request,timeline) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb)", msg.ID, msg.SessionID, msg.Role, msg.Content, msg.CreatedAt, string(attachments), choice, secretReq, timeline)
 	return msg, mapErr(err)
 }
 
@@ -531,7 +536,7 @@ func (p *Postgres) MarkSecretProvided(ctx context.Context, sessionID, messageID 
 }
 
 func (p *Postgres) ListMessages(ctx context.Context, sessionID string) ([]model.Message, error) {
-	rows, err := p.pool.Query(ctx, "SELECT id, session_id, role, content, created_at, attachments, choice, secret_request FROM messages WHERE session_id=$1 ORDER BY created_at", sessionID)
+	rows, err := p.pool.Query(ctx, "SELECT id, session_id, role, content, created_at, attachments, choice, secret_request, timeline FROM messages WHERE session_id=$1 ORDER BY created_at", sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -539,8 +544,8 @@ func (p *Postgres) ListMessages(ctx context.Context, sessionID string) ([]model.
 	var out []model.Message
 	for rows.Next() {
 		var msg model.Message
-		var attachments, choice, secretReq []byte
-		if err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &msg.Content, &msg.CreatedAt, &attachments, &choice, &secretReq); err != nil {
+		var attachments, choice, secretReq, timeline []byte
+		if err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &msg.Content, &msg.CreatedAt, &attachments, &choice, &secretReq, &timeline); err != nil {
 			return nil, err
 		}
 		if len(choice) > 0 {
@@ -552,6 +557,11 @@ func (p *Postgres) ListMessages(ctx context.Context, sessionID string) ([]model.
 		if len(secretReq) > 0 {
 			msg.SecretRequest = &model.SecretRequest{}
 			if err := json.Unmarshal(secretReq, msg.SecretRequest); err != nil {
+				return nil, err
+			}
+		}
+		if len(timeline) > 0 {
+			if err := json.Unmarshal(timeline, &msg.Timeline); err != nil {
 				return nil, err
 			}
 		}

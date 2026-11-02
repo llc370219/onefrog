@@ -50,10 +50,11 @@ func Prepare(ctx context.Context, db store.Store, cfg config.Config) error {
 	}
 	for _, item := range module.Catalog() {
 		if old, err := db.GetModule(ctx, item.ID); err == nil {
-			if (old.Type == "" || old.Type == "builtin") && (old.Name != item.Name || old.Description != item.Description) {
+			if (old.Type == "" || old.Type == "builtin") && (old.Name != item.Name || old.Description != item.Description || old.Version != item.Version) {
 				old.Name = item.Name
 				old.Description = item.Description
 				old.Type = "builtin"
+				old.Version = item.Version
 				if _, err := db.SaveModule(ctx, old); err != nil {
 					return err
 				}

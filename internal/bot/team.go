@@ -120,6 +120,9 @@ func (a *Agent) converse(ctx context.Context, speaker model.Bot, creds credentia
 		}
 	} else {
 		spec = toolDefs(canDelegate, a.managesAssets(speaker))
+		if !a.managesAssets(speaker) {
+			spec = append(spec, inspectServicesTool)
+		}
 		if a.managesAssets(speaker) && !isWorker(ctx) {
 			spec = append(spec, askUserTool)
 			if canDelegate {
@@ -281,6 +284,8 @@ func (a *Agent) execCall(ctx context.Context, speaker model.Bot, creds credentia
 			}
 		}
 		return ev.Output + extra
+	case "inspect_services":
+		return a.inspectServices(ctx, speaker, serverID, call, tr)
 	case "run_command":
 		ev := a.runTool(ctx, speaker.ID, serverID, call)
 		if tr != nil {

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -24,6 +25,7 @@ import (
 	"onefrog/internal/preferences"
 	"onefrog/internal/providerlogin"
 	"onefrog/internal/secret"
+	"onefrog/internal/services"
 	"onefrog/internal/store"
 	"onefrog/internal/update"
 	"onefrog/internal/usage"
@@ -31,6 +33,7 @@ import (
 )
 
 type Server struct {
+	Services   *services.Scanner
 	OAuth      *providerlogin.Manager
 	Onboarding *onboarding.Manager
 	PublicURL  string
@@ -94,6 +97,18 @@ func (s *Server) Handler() http.Handler {
 		}
 		s.Onboarding, _ = onboarding.New("", s.Store, s.Box, s.Monitor, executor)
 	}
+	if s.Services == nil {
+		var executor services.Executor
+		var sanitize func(context.Context, string) string
+		if s.Agent != nil {
+			executor = s.Agent.SSH
+			sanitize = s.Agent.RedactServiceOutput
+		}
+		s.Services = services.New(s.Store, s.Box, executor, sanitize)
+	}
+	if s.Agent != nil {
+		s.Agent.Services = s.Services
+	}
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	_ = r.SetTrustedProxies(trustedProxies(s.TrustedProxies))
@@ -114,6 +129,8 @@ func (s *Server) Handler() http.Handler {
 	authed.GET("/auth/me", s.me)
 	authed.PUT("/auth/profile", s.updateProfile)
 	authed.GET("/monitor", s.monitorView)
+	authed.GET("/services", s.serviceViews)
+	authed.POST("/servers/:id/services/scan", s.scanServices)
 	authed.POST("/servers/:id/probe/token", s.probeToken)
 	authed.GET("/servers", s.listServers)
 	authed.GET("/servers/onboarding/defaults", s.onboardingDefaults)

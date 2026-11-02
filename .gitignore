@@ -23,3 +23,7 @@ dist/
 .idea/
 .vscode/
 *.swp
+
+# Python collector test cache
+__pycache__/
+*.pyc

@@ -253,3 +253,29 @@
 .context-secrets{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .context-secret-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:7px;border:1px solid var(--line2);background:#16171b;font-size:11px;color:var(--fg2);transition:border-color .15s,color .15s}
 .context-secret-chip:hover:not(:disabled){border-color:#ffffff40;color:var(--fg);background:#1f2026}
+
+/* Official service inventory */
+.service-glance {display:flex;flex-direction:column;gap:8px}
+.service-host-link {display:flex;align-items:center;gap:12px;padding:13px 16px;text-align:left;background:transparent;border:1px solid var(--line2);border-radius:12px;color:inherit;width:100%;cursor:pointer}
+.service-host-link:hover {background:rgba(255,255,255,.03)}
+.service-host-link>span {flex:1;min-width:0}
+.service-host-link strong,.service-host-link small {display:block;overflow-wrap:anywhere}
+.service-host-link small {color:var(--fg3);margin-top:4px;font-size:12px}
+.services-toolbar {flex-wrap:wrap;gap:12px}
+.services-toolbar>label:not(.search) {display:flex;align-items:center;gap:8px;font-size:12px;color:var(--fg3)}
+.services-toolbar select {background:var(--s1);color:var(--fg);border:1px solid var(--line2);border-radius:9px;padding:8px;max-width:220px}
+.service-readonly {display:flex;align-items:center;gap:7px;font-size:12px;color:var(--fg3);line-height:1.7;margin:12px 0 20px}
+.services-hosts {display:flex;flex-direction:column;gap:20px}
+.service-node .card-heading {gap:16px;flex-wrap:wrap;align-items:center}
+.service-node h2 {display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:6px}
+.service-node-actions {display:flex;gap:8px;flex-wrap:wrap}
+.service-source-status {display:flex;gap:8px 18px;flex-wrap:wrap;padding:12px 0;font-size:12px;line-height:1.7}
+.service-node .notice {margin:10px 0}
+.service-details,.service-ports {max-width:320px;overflow-wrap:anywhere;white-space:normal}
+.service-details strong,.service-details small {display:block}
+@media(max-width:700px) {.services-toolbar>label {flex:1}.services-toolbar .search {width:100%}.service-node-actions {width:100%}.service-readonly {align-items:flex-start}}
+.services-toolbar>label:not(.search) {white-space:nowrap}
+.services-toolbar .search {min-width:220px;flex:1}
+.service-source-status {padding:12px 20px}
+.service-node .notice {margin:10px 20px}
+.service-node .data-table td:last-child .text-btn {white-space:nowrap}

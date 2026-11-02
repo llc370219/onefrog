@@ -23,6 +23,7 @@ import (
 	"onefrog/internal/providerlogin"
 	"onefrog/internal/remote"
 	"onefrog/internal/secret"
+	"onefrog/internal/services"
 	"onefrog/internal/store"
 	"onefrog/internal/usage"
 )
@@ -32,6 +33,7 @@ type Exec interface {
 }
 
 type Agent struct {
+	Services   *services.Scanner
 	OAuth      *providerlogin.Manager
 	Files      *attachment.Manager
 	Usage      *usage.Manager

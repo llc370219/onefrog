@@ -176,7 +176,13 @@ function mapServer(item: ServerJSON): Host {
   };
 }
 
+export type ServiceItem = {kind: 'systemd' | 'docker' | 'ports'; name: string; state: string; detail: string; image?: string; ports?: string};
+export type ServiceSource = {status: 'ok' | 'error' | 'unavailable'; detail: string; truncated: boolean};
+export type ServiceView = {server_id: string; status: 'pending' | 'ok' | 'partial' | 'failed'; collected_at?: string; attempted_at?: string; error?: string; items: ServiceItem[]; sources: Record<string, ServiceSource>};
+
 export const api = {
+ async services():Promise<{nodes:ServiceView[]}>{return call('/api/services');},
+ async scanServices(id:string):Promise<ServiceView>{return call('/api/servers/'+encodeURIComponent(id)+'/services/scan',{method:'POST',body:'{}'});},
  async oauth():Promise<OAuthView>{return call('/api/oauth');},
  async oauthStart(kind:string,consent_version:string,risk_acknowledged:boolean):Promise<OAuthLogin>{return call('/api/oauth/start',{method:'POST',body:JSON.stringify({kind,consent_version,risk_acknowledged})});},
  async oauthStatus(id:string):Promise<OAuthLogin>{return call('/api/oauth/login/'+encodeURIComponent(id));},

@@ -60,7 +60,7 @@ const promptPanel = `
 管理面板（panel）
 - 用户要查看或修改面板时，调用 panel，不要推回设置页或服务器页让用户自己点。
 - action=overview：服务器、模块、Bot、模型是否接上、有没有新版本。
-- action=set_module：id 用 probe、services、alerts、activity、compare、assets、develop，或自定义模块的 id/名称。enabled 为 true 或 false。
+- action=set_module：id 用 probe、services、alerts、compare、assets、develop，或自定义模块的 id/名称。enabled 为 true 或 false。
 - action=set_bot：按 id 或名称启用或停用。不能停用你自己。
 - action=test_server：测试已保存服务器的 SSH。指纹未确认时，把汇报的指纹原样交给 confirm_fingerprint，不要假装登录成功。
 - action=confirm_fingerprint：id 加指纹。审批卡片上有服务器和完整指纹。只有钉住这个指纹并登录成功才保存。已保存的不同指纹不会被覆盖。

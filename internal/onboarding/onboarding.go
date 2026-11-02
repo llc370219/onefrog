@@ -487,7 +487,7 @@ func (m *Manager) run(key string, rec store.ServerRec, r Request) {
 		if !mod.Enabled {
 			continue
 		}
-		if mod.ID == "probe" || mod.ID == "services" || mod.ID == "alerts" || mod.ID == "activity" || mod.ID == "compare" {
+		if mod.ID == "probe" || mod.ID == "services" || mod.ID == "alerts" || mod.ID == "compare" {
 			continue
 		}
 		m.mu.Lock()

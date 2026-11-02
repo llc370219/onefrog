@@ -65,6 +65,17 @@ func Prepare(ctx context.Context, db store.Store, cfg config.Config) error {
 			return err
 		}
 	}
+	// Operation history is accessed through the history page. Retire only its
+	// old built-in dashboard registration; audit records are never touched.
+	if old, err := db.GetModule(ctx, "activity"); err == nil {
+		if old.Type == "" || old.Type == "builtin" {
+			if err := db.DeleteModule(ctx, old.ID); err != nil {
+				return err
+			}
+		}
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
 	if err := modulebuilder.Ensure(
 		func() ([]model.Bot, error) { return db.ListBots(ctx) },
 		func(id string) (model.Bot, error) { return db.GetBot(ctx, id) },

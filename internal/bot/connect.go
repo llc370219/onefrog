@@ -145,6 +145,11 @@ func (a *Agent) connectServer(ctx context.Context, botID string, call toolCall) 
 		ev.Output = "写入服务器页面失败"
 		return ev
 	}
+	if a.Assets != nil {
+		if servers, e := a.Store.ListServers(ctx); e == nil {
+			a.Assets.AutoLink(servers)
+		}
+	}
 	ev.ServerID = rec.ID
 	if existed {
 		ev.Command = fmt.Sprintf("更新接入 %s@%s:%d", user, host, port)

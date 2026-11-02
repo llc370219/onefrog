@@ -230,6 +230,16 @@ func (a *Agent) panelOverview(ctx context.Context, speaker model.Bot) string {
 			"can_apply": st.CanApply, "error": st.Error,
 		}
 	}
+	var assetSummary any
+	if a.Assets != nil {
+		a.Assets.AutoLink(servers)
+		assetSummary = a.Assets.Summary()
+	}
+	secretsList, _ := a.Store.ListSecrets(ctx)
+	secretNames := make([]string, 0, len(secretsList))
+	for _, sc := range secretsList {
+		secretNames = append(secretNames, sc.Name)
+	}
 	raw, _ := json.Marshal(map[string]any{
 		"model_connected": connected,
 		"model":           modelLine,
@@ -237,6 +247,8 @@ func (a *Agent) panelOverview(ctx context.Context, speaker model.Bot) string {
 		"modules":         mods,
 		"bots":            botRows,
 		"chats":           chatRows,
+		"assets":          assetSummary,
+		"secrets":         secretNames,
 		"update":          upd,
 	})
 	return modelLine + "\n" + string(raw)

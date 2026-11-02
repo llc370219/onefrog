@@ -235,3 +235,21 @@
   .secret-input-row .btn{width:100%}
   .grok-card-actions .btn{flex:1}
 }
+
+/* Unified cross-module navigation & linkage styles */
+.metric-btn{text-align:left;transition:border-color .15s,background .15s}
+.metric-btn:hover{border-color:var(--line2);background:#18191d}
+.probe-asset-chip{display:inline-flex;align-items:center;gap:4px;margin-left:auto;padding:2px 8px;border-radius:999px;border:1px solid var(--line2);background:#ffffff06;font-size:10.5px;color:var(--fg2);transition:border-color .15s,color .15s}
+.probe-asset-chip:hover{border-color:#ffffff38;color:var(--fg)}
+.probe-asset-chip.warn{color:var(--warn);border-color:#dbb77a40}
+.probe-asset-chip.danger{color:var(--danger);border-color:#e69b9b40}
+.linked-jump{font-size:12.5px;font-weight:500;color:var(--fg);padding:0}
+.linked-jump:hover{text-decoration:underline;text-underline-offset:3px}
+.history-link,.history-sublink{display:block;padding:0;text-align:left}
+.history-link:hover strong,.history-sublink:hover small{color:var(--fg);text-decoration:underline;text-underline-offset:3px}
+.context-jumps{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
+.team-member-btn{width:100%;text-align:left;border-radius:8px;padding:6px;margin:-4px -6px;transition:background .15s}
+.team-member-btn:hover:not(:disabled){background:#ffffff06}
+.context-secrets{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.context-secret-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:7px;border:1px solid var(--line2);background:#16171b;font-size:11px;color:var(--fg2);transition:border-color .15s,color .15s}
+.context-secret-chip:hover:not(:disabled){border-color:#ffffff40;color:var(--fg);background:#1f2026}

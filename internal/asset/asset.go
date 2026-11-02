@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"onefrog/internal/id"
+	"onefrog/internal/model"
 	"onefrog/internal/secret"
 	"os"
 	"path/filepath"
@@ -191,6 +192,59 @@ func (l *Ledger) Get(idv string) (View, error) {
 		return View{}, errors.New("没有这条资产")
 	}
 	return present(row, l.now()), nil
+}
+
+// AutoLink automatically links unlinked asset records whose IP or Name matches
+// a known server, and backfills missing IP from an already-linked server.
+func (l *Ledger) AutoLink(servers []model.Server) int {
+	if l == nil || len(servers) == 0 {
+		return 0
+	}
+	byID := make(map[string]model.Server, len(servers))
+	for _, s := range servers {
+		byID[s.ID] = s
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	changed := 0
+	for idKey, row := range l.rows {
+		if row.ServerID != "" {
+			if srv, ok := byID[row.ServerID]; ok && strings.TrimSpace(row.IP) == "" && strings.TrimSpace(srv.Host) != "" {
+				row.IP = strings.TrimSpace(srv.Host)
+				l.rows[idKey] = row
+				changed++
+			}
+			continue
+		}
+		var matched *model.Server
+		ambiguous := false
+		ip := strings.TrimSpace(row.IP)
+		nm := strings.TrimSpace(row.Name)
+		for i := range servers {
+			srv := &servers[i]
+			sameIP := ip != "" && strings.EqualFold(ip, strings.TrimSpace(srv.Host))
+			sameName := nm != "" && strings.EqualFold(nm, strings.TrimSpace(srv.Name))
+			if sameIP || sameName {
+				if matched != nil && matched.ID != srv.ID {
+					ambiguous = true
+					break
+				}
+				matched = srv
+			}
+		}
+		if matched != nil && !ambiguous {
+			row.ServerID = matched.ID
+			if ip == "" {
+				row.IP = strings.TrimSpace(matched.Host)
+			}
+			l.rows[idKey] = row
+			changed++
+		}
+	}
+	if changed > 0 {
+		_ = l.saveLocked()
+	}
+	return changed
 }
 
 func (l *Ledger) Create(in Input) (View, error) {

@@ -59,6 +59,13 @@ func TestDevModulesSandboxAndDataAPI(t *testing.T) {
 		t.Fatalf("dataRes: %+v", dataRes)
 	}
 
+	// Verify system_overview returns read-only linked server/module/asset state without secrets.
+	postJSON(t, client, srv.URL+"/api/secrets", map[string]string{"name": "priv", "value": "top-secret-999"}, http.StatusCreated, &map[string]any{})
+	overviewRaw := getOrPostBody(t, client, srv.URL+"/api/dev/modules/"+created.ID+"/data", map[string]any{"action": "system_overview"})
+	if strings.Contains(overviewRaw, "top-secret-999") || !strings.Contains(overviewRaw, "\"servers\"") {
+		t.Fatalf("unexpected system_overview: %s", overviewRaw)
+	}
+
 	// Direct top-level navigation (Sec-Fetch-Dest: document) must be rejected.
 	docReq, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/dev/modules/"+created.ID+"/frame", nil)
 	docReq.Header.Set("Sec-Fetch-Dest", "document")
@@ -84,4 +91,15 @@ func TestDevModulesSandboxAndDataAPI(t *testing.T) {
 	if frameRes.StatusCode != http.StatusOK || !strings.Contains(csp, "sandbox allow-scripts") || !strings.Contains(csp, "connect-src 'none'") || !strings.Contains(string(raw), "window.onefrog") {
 		t.Fatalf("bad frame response status=%d csp=%q", frameRes.StatusCode, csp)
 	}
+}
+
+func getOrPostBody(t *testing.T, client *http.Client, url string, body any) string {
+	t.Helper()
+	res := postRaw(t, client, url, body)
+	defer res.Body.Close()
+	raw, _ := io.ReadAll(res.Body)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status %d: %s", res.StatusCode, raw)
+	}
+	return string(raw)
 }

@@ -175,6 +175,15 @@ th{color:var(--fg3);font-weight:400;font-size:11px}
     updateRecord: function(id, data){ return call("update_record", { id: String(id || ""), data: data || {} }); },
     deleteRecord: function(id){ return call("delete_record", { id: String(id || "") }); },
     clearRecords: function(){ return call("clear_records", {}); },
+    systemOverview: function(){
+      return readyPromise.then(function(){
+        return new Promise(function(resolve, reject){
+          var reqId = "r" + (++seq);
+          pending.set(reqId, { resolve: resolve, reject: reject });
+          post({ __onefrog_req: true, token: token, reqId: reqId, action: "system_overview", payload: {} });
+        });
+      });
+    },
     onChange: function(fn){ if (typeof fn === "function") listeners.add(fn); return function(){ listeners.delete(fn); }; },
     formatTime: formatTime
   };

@@ -22,13 +22,18 @@ func (a *Agent) developsModules(item model.Bot) bool {
 func (a *Agent) developPrompt(ctx context.Context, bot model.Bot) string {
 	var b strings.Builder
 	b.WriteString(promptDevelop)
+	b.WriteString(promptPriorityReply)
 	a.writeOperationsModeOnly(&b, ctx)
 	if !isWorker(ctx) {
 		b.WriteString(promptAskUser)
+		a.writePeers(&b, ctx, bot.ID)
+		a.writePeerMemory(&b, ctx, bot.ID)
 	}
 	writeExtra(&b, bot)
 	b.WriteString(promptMemory)
 	a.writeOwnMemory(&b, ctx, bot)
+	a.writeServers(&b, ctx, "")
+	a.writeAssets(&b, bot)
 	a.writeDevModules(&b)
 	return b.String()
 }

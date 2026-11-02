@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -17,7 +18,19 @@ func (a *Agent) managesAssets(item model.Bot) bool {
 }
 
 func (a *Agent) writeAssets(b *strings.Builder, item model.Bot) {
-	if !a.managesAssets(item) || a.Assets == nil {
+	if a.Assets == nil {
+		return
+	}
+	if !a.managesAssets(item) {
+		sum := a.Assets.Summary()
+		if sum.Count == 0 {
+			return
+		}
+		fmt.Fprintf(b, "\n资产与订阅概览：在册 %d 项，即将到期 %d 项，已到期 %d 项。", sum.Count, sum.Expiring, sum.Expired)
+		if sum.NextName != "" {
+			fmt.Fprintf(b, " 最近到期：%s（%s）。", sum.NextName, sum.NextExpiry)
+		}
+		b.WriteString(" 需要查看明细或登记修改时可直接调用 manage_module_record。\n")
 		return
 	}
 	rows := a.Assets.List()
@@ -26,12 +39,21 @@ func (a *Agent) writeAssets(b *strings.Builder, item model.Bot) {
 		rows = rows[:30]
 	}
 	b.WriteString(modulebuilder.Format(rows))
-	b.WriteString("\n修改资产时调用 manage_module_record。update 只提交变化字段。不要执行服务器命令，也不要派工。\n")
+	b.WriteString("\n修改资产时调用 manage_module_record。update 只提交变化字段。需要服务器命令或自定义模块构建时可调用 ask_agent 交给对应 Bot。\n")
 }
 
 func (a *Agent) manageAsset(call toolCall) string {
+	return a.manageAssetWithContext(context.Background(), "", call)
+}
+
+func (a *Agent) manageAssetWithContext(ctx context.Context, botID string, call toolCall) string {
 	if a.Assets == nil {
 		return "资产模块未就绪"
+	}
+	if a.Store != nil {
+		if servers, err := a.Store.ListServers(ctx); err == nil {
+			a.Assets.AutoLink(servers)
+		}
 	}
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(call.Function.Arguments), &raw); err != nil {
@@ -62,6 +84,14 @@ func (a *Agent) manageAsset(call toolCall) string {
 	}
 	if res.ID == "" {
 		return res.Message
+	}
+	if a.Store != nil {
+		if servers, err := a.Store.ListServers(ctx); err == nil {
+			a.Assets.AutoLink(servers)
+		}
+		if action != "list" {
+			a.notePanel(ctx, botID, "", "资产台账："+res.Message, "success")
+		}
 	}
 	row, err := a.Assets.Get(res.ID)
 	if err != nil {

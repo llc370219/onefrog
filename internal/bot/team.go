@@ -114,11 +114,21 @@ func (a *Agent) converse(ctx context.Context, speaker model.Bot, creds credentia
 		spec = []map[string]any{developModuleTool, rememberTool, recallTool}
 		if !isWorker(ctx) {
 			spec = append(spec, askUserTool)
+			if canDelegate {
+				spec = append(spec, askAgentTool())
+			}
 		}
 	} else {
 		spec = toolDefs(canDelegate, a.managesAssets(speaker))
+		if a.managesAssets(speaker) && !isWorker(ctx) {
+			spec = append(spec, askUserTool)
+			if canDelegate {
+				spec = append(spec, askAgentTool())
+			}
+		}
 		if !a.managesAssets(speaker) && !isWorker(ctx) {
 			spec = append(spec, askUserTool, requestSecretTool, panelTool, installProbeTool, developModuleTool)
+			spec = append(spec, toolDefs(false, true)...)
 		}
 	}
 	mediaNote := ""
@@ -234,11 +244,11 @@ func toolLabel(call toolCall) string {
 }
 
 func (a *Agent) execCall(ctx context.Context, speaker model.Bot, creds credentials, serverID string, call toolCall, canDelegate bool, tr *trace) string {
-	if a.managesAssets(speaker) && call.Function.Name != "manage_module_record" && call.Function.Name != "manage_modules" {
-		return "模块管理 Bot 只负责开关面板模块与维护模块数据，不能执行命令或派工。新建自定义模块请交给自定义模块 Bot。"
+	if a.managesAssets(speaker) && call.Function.Name != "manage_module_record" && call.Function.Name != "manage_modules" && call.Function.Name != "ask_agent" && call.Function.Name != "ask_user" {
+		return "模块管理 Bot 只负责开关面板模块与维护模块数据，不能执行命令；需要服务器操作或新建自定义模块时请用 ask_agent 协同对应 Bot。"
 	}
-	if a.developsModules(speaker) && call.Function.Name != "develop_module" && call.Function.Name != "remember" && call.Function.Name != "recall" && call.Function.Name != "ask_user" {
-		return "自定义模块 Bot 只负责开发和维护自定义模块，不能执行服务器命令或派工"
+	if a.developsModules(speaker) && call.Function.Name != "develop_module" && call.Function.Name != "remember" && call.Function.Name != "recall" && call.Function.Name != "ask_user" && call.Function.Name != "ask_agent" {
+		return "自定义模块 Bot 只负责开发和维护自定义模块，不能执行服务器命令；需要服务器或资产操作时请用 ask_agent 协同对应 Bot。"
 	}
 	switch call.Function.Name {
 	case "connect_server":
@@ -323,13 +333,13 @@ func (a *Agent) execCall(ctx context.Context, speaker model.Bot, creds credentia
 		}
 		return ev.Output
 	case "manage_module_record":
-		if !a.managesAssets(speaker) {
-			return "只有模块管理 Bot 可以修改资产与订阅"
+		if !a.managesAssets(speaker) && isWorker(ctx) {
+			return "普通协作 Bot 不能直接修改资产与订阅"
 		}
-		return a.manageAsset(call)
+		return a.manageAssetWithContext(ctx, speaker.ID, call)
 	case "manage_modules":
-		if !a.managesAssets(speaker) {
-			return "只有模块管理 Bot 可以使用 manage_modules"
+		if !a.managesAssets(speaker) && isWorker(ctx) {
+			return "普通协作 Bot 不能直接使用 manage_modules"
 		}
 		return a.manageModulesCall(ctx, speaker, call, tr)
 	case "develop_module":
@@ -524,6 +534,7 @@ func (a *Agent) leaderPrompt(ctx context.Context, bot model.Bot, serverID string
 	}
 	var b strings.Builder
 	b.WriteString(promptLeader)
+	b.WriteString(promptPriorityReply)
 	a.writeOperations(&b, ctx)
 	b.WriteString(promptAskUser)
 	b.WriteString(promptRequestSecret)
@@ -552,6 +563,7 @@ func (a *Agent) workerPrompt(ctx context.Context, bot model.Bot, serverID string
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, promptWorker, bot.Name, strings.TrimSpace(bot.Description))
+	b.WriteString(promptPriorityReply)
 	a.writeOperations(&b, ctx)
 	b.WriteString(promptConnect)
 	b.WriteString(promptNoPanelSource)
@@ -567,6 +579,12 @@ func (a *Agent) workerPrompt(ctx context.Context, bot model.Bot, serverID string
 func (a *Agent) assetPrompt(ctx context.Context, bot model.Bot) string {
 	var b strings.Builder
 	b.WriteString(promptAsset)
+	b.WriteString(promptPriorityReply)
+	if !isWorker(ctx) {
+		b.WriteString(promptAskUser)
+		a.writePeers(&b, ctx, bot.ID)
+		a.writePeerMemory(&b, ctx, bot.ID)
+	}
 	writeExtra(&b, bot)
 	a.writeAllModulesSummary(&b, ctx)
 	a.writeServers(&b, ctx, "")
@@ -705,21 +723,7 @@ func toolDefs(delegate, manage bool) []map[string]any {
 			},
 		},
 	}
-	ask := map[string]any{
-		"type": "function",
-		"function": map[string]any{
-			"name":        "ask_agent",
-			"description": "把一件具体工作交给另一个 Bot。它会带着自己的记忆完成，并把这次结论记进自己的记忆。",
-			"parameters": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"bot_id": map[string]string{"type": "string", "description": "Bot 的 id 或名称"},
-					"task":   map[string]string{"type": "string", "description": "要它完成的事"},
-				},
-				"required": []string{"bot_id", "task"},
-			},
-		},
-	}
+	ask := askAgentTool()
 	record := map[string]any{
 		"type": "function",
 		"function": map[string]any{
@@ -787,6 +791,24 @@ func toolDefs(delegate, manage bool) []map[string]any {
 		out = append(out, record, manageModulesTool)
 	}
 	return out
+}
+
+func askAgentTool() map[string]any {
+	return map[string]any{
+		"type": "function",
+		"function": map[string]any{
+			"name":        "ask_agent",
+			"description": "把一件具体工作交给另一个 Bot。它会带着自己的记忆完成，并把这次结论记进自己的记忆。",
+			"parameters": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"bot_id": map[string]string{"type": "string", "description": "Bot 的 id 或名称"},
+					"task":   map[string]string{"type": "string", "description": "要它完成的事"},
+				},
+				"required": []string{"bot_id", "task"},
+			},
+		},
+	}
 }
 
 func normalizeCall(raw json.RawMessage) (toolCall, error) {

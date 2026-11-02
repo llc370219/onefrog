@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { ArrowUp, Blocks, Bot, Code2, HardDrive, LoaderCircle, LockKeyhole, Plus, Server, ShieldCheck, Sparkles, Paperclip, Wallet } from 'lucide-react';
-import type { ApprovalDecision, BotRow, ChatLine, Host, Attachment, SettingsState } from '../api';
+import { ArrowUp, Blocks, Bot, Code2, HardDrive, History, KeyRound, LoaderCircle, LockKeyhole, Plus, Server, ShieldCheck, Sparkles, Paperclip, Wallet } from 'lucide-react';
+import type { ApprovalDecision, BotRow, ChatLine, Host, Attachment, SecretRow, SettingsState } from '../api';
 import ChatControls, { type ChatControlState } from '../components/ChatControls';
 import Attachments from '../components/Attachments';
 import TurnStream from '../components/TurnStream';
@@ -19,6 +19,7 @@ export default function Chat({
   activeBot,
   hosts,
   bots,
+  secrets = [],
   selected,
   onSelect,
   draft,
@@ -31,6 +32,9 @@ export default function Chat({
   onAnswer,
   onProvide,
   onDecideApproval,
+  onGoServer,
+  onGoAsset,
+  onGoHistory,
 }: {
   onAddServer: () => void;
   controls: ChatControlState;
@@ -44,6 +48,7 @@ export default function Chat({
   activeBot?: BotRow;
   hosts: Host[];
   bots: BotRow[];
+  secrets?: SecretRow[];
   selected: string;
   onSelect: (id: string) => void;
   draft: string;
@@ -56,6 +61,9 @@ export default function Chat({
   onAnswer: (line: ChatLine, values: string[], custom: string) => void;
   onProvide: (line: ChatLine, value: string) => void;
   onDecideApproval: (id: string, dec: ApprovalDecision) => void;
+  onGoServer?: () => void;
+  onGoAsset?: (host: Host) => void;
+  onGoHistory?: (hostName: string) => void;
 }) {
   const end = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -253,6 +261,11 @@ export default function Chat({
               <small className="mono">{current.host}</small>
               <Status status={current.status}/>
               <div><span>角色</span><span>{current.role || '通用服务器'}</span></div>
+              <div className="context-jumps">
+                {onGoServer && <button type="button" className="text-btn" onClick={onGoServer}><Server size={12}/>探针</button>}
+                {onGoAsset && <button type="button" className="text-btn" onClick={() => onGoAsset(current)}><Wallet size={12}/>资费</button>}
+                {onGoHistory && <button type="button" className="text-btn" onClick={() => onGoHistory(current.name)}><History size={12}/>记录</button>}
+              </div>
             </div>
           ) : (
             <p className="muted">未指定目标，可直接提问。</p>
@@ -261,15 +274,34 @@ export default function Chat({
         <div className="context-section">
           <h3>参与 Bot <span className="tag">{bots.filter(b => b.enabled && !controls.excluded.includes(b.id)).length}</span></h3>
           {bots.filter(b => b.enabled && !controls.excluded.includes(b.id)).map(b => (
-            <div className="team-member" key={b.id}>
+            <button type="button" className="team-member team-member-btn" key={b.id} onClick={() => onBot(b.id)} disabled={sending} title={`切换到 ${b.name}`}>
               <span className="small-avatar"><Bot size={16}/></span>
               <div>
                 <strong>{b.name}<span>{b.id === activeBot?.id ? '主控' : '协作'}</span></strong>
                 <p>{b.description || '按主控分派完成任务'}</p>
               </div>
-            </div>
+            </button>
           ))}
         </div>
+        {secrets.length > 0 && (
+          <div className="context-section">
+            <h3>可用密钥引用 <span className="tag">{secrets.length}</span></h3>
+            <div className="context-secrets">
+              {secrets.slice(0, 8).map(s => (
+                <button
+                  type="button"
+                  key={s.id}
+                  className="context-secret-chip mono"
+                  disabled={sending}
+                  title="点击插入引用到输入框（不会暴露明文）"
+                  onClick={() => onDraft((draft ? draft + ' ' : '') + '{{secret:' + s.name + '}}')}
+                >
+                  <KeyRound size={11}/>{s.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="context-section safety-note">
           <ShieldCheck size={18}/>
           <h3>凭据在执行端解密</h3>

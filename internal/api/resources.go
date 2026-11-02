@@ -55,6 +55,11 @@ func (s *Server) createServer(c *gin.Context) {
 	if mapStore(c, err) {
 		return
 	}
+	if s.Assets != nil {
+		if servers, e := s.Store.ListServers(c.Request.Context()); e == nil {
+			s.Assets.AutoLink(servers)
+		}
+	}
 	c.JSON(http.StatusCreated, item)
 }
 

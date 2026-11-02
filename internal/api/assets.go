@@ -13,6 +13,9 @@ func (s *Server) listAssets(c *gin.Context) {
 		fail(c, http.StatusServiceUnavailable, "资产模块未就绪")
 		return
 	}
+	if servers, err := s.Store.ListServers(c.Request.Context()); err == nil {
+		s.Assets.AutoLink(servers)
+	}
 	records := s.Assets.List()
 	if records == nil {
 		records = []asset.View{}
@@ -34,6 +37,13 @@ func (s *Server) createAsset(c *gin.Context) {
 	if err != nil {
 		fail(c, http.StatusBadRequest, err.Error())
 		return
+	}
+	if servers, e := s.Store.ListServers(c.Request.Context()); e == nil {
+		if s.Assets.AutoLink(servers) > 0 {
+			if refreshed, ge := s.Assets.Get(row.ID); ge == nil {
+				row = refreshed
+			}
+		}
 	}
 	c.JSON(http.StatusCreated, row)
 }

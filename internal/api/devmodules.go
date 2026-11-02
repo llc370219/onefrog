@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"onefrog/internal/devmodule"
@@ -226,6 +227,9 @@ func (s *Server) devModuleData(c *gin.Context) {
 		res, err = s.DevModules.DeleteRecord(modID, req.ID)
 	case "clear_records":
 		res, err = s.DevModules.ClearRecords(modID)
+	case "system_overview":
+		c.JSON(http.StatusOK, s.sanitizedSystemOverview(c))
+		return
 	default:
 		fail(c, http.StatusBadRequest, "不支持的数据动作")
 		return
@@ -235,6 +239,55 @@ func (s *Server) devModuleData(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, res)
+}
+
+func (s *Server) sanitizedSystemOverview(c *gin.Context) gin.H {
+	ctx := c.Request.Context()
+	servers, _ := s.Store.ListServers(ctx)
+	if s.Assets != nil {
+		s.Assets.AutoLink(servers)
+	}
+	var probeByServer map[string]gin.H
+	if s.Monitor != nil {
+		probeByServer = map[string]gin.H{}
+		ids := make([]string, 0, len(servers))
+		for _, srv := range servers {
+			ids = append(ids, srv.ID)
+		}
+		for _, n := range s.Monitor.Views(ids, time.Now()) {
+			item := gin.H{"status": n.Status, "enrolled": n.Enrolled}
+			if n.Latest != nil {
+				item["cpu_percent"] = n.Latest.CPUPercent
+				if n.Latest.MemoryTotal > 0 {
+					item["memory_percent"] = float64(n.Latest.MemoryUsed) / float64(n.Latest.MemoryTotal) * 100
+				}
+				if n.Latest.DiskTotal > 0 {
+					item["disk_percent"] = float64(n.Latest.DiskUsed) / float64(n.Latest.DiskTotal) * 100
+				}
+			}
+			probeByServer[n.ServerID] = item
+		}
+	}
+	srvOut := make([]gin.H, 0, len(servers))
+	for _, srv := range servers {
+		row := gin.H{"id": srv.ID, "name": srv.Name, "status": srv.Status, "role": srv.Role}
+		if p, ok := probeByServer[srv.ID]; ok {
+			row["probe"] = p
+		}
+		srvOut = append(srvOut, row)
+	}
+	var assetSum any
+	if s.Assets != nil {
+		assetSum = s.Assets.Summary()
+	}
+	mods, _ := s.Store.ListModules(ctx)
+	return gin.H{
+		"state":   map[string]any{},
+		"records": []any{},
+		"servers": srvOut,
+		"modules": mods,
+		"assets":  assetSum,
+	}
 }
 
 func (s *Server) devModuleFrame(c *gin.Context) {

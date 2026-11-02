@@ -377,6 +377,17 @@ func (p *Postgres) SetModuleEnabled(ctx context.Context, idv string, enabled boo
 	return p.GetModule(ctx, idv)
 }
 
+func (p *Postgres) DeleteModule(ctx context.Context, idv string) error {
+	tag, err := p.pool.Exec(ctx, "DELETE FROM modules WHERE id=$1", idv)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (p *Postgres) ListHistory(ctx context.Context, limit int) ([]model.History, error) {
 	if limit <= 0 {
 		limit = 100

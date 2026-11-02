@@ -13,7 +13,7 @@ import (
 )
 
 func (a *Agent) managesAssets(item model.Bot) bool {
-	return item.ID == modulebuilder.BotID || item.Name == "模块构建"
+	return item.ID == modulebuilder.BotID || item.Name == "模块管理" || item.Name == modulebuilder.LegacyName
 }
 
 func (a *Agent) writeAssets(b *strings.Builder, item model.Bot) {

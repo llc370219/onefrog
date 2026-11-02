@@ -16,6 +16,7 @@ import (
 	"onefrog/internal/asset"
 	"onefrog/internal/attachment"
 	"onefrog/internal/bot"
+	"onefrog/internal/devmodule"
 	"onefrog/internal/id"
 	"onefrog/internal/model"
 	"onefrog/internal/monitor"
@@ -43,6 +44,7 @@ type Server struct {
 	Settings   *preferences.Manager
 	Monitor    *monitor.Manager
 	Assets     *asset.Ledger
+	DevModules *devmodule.Book
 	// Updates checks GitHub for newer releases; nil reports a dev build.
 	Updates *update.Checker
 	// TrustedProxies is OF_TRUSTED_PROXIES (comma separated CIDRs/IPs, or "none").
@@ -69,11 +71,15 @@ func (s *Server) Handler() http.Handler {
 	if s.Assets == nil {
 		s.Assets, _ = asset.New("", s.Box)
 	}
+	if s.DevModules == nil {
+		s.DevModules, _ = devmodule.New("", s.Box)
+	}
 	if s.Agent != nil {
 		s.Agent.Settings = s.Settings
 		s.Agent.Files = s.Files
 		s.Agent.Usage = s.Usage
 		s.Agent.Assets = s.Assets
+		s.Agent.DevModules = s.DevModules
 	}
 	if s.OAuth == nil {
 		s.OAuth, _ = providerlogin.New("", s.Box)
@@ -158,6 +164,13 @@ func (s *Server) Handler() http.Handler {
 	authed.POST("/assets", s.createAsset)
 	authed.PUT("/assets/:id", s.updateAsset)
 	authed.DELETE("/assets/:id", s.deleteAsset)
+	authed.GET("/dev/modules", s.listDevModules)
+	authed.POST("/dev/modules", s.createDevModule)
+	authed.GET("/dev/modules/:id", s.getDevModule)
+	authed.PUT("/dev/modules/:id", s.updateDevModule)
+	authed.DELETE("/dev/modules/:id", s.deleteDevModule)
+	authed.POST("/dev/modules/:id/data", s.devModuleData)
+	authed.GET("/dev/modules/:id/frame", s.devModuleFrame)
 	authed.GET("/history", s.listHistory)
 	authed.POST("/history/:id/rollback", s.rollback)
 	authed.POST("/chat", s.chat)

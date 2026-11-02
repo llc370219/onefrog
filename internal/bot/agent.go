@@ -15,7 +15,9 @@ import (
 	"onefrog/internal/asset"
 	"onefrog/internal/attachment"
 	"onefrog/internal/audit"
+	"onefrog/internal/devmodule"
 	"onefrog/internal/model"
+	"onefrog/internal/modulebuilder"
 	"onefrog/internal/onboarding"
 	"onefrog/internal/preferences"
 	"onefrog/internal/providerlogin"
@@ -30,13 +32,14 @@ type Exec interface {
 }
 
 type Agent struct {
-	OAuth  *providerlogin.Manager
-	Files  *attachment.Manager
-	Usage  *usage.Manager
-	Assets *asset.Ledger
-	Store  store.Store
-	Box    *secret.Box
-	SSH    Exec
+	OAuth      *providerlogin.Manager
+	Files      *attachment.Manager
+	Usage      *usage.Manager
+	Assets     *asset.Ledger
+	DevModules *devmodule.Book
+	Store      store.Store
+	Box        *secret.Box
+	SSH        Exec
 	// Onboarding installs the read-only probe. PublicURL is the panel address
 	// a node can reach; install_probe uses it when the model omits report_base.
 	Onboarding *onboarding.Manager
@@ -199,6 +202,16 @@ func (a *Agent) pickBot(ctx context.Context, botID string) (model.Bot, error) {
 	}
 	if len(bots) == 0 {
 		return model.Bot{}, errors.New("还没有 Bot")
+	}
+	for _, b := range bots {
+		if b.ID == "main" && a.allowedBot(ctx, b.ID) {
+			return b, nil
+		}
+	}
+	for _, b := range bots {
+		if b.ID != modulebuilder.BotID && b.ID != devmodule.BotID && a.allowedBot(ctx, b.ID) {
+			return b, nil
+		}
 	}
 	for _, b := range bots {
 		if a.allowedBot(ctx, b.ID) {

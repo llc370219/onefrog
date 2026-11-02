@@ -89,9 +89,17 @@ func (a *Agent) lead(ctx context.Context, leader model.Bot, serverID, sessionID 
 
 func (a *Agent) converse(ctx context.Context, speaker model.Bot, creds credentials, serverID string, messages []map[string]any, canDelegate bool, tr *trace) (string, error) {
 	limit := a.execution().MaxSteps
-	spec := toolDefs(canDelegate, a.managesAssets(speaker))
-	if !a.managesAssets(speaker) && !isWorker(ctx) {
-		spec = append(spec, askUserTool, requestSecretTool, panelTool, installProbeTool)
+	var spec []map[string]any
+	if a.developsModules(speaker) {
+		spec = []map[string]any{developModuleTool, rememberTool, recallTool}
+		if !isWorker(ctx) {
+			spec = append(spec, askUserTool)
+		}
+	} else {
+		spec = toolDefs(canDelegate, a.managesAssets(speaker))
+		if !a.managesAssets(speaker) && !isWorker(ctx) {
+			spec = append(spec, askUserTool, requestSecretTool, panelTool, installProbeTool, developModuleTool)
+		}
 	}
 	mediaNote := ""
 	for i := 0; i < limit; i++ {
@@ -201,8 +209,11 @@ func toolLabel(call toolCall) string {
 }
 
 func (a *Agent) execCall(ctx context.Context, speaker model.Bot, creds credentials, serverID string, call toolCall, canDelegate bool, tr *trace) string {
-	if a.managesAssets(speaker) && call.Function.Name != "manage_module_record" {
-		return "模块构建 Bot 只能登记资产与订阅，不能执行命令或派工"
+	if a.managesAssets(speaker) && call.Function.Name != "manage_module_record" && call.Function.Name != "manage_modules" {
+		return "模块管理 Bot 只负责开关面板模块与维护模块数据，不能执行命令或派工。新建自定义模块请交给二次开发 Bot。"
+	}
+	if a.developsModules(speaker) && call.Function.Name != "develop_module" && call.Function.Name != "remember" && call.Function.Name != "recall" && call.Function.Name != "ask_user" {
+		return "二次开发 Bot 只负责开发和维护自定义模块，不能执行服务器命令或派工"
 	}
 	switch call.Function.Name {
 	case "connect_server":
@@ -288,9 +299,22 @@ func (a *Agent) execCall(ctx context.Context, speaker model.Bot, creds credentia
 		return ev.Output
 	case "manage_module_record":
 		if !a.managesAssets(speaker) {
-			return "只有模块构建 Bot 可以修改资产与订阅"
+			return "只有模块管理 Bot 可以修改资产与订阅"
 		}
 		return a.manageAsset(call)
+	case "manage_modules":
+		if !a.managesAssets(speaker) {
+			return "只有模块管理 Bot 可以使用 manage_modules"
+		}
+		return a.manageModulesCall(ctx, speaker, call, tr)
+	case "develop_module":
+		if isWorker(ctx) && !a.developsModules(speaker) {
+			return "普通协作 Bot 不能直接修改二次开发模块"
+		}
+		if a.managesAssets(speaker) {
+			return "模块管理 Bot 不能新建二次开发模块，请使用二次开发 Bot"
+		}
+		return a.developModuleCall(ctx, speaker, call, tr)
 	default:
 		return "未知工具"
 	}
@@ -431,6 +455,9 @@ func (a *Agent) leaderPrompt(ctx context.Context, bot model.Bot, serverID string
 	if a.managesAssets(bot) {
 		return a.assetPrompt(ctx, bot)
 	}
+	if a.developsModules(bot) {
+		return a.developPrompt(ctx, bot)
+	}
 	var b strings.Builder
 	b.WriteString(promptLeader)
 	a.writeOperations(&b, ctx)
@@ -438,6 +465,7 @@ func (a *Agent) leaderPrompt(ctx context.Context, bot model.Bot, serverID string
 	b.WriteString(promptRequestSecret)
 	b.WriteString(promptConnect)
 	b.WriteString(promptPanel)
+	b.WriteString(promptDevelopLeader)
 	b.WriteString(promptProbe)
 	writeExtra(&b, bot)
 	a.writePeers(&b, ctx, bot.ID)
@@ -447,12 +475,16 @@ func (a *Agent) leaderPrompt(ctx context.Context, bot model.Bot, serverID string
 	a.writeSecrets(&b, ctx)
 	a.writeServers(&b, ctx, serverID)
 	a.writeAssets(&b, bot)
+	a.writeDevModules(&b)
 	return b.String()
 }
 
 func (a *Agent) workerPrompt(ctx context.Context, bot model.Bot, serverID string) string {
 	if a.managesAssets(bot) {
 		return a.assetPrompt(ctx, bot)
+	}
+	if a.developsModules(bot) {
+		return a.developPrompt(ctx, bot)
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, promptWorker, bot.Name, strings.TrimSpace(bot.Description))
@@ -471,6 +503,8 @@ func (a *Agent) workerPrompt(ctx context.Context, bot model.Bot, serverID string
 func (a *Agent) assetPrompt(ctx context.Context, bot model.Bot) string {
 	var b strings.Builder
 	b.WriteString(promptAsset)
+	writeExtra(&b, bot)
+	a.writeAllModulesSummary(&b, ctx)
 	a.writeServers(&b, ctx, "")
 	a.writeAssets(&b, bot)
 	return b.String()
@@ -686,7 +720,7 @@ func toolDefs(delegate, manage bool) []map[string]any {
 			out = append(out, ask)
 		}
 	} else {
-		out = append(out, record)
+		out = append(out, record, manageModulesTool)
 	}
 	return out
 }

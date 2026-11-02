@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log"
 	"onefrog/internal/config"
+	"onefrog/internal/devmodule"
 	"onefrog/internal/model"
 	"onefrog/internal/module"
 	"onefrog/internal/modulebuilder"
@@ -59,6 +60,14 @@ func Prepare(ctx context.Context, db store.Store, cfg config.Config) error {
 		func() ([]model.Bot, error) { return db.ListBots(ctx) },
 		func(id string) (model.Bot, error) { return db.GetBot(ctx, id) },
 		func(item model.Bot) (model.Bot, error) { return db.CreateBot(ctx, item) },
+		func(item model.Bot) (model.Bot, error) { return db.UpdateBot(ctx, item) },
+	); err != nil {
+		return err
+	}
+	if err := devmodule.Ensure(
+		func() ([]model.Bot, error) { return db.ListBots(ctx) },
+		func(id string) (model.Bot, error) { return db.GetBot(ctx, id) },
+		func(item model.Bot) (model.Bot, error) { return db.CreateBot(ctx, item) },
 	); err != nil {
 		return err
 	}
@@ -106,6 +115,15 @@ func AttachModel(ctx context.Context, db store.Store, box *secret.Box, cfg confi
 		return err
 	}
 	bot := bots[0]
+	for _, cand := range bots {
+		if cand.ID == "main" {
+			bot = cand
+			break
+		}
+		if cand.ID != modulebuilder.BotID && cand.ID != devmodule.BotID && bot.ID != "main" {
+			bot = cand
+		}
+	}
 	bot.ModelProvider = "openai"
 	bot.ModelName = cfg.ModelName
 	bot.BaseURL = cfg.ModelBaseURL

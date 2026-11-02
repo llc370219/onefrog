@@ -77,6 +77,7 @@ type Store interface {
 	GetModule(ctx context.Context, id string) (model.Module, error)
 	SaveModule(ctx context.Context, item model.Module) (model.Module, error)
 	SetModuleEnabled(ctx context.Context, id string, enabled bool) (model.Module, error)
+	DeleteModule(ctx context.Context, id string) error
 
 	ListHistory(ctx context.Context, limit int) ([]model.History, error)
 	GetHistory(ctx context.Context, id string) (HistoryRec, error)

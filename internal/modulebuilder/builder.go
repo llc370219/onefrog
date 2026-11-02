@@ -12,15 +12,30 @@ const BotID = "module-builder"
 func Bot() model.Bot {
 	return model.Bot{
 		ID:          BotID,
-		Name:        "模块构建",
-		Description: "登记和维护模块数据，当前负责资产与订阅",
-		SystemPrompt: "你是模块构建 Bot。用户要记录服务器资费、到期、提供商或剩余价值时，调用 manage_module_record，不要编造未保存的数据。" +
-			"金额用分，日期用 YYYY-MM-DD。先 list 再改已有记录。不要执行服务器命令，也不要把任务再派给其他 Bot。",
+		Name:        "模块管理",
+		Description: "开关面板模块，维护资产与订阅及各模块数据",
+		SystemPrompt: "你是模块管理 Bot。可以调用 manage_modules 查看或开关面板上的内置模块与二次开发模块、读写二次开发模块的记录；" +
+			"也可以调用 manage_module_record 维护资产与订阅（先 list 再改，金额用 amount_yuan，日期用 YYYY-MM-DD）。新建自定义交互模块请引导到二次开发模块或二次开发 Bot。",
 	}
 }
 
-func Ensure(list func() ([]model.Bot, error), get func(string) (model.Bot, error), create func(model.Bot) (model.Bot, error)) error {
-	if _, err := get(BotID); err == nil {
+// LegacyName is the name used before v0.1.18; existing installs are renamed.
+const LegacyName = "模块构建"
+
+func Ensure(list func() ([]model.Bot, error), get func(string) (model.Bot, error), create func(model.Bot) (model.Bot, error), update func(model.Bot) (model.Bot, error)) error {
+	if item, err := get(BotID); err == nil {
+		if (item.Name == LegacyName || strings.Contains(item.Description, "当前负责资产与订阅")) && update != nil {
+			stock := Bot()
+			item.Name = stock.Name
+			if item.Description == "" || strings.Contains(item.Description, "当前负责资产与订阅") {
+				item.Description = stock.Description
+			}
+			if strings.Contains(item.SystemPrompt, LegacyName) || strings.Contains(item.SystemPrompt, "金额用分") {
+				item.SystemPrompt = stock.SystemPrompt
+			}
+			_, err = update(item)
+			return err
+		}
 		return nil
 	}
 	bots, err := list()
@@ -28,7 +43,19 @@ func Ensure(list func() ([]model.Bot, error), get func(string) (model.Bot, error
 		return err
 	}
 	for _, item := range bots {
-		if item.ID == BotID || item.Name == "模块构建" {
+		if item.Name == LegacyName && update != nil {
+			stock := Bot()
+			item.Name = stock.Name
+			if strings.Contains(item.Description, "当前负责资产与订阅") {
+				item.Description = stock.Description
+			}
+			if strings.Contains(item.SystemPrompt, LegacyName) {
+				item.SystemPrompt = strings.ReplaceAll(item.SystemPrompt, LegacyName, stock.Name)
+			}
+			_, err = update(item)
+			return err
+		}
+		if item.ID == BotID || item.Name == "模块管理" {
 			return nil
 		}
 	}

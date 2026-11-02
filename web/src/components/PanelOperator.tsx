@@ -21,7 +21,7 @@ export type PanelJob = {
 
 export function modelReady(settings: SettingsState | null, bots: BotRow[] = []) {
   if (!settings) return { ok: false, label: "正在读取模型配置" };
-  const lead = bots.find((item) => item.id === "main" && item.enabled) || bots.find((item) => item.enabled && item.id !== "module-builder");
+  const lead = bots.find((item) => item.id === "main" && item.enabled) || bots.find((item) => item.enabled && item.id !== "module-builder" && item.id !== "develop");
   const routed = lead?.effective_route;
   const route = routed?.provider_id && routed.model ? routed : settings.default;
   const provider = settings.providers.find((item) => item.id === route?.provider_id && item.enabled);

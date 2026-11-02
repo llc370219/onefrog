@@ -21,6 +21,7 @@ import type { ChatControlState } from './components/ChatControls';
 import Servers from "./pages/Servers";
 import { HistoryPage, Modules, Secrets } from './pages/Resources';
 import Assets from './pages/Assets';
+import Develop, { CustomModulePage } from './pages/Develop';
 
 type View = 'panel' | 'chat' | 'servers' | 'agents' | 'secrets' | 'modules' | 'history';
 type Dialog = 'account' | 'settings' | 'modules' | 'server' | 'secret' | 'rotate' | 'agent' | 'rollback' | null;
@@ -28,8 +29,8 @@ const navigation = [{id:'panel',label:'面板',icon:LayoutDashboard}, {id:'chat'
 const emptyForm = {name:'',host:'',role:'',value:'',port:'22',username:'root',auth_type:'password',description:'',system_prompt:''};
 const message = (err: unknown) => err instanceof Error ? err.message : '操作失败，请重试';
 
-/** The chat opens on the lead bot (主控) by default, never on the asset-only module builder. */
-const defaultBot=(list:BotRow[])=>(list.find(x=>x.id==='main'&&x.enabled)||list.find(x=>x.enabled&&x.id!=='module-builder')||list.find(x=>x.enabled))?.id||'';
+/** The chat opens on the lead bot (主控) by default, never on specialist module bots. */
+const defaultBot=(list:BotRow[])=>(list.find(x=>x.id==='main'&&x.enabled)||list.find(x=>x.enabled&&x.id!=='module-builder'&&x.id!=='develop')||list.find(x=>x.enabled))?.id||'';
 
 export default function App() {
   const [authed,setAuthed] = useState<boolean | null>(null);
@@ -252,13 +253,15 @@ export default function App() {
     <main className="app-main" inert={Boolean(dialog) || mobileNav}><UpdateBanner status={updateStatus}/><div className="topbar"><IconButton label="展开导航" className="mobile-menu" onClick={() => setMobileNav(true)}><Menu size={20}/></IconButton><span className="breadcrumb">OneFrog<ChevronRight size={13}/><strong>{currentLabel}</strong></span><div className="topbar-right"><span className="sync-time">{updated ? `更新于 ${updated}` : '尚未同步'}</span><IconButton label="刷新数据" onClick={load} disabled={loading}><RefreshCw size={15} className={loading ? 'spin' : ''}/></IconButton><span className="topbar-divider"/><span className="connection"><span className={`live-dot ${pageError ? 'warn' : ''}`}/>{pageError ? '同步异常' : 'API 已连接'}</span></div></div>
     {pageError && <div className="global-error"><Notice error>{pageError}</Notice><IconButton label="关闭错误提示" onClick={() => setPageError('')}><X size={15}/></IconButton></div>}
     <div className={`view-container ${view === 'chat' ? 'chat-view' : ''}`}>
-    {view === 'panel' && <Dashboard hosts={hosts} mods={mods} history={history} bots={bots} settings={chatConfig} job={panelJob} sending={sending} onSelect={setSelected} onRun={runPanel} onAnswer={answerPanel} onProvide={answerPanelSecret} onModules={() => open('modules')} onSettings={openSettings} onServers={() => go('servers')} onAssets={() => {setActiveModule('assets'); go('modules');}}/>}
+    {view === 'panel' && <Dashboard hosts={hosts} mods={mods} history={history} bots={bots} settings={chatConfig} job={panelJob} sending={sending} onSelect={setSelected} onRun={runPanel} onAnswer={answerPanel} onProvide={answerPanelSecret} onModules={() => open('modules')} onSettings={openSettings} onServers={() => go('servers')} onAssets={() => {setActiveModule('assets'); go('modules');}} onOpenModule={id => {setActiveModule(id); go('modules');}}/>}
     {view === 'chat' && <Chat onAddServer={()=>open('server')} controls={controls} onControls={setControls} settings={chatConfig} onBot={chooseBot} attachments={attachments} onFiles={uploadFiles} onRemoveFile={id=>setAttachments(cur=>cur.filter(f=>f.id!==id))} uploading={uploading} activeBot={bots.find(b=>b.id===activeBot)} hosts={hosts} bots={bots} selected={selected} onSelect={setSelected} draft={draft} onDraft={setDraft} lines={lines} onSend={send} sending={sending||loading} onNew={()=>newChat()} onNotice={setNotice} onAnswer={answerChoice} onProvide={answerSecret}/>}
     {view === 'servers' && <Servers addedServer={addedServer} hosts={hosts} selected={selected} onSelect={setSelected} onAdd={() => open('server')} onTest={testServer} testing={testing} onChat={() => openChat()} onChanged={load}/>}
     {view === 'agents' && <Bots bots={bots} onAdd={()=>open('agent')} onChanged={load} onChat={id=>{newChat(id);openChat();}}/>}
     {view === 'secrets' && <Secrets secrets={secrets} onAdd={() => open('secret')} onRotate={openRotate} onDelete={removeSecret}/>}
-    {view === 'modules' && activeModule === 'assets' && <Assets hosts={hosts} onAsk={text => {const bot = bots.find(b => (b.id === 'module-builder' || b.name === '模块构建') && b.enabled); if (bot) newChat(bot.id); go('chat'); setDraft(text);}}/>}
-    {view === 'modules' && activeModule !== 'assets' && <Modules mods={activeModule?mods.filter(m=>m.id===activeModule):mods} onToggle={toggle} pending={switching} onOpen={id => setActiveModule(id)}/>}
+    {view === 'modules' && activeModule === 'assets' && <Assets hosts={hosts} onAsk={text => {const bot = bots.find(b => (b.id === 'module-builder' || b.name === '模块管理' || b.name === '模块构建') && b.enabled); if (bot) newChat(bot.id); go('chat'); setDraft(text);}}/>}
+    {view === 'modules' && activeModule === 'develop' && <Develop bots={bots} settings={chatConfig} onOpenChat={text => {const bot = bots.find(b => (b.id === 'develop' || b.name === '二次开发') && b.enabled); if (bot) newChat(bot.id); go('chat'); setDraft(text);}} onOpenSettings={openSettings} onOpenModule={id => setActiveModule(id)} onChanged={load}/>}
+    {view === 'modules' && activeModule !== '' && activeModule !== 'assets' && activeModule !== 'develop' && mods.find(m => m.id === activeModule)?.type === 'custom' && <CustomModulePage mod={mods.find(m => m.id === activeModule)!} onBack={() => setActiveModule('develop')} onAskDevelop={text => {const bot = bots.find(b => (b.id === 'develop' || b.name === '二次开发') && b.enabled); if (bot) newChat(bot.id); go('chat'); setDraft(text);}} onChanged={load}/>}
+    {view === 'modules' && activeModule !== 'assets' && activeModule !== 'develop' && mods.find(m => m.id === activeModule)?.type !== 'custom' && <Modules mods={activeModule?mods.filter(m=>m.id===activeModule):mods} onToggle={toggle} pending={switching} onOpen={id => setActiveModule(id)}/>}
     {view === 'history' && <HistoryPage history={history} onUndo={id => {setRollback(id);open('rollback');}}/>}
     </div></main>
     {notice && <div className="toast" role="status"><Check size={16}/>{notice}<IconButton label="关闭通知" onClick={() => setNotice('')}><X size={14}/></IconButton></div>}

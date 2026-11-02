@@ -104,7 +104,7 @@ export default function Assets({ hosts, onAsk }: { hosts: Host[]; onAsk: (text: 
     ['折合月费', moneyMap(summary?.monthly_cents), '年付按 12 期，季付按 3 期'],
     ['剩余价值', moneyMap(summary?.residual_cents), '按剩余天数折算未消耗金额'],
   ];
-  return <div className="page assets-page"><PageHeading eyebrow="MODULE / ASSETS" title="资产与订阅" note="记录服务器资费、提供商和到期时间，并按剩余天数计算剩余价值。" actions={<><Button onClick={() => onAsk('请列出资产与订阅里即将到期的服务器，并说明剩余价值和是否自动续费。')}><Bot size={15}/>交给模块构建</Button><Button variant="primary" onClick={() => edit()}><Plus size={15}/>登记资产</Button></>}/>
+  return <div className="page assets-page"><PageHeading eyebrow="MODULE / ASSETS" title="资产与订阅" note="记录服务器资费、提供商和到期时间，并按剩余天数计算剩余价值。" actions={<><Button onClick={() => onAsk('请列出资产与订阅里即将到期的服务器，并说明剩余价值和是否自动续费。')}><Bot size={15}/>交给模块管理</Button><Button variant="primary" onClick={() => edit()}><Plus size={15}/>登记资产</Button></>}/>
     {error && <Notice error>{error}</Notice>}
     <div className="metrics asset-metrics">{metrics.map(([label, value, note]) => <section className="metric" key={label}><div className="metric-top">{label}<Wallet size={15}/></div><div className="metric-value asset-metric-value">{value}</div><p>{note}</p></section>)}</div>
     <div className="list-toolbar"><div className="tabs" role="group" aria-label="资产筛选">{[['all','全部'],['expiring','即将到期'],['expired','已到期'],['cancelled','已停用']].map(([id,label]) => <button key={id} className={filter===id?'active':''} aria-pressed={filter===id} onClick={() => setFilter(id)}>{label}</button>)}</div><label className="search"><Search size={15}/><input aria-label="搜索资产" placeholder="搜索名称、提供商、IP…" value={query} onChange={e => setQuery(e.target.value)}/></label></div>

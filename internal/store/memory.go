@@ -475,6 +475,21 @@ func (m *Memory) SetModuleEnabled(ctx context.Context, idv string, enabled bool)
 	return m.SaveModule(ctx, item)
 }
 
+func (m *Memory) DeleteModule(_ context.Context, idv string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	old, ok := m.modules[idv]
+	if !ok {
+		return ErrNotFound
+	}
+	delete(m.modules, idv)
+	if err := m.saveModulesLocked(); err != nil {
+		m.modules[idv] = old
+		return err
+	}
+	return nil
+}
+
 func (m *Memory) ListHistory(_ context.Context, limit int) ([]model.History, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

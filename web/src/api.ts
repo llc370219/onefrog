@@ -14,11 +14,14 @@ export type Host = {
   auth_type: string;
 };
 
-export type Mod = { id: string; name: string; desc: string; enabled: boolean };
+export type Mod = { id: string; name: string; desc: string; enabled: boolean; type?: string };
 export type AssetInput = { server_id?: string; name: string; provider?: string; region?: string; plan?: string; cycle?: string; currency?: string; amount_cents: number; paid_at?: string; starts_at?: string; expires_at?: string; auto_renew?: boolean; status?: string; ip?: string; specs?: string; order_no?: string; account?: string; invoice_url?: string; contact?: string; tags?: string[]; notes?: string };
 export type AssetRecord = AssetInput & { id: string; tags: string[]; days_total: number; days_left: number; elapsed_ratio: number; residual_cents: number; daily_cents: number; derived_status: string; created_at: string; updated_at: string };
 export type AssetSummary = { count: number; active: number; expiring: number; expired: number; auto_renew: number; monthly_cents: Record<string, number>; residual_cents: Record<string, number>; next_expiry: string; next_name: string };
 export type AssetPage = { summary: AssetSummary; records: AssetRecord[] };
+export type DevModuleRecord = { id: string; created_at: string; updated_at: string; data: Record<string, unknown> };
+export type DevModuleData = { state: Record<string, unknown>; records: DevModuleRecord[]; record?: DevModuleRecord };
+export type DevModuleRow = { id: string; name: string; description?: string; html: string; enabled: boolean; record_count: number; state_keys?: string[]; last_record_at?: string; created_at: string; updated_at: string };
 export type Hist = {
   id: string;
   time: string;
@@ -210,8 +213,8 @@ export const api = {
     return call("/api/secrets/" + encodeURIComponent(id), { method: "DELETE" });
   },
   async modules(): Promise<Mod[]> {
-    const rows = (await call("/api/modules")) as { id: string; name: string; description: string; enabled: boolean }[];
-    return rows.map((item) => ({ id: item.id, name: item.name, desc: item.description, enabled: item.enabled }));
+    const rows = (await call("/api/modules")) as { id: string; name: string; description: string; enabled: boolean; type?: string }[];
+    return rows.map((item) => ({ id: item.id, name: item.name, desc: item.description, enabled: item.enabled, type: item.type }));
   },
   async enableModule(id: string, enabled: boolean) {
     return call("/api/modules/" + id + "/enable", { method: "POST", body: JSON.stringify({ enabled }) });
@@ -225,6 +228,21 @@ export const api = {
   },
   async deleteAsset(id: string) {
     return call("/api/assets/" + encodeURIComponent(id), { method: "DELETE" });
+  },
+  async devModules(): Promise<DevModuleRow[]> {
+    return ((await call("/api/dev/modules")) as DevModuleRow[]) || [];
+  },
+  async createDevModule(body: { name: string; description?: string; html?: string; use_starter?: boolean; enabled?: boolean }) {
+    return call("/api/dev/modules", { method: "POST", body: JSON.stringify(body) }) as Promise<DevModuleRow>;
+  },
+  async updateDevModule(id: string, body: { name?: string; description?: string; html?: string; enabled?: boolean }) {
+    return call("/api/dev/modules/" + encodeURIComponent(id), { method: "PUT", body: JSON.stringify(body) }) as Promise<DevModuleRow>;
+  },
+  async deleteDevModule(id: string) {
+    return call("/api/dev/modules/" + encodeURIComponent(id), { method: "DELETE" });
+  },
+  async devModuleData(id: string, body: { action: string; id?: string; state?: Record<string, unknown>; data?: Record<string, unknown> }) {
+    return call("/api/dev/modules/" + encodeURIComponent(id) + "/data", { method: "POST", body: JSON.stringify(body) }) as Promise<DevModuleData>;
   },
   async history(): Promise<Hist[]> {
     const rows = (await call("/api/history")) as {

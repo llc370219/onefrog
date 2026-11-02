@@ -169,6 +169,7 @@ func (a *Agent) panelOverview(ctx context.Context, speaker model.Bot) string {
 	type moduleRow struct {
 		ID      string `json:"id"`
 		Name    string `json:"name"`
+		Type    string `json:"type,omitempty"`
 		Enabled bool   `json:"enabled"`
 	}
 	mods := make([]moduleRow, 0, len(module.Catalog()))
@@ -177,7 +178,12 @@ func (a *Agent) panelOverview(ctx context.Context, speaker model.Bot) string {
 		if saved, ok := byID[item.ID]; ok {
 			enabled = saved.Enabled
 		}
-		mods = append(mods, moduleRow{ID: item.ID, Name: item.Name, Enabled: enabled})
+		mods = append(mods, moduleRow{ID: item.ID, Name: item.Name, Type: "builtin", Enabled: enabled})
+	}
+	for _, item := range stored {
+		if item.Type == "custom" {
+			mods = append(mods, moduleRow{ID: item.ID, Name: item.Name, Type: "custom", Enabled: item.Enabled})
+		}
 	}
 	bots, _ := a.Store.ListBots(ctx)
 	type botRow struct {
@@ -283,7 +289,7 @@ func (a *Agent) panelSetModule(ctx context.Context, botID, id string, enabled *b
 	if enabled == nil {
 		return "set_module 需要 enabled", false
 	}
-	item, ok := module.Find(id)
+	item, ok := a.findAnyModule(ctx, id)
 	if !ok {
 		return "没有这个模块", false
 	}

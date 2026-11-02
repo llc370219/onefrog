@@ -46,7 +46,7 @@ func TestModuleBuilderRefusesServerCommands(t *testing.T) {
 	call := toolCall{}
 	call.Function.Name = "run_command"
 	call.Function.Arguments = "{}"
-	out := agent.execCall(context.Background(), model.Bot{ID: "module-builder", Name: "模块构建"}, credentials{}, "", call, true, nil)
+	out := agent.execCall(context.Background(), model.Bot{ID: "module-builder", Name: "模块管理"}, credentials{}, "", call, true, nil)
 	if !strings.Contains(out, "不能执行") {
 		t.Fatal(out)
 	}

@@ -10,6 +10,7 @@ import (
 	"onefrog/internal/boot"
 	"onefrog/internal/bot"
 	"onefrog/internal/config"
+	"onefrog/internal/devmodule"
 	"onefrog/internal/monitor"
 	"onefrog/internal/onboarding"
 	"onefrog/internal/preferences"
@@ -88,6 +89,13 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	devModules, err := devmodule.New(filepath.Join(cfg.DataDir, "devmodules.enc"), box)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := devmodule.SyncStore(ctx, db, devModules); err != nil {
+		log.Fatal(err)
+	}
 	updates := &update.Checker{
 		Repo:             cfg.UpdateRepo,
 		Current:          version.Version,
@@ -106,6 +114,7 @@ func main() {
 		OAuth:      oauth,
 		Onboarding: onboard,
 		Assets:     ledger,
+		DevModules: devModules,
 		PublicURL:  cfg.PublicURL,
 		Files:      files,
 		Usage:      usageLog,
@@ -128,6 +137,7 @@ func main() {
 			Files:        files,
 			Usage:        usageLog,
 			Assets:       ledger,
+			DevModules:   devModules,
 			Updates:      updates,
 			Onboarding:   onboard,
 			Probes:       probe,

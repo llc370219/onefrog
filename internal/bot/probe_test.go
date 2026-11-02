@@ -259,7 +259,7 @@ func TestInstallProbeRefusesPlanAndWorker(t *testing.T) {
 	if !strings.Contains(out, "只有主控") {
 		t.Fatal(out)
 	}
-	asset := agent.execCall(ownerCtx(), model.Bot{ID: "module-builder", Name: "模块构建"}, credentials{}, "", callInstall("{"+"\"server_id\":\"matrix\""+"}"), false, nil)
+	asset := agent.execCall(ownerCtx(), model.Bot{ID: "module-builder", Name: "模块管理"}, credentials{}, "", callInstall("{"+"\"server_id\":\"matrix\""+"}"), false, nil)
 	if !strings.Contains(asset, "不能执行命令") {
 		t.Fatal(asset)
 	}

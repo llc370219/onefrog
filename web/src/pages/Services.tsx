@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Activity, ArrowRight, Box, Clock3, RefreshCw, Search, Server } from 'lucide-react';
+import { Activity, ChevronRight, Box, Clock3, RefreshCw, Search, Server } from 'lucide-react';
 import { api, type Host, type ServiceItem, type ServiceView } from '../api';
 import { Button, Empty, Notice, PageHeading } from '../components/ui';
 
@@ -20,10 +20,28 @@ export function ServiceGlance({ hosts, onOpen }: { hosts: Host[]; onOpen: (id?: 
     void load(); const timer = window.setInterval(() => { if (!document.hidden) void load(); }, 15000);
     return () => { active = false; clearInterval(timer); };
   }, []);
-  return <div className="service-glance">{error && <Notice error>{error}</Notice>}{hosts.map(h => {
-    const v = nodes.find(n => n.server_id === h.id);
-    return <button className="service-host-link" key={h.id} onClick={() => onOpen(h.id)}><Server size={17}/><span><strong>{h.name}</strong><small>{v?.collected_at ? `${v.items.filter(i => i.kind !== 'ports' && running(i)).length} 个服务 / 容器运行中 · ${viewLabel(v)}` : viewLabel(v)}</small></span><ArrowRight size={14}/></button>;
-  })}{!hosts.length && <Empty title="接入服务器后查看运行服务"/>}<p className="card-foot">基于 SSH 只读检测快照 · 点击服务器检测或查看详情</p></div>;
+  const inspected = nodes.filter(n => hosts.some(h => h.id === n.server_id) && n.collected_at).length;
+  return <div className="service-glance">
+    {error && <div className="service-glance-error"><Notice error>{error}</Notice></div>}
+    <div className="service-glance-list">{hosts.map(h => {
+      const v = nodes.find(n => n.server_id === h.id) || pendingView(h.id);
+      const hasData = !!v?.collected_at;
+      const faults = v?.items.filter(issue).length || 0;
+      const stale = hasData && Date.now() - Date.parse(v.collected_at!) > 120000;
+      const tone = v?.status === 'failed' ? 'danger' : v?.status === 'partial' || faults || stale ? 'warn' : hasData ? 'ok' : 'pending';
+      const status = v?.status === 'failed' ? '检测失败' : !hasData ? '待检测' : faults ? `${faults} 项异常` : v?.status === 'partial' ? '部分可用' : stale ? '快照较早' : '检测完成';
+      const updated = hasData ? new Date(v.collected_at!).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', hour12: false}) : '';
+      const count = (kind: ServiceItem['kind']) => hasData && v.sources[kind]?.status === 'ok'
+        ? v.items.filter(i => i.kind === kind && (kind === 'ports' || running(i))).length : '—';
+      return <button className="service-host-link" key={h.id} onClick={() => onOpen(h.id)} aria-label={`${h.name}，${status}，查看服务`}>
+        <span className="service-glance-identity"><span className="service-glance-icon"><Server size={16}/></span><span className="service-glance-name"><strong title={h.name}>{h.name}</strong><span className={`service-glance-status ${tone}`}><i/>{status}{updated && <time dateTime={v.collected_at} title={when(v.collected_at)}>更新于 {updated}</time>}</span></span></span>
+        <span className="service-glance-counts">{(['systemd', 'docker', 'ports'] as const).map((kind, index) => <span key={kind}><strong className={hasData ? '' : 'muted'}>{count(kind)}</strong><small>{['服务', '容器', '端口'][index]}</small></span>)}</span>
+        <ChevronRight className="service-glance-chevron" size={14}/>
+      </button>;
+    })}</div>
+    {!hosts.length && <Empty title="接入服务器后查看运行服务"/>}
+    {!!hosts.length && <footer className="service-glance-foot"><span>{hosts.length} 台服务器<span className="service-glance-separator">/</span>已检测 {inspected} 台</span><span>只读检测</span></footer>}
+  </div>;
 }
 
 export default function Services({ hosts, focusServer = '', onServer, onAsk }: { hosts: Host[]; focusServer?: string; onServer: (id: string) => void; onAsk: (id: string, text: string) => void }) {

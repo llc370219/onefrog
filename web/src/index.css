@@ -255,12 +255,41 @@
 .context-secret-chip:hover:not(:disabled){border-color:#ffffff40;color:var(--fg);background:#1f2026}
 
 /* Official service inventory */
-.service-glance {display:flex;flex-direction:column;gap:8px}
-.service-host-link {display:flex;align-items:center;gap:12px;padding:13px 16px;text-align:left;background:transparent;border:1px solid var(--line2);border-radius:12px;color:inherit;width:100%;cursor:pointer}
-.service-host-link:hover {background:rgba(255,255,255,.03)}
-.service-host-link>span {flex:1;min-width:0}
-.service-host-link strong,.service-host-link small {display:block;overflow-wrap:anywhere}
-.service-host-link small {color:var(--fg3);margin-top:4px;font-size:12px}
+/* Compact inventory rows share the module card's single outer border. */
+.service-glance-list {padding:0 18px}
+.service-host-link {display:flex;align-items:center;gap:14px;padding:16px 0;text-align:left;background:transparent;border:0;border-top:1px solid var(--line);border-radius:0;color:inherit;width:100%;min-width:0;cursor:pointer;transition:background .15s}
+.service-host-link:hover {background:#ffffff03}
+.service-glance-identity {display:flex;align-items:center;gap:10px;flex:1;min-width:0}
+.service-glance-icon {display:grid;place-items:center;width:30px;height:30px;border-radius:8px;background:#ffffff04;color:var(--fg3);flex-shrink:0}
+.service-glance-name {min-width:0}
+.service-glance-name>strong {display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:500;line-height:1.5}
+.service-glance-status {display:flex;align-items:center;gap:5px;color:var(--fg4);font-size:10px;margin-top:5px;line-height:1.5}
+.service-glance-status>i {width:5px;height:5px;border-radius:50%;background:var(--fg4);flex-shrink:0}
+.service-glance-status.ok>i {background:var(--ok)}
+.service-glance-status.warn>i {background:var(--warn)}
+.service-glance-status.danger>i {background:var(--danger)}
+.service-glance-status.warn {color:var(--warn)}
+.service-glance-status.danger {color:var(--danger)}
+.service-glance-status time {margin-left:4px;padding-left:9px;border-left:1px solid var(--line2);color:var(--fg4)}
+.service-glance-counts {display:grid;grid-template-columns:repeat(3,42px);gap:10px;flex-shrink:0;text-align:right}
+.service-glance-counts strong {display:block;font:16px 'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums;line-height:1.4;color:var(--fg2)}
+.service-glance-counts strong.muted {color:var(--fg4)}
+.service-glance-counts small {display:block;font-size:9px;color:var(--fg4);margin-top:3px}
+.service-glance-chevron {color:var(--fg4);flex-shrink:0;transition:color .15s,transform .15s}
+.service-host-link:hover .service-glance-chevron {color:var(--fg2);transform:translateX(2px)}
+.service-glance-foot {display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 18px;border-top:1px solid var(--line);font-size:10px;color:var(--fg4)}
+.service-glance-separator {margin:0 8px;color:var(--fg4);opacity:.5}
+.service-glance-error {padding:0 18px 12px}
+@media(max-width:600px) {
+ .service-host-link {flex-wrap:wrap;gap:10px}
+ .service-glance-identity {flex-basis:calc(100% - 30px)}
+ .service-glance-counts {order:3;margin-left:40px;grid-template-columns:repeat(3,48px);text-align:left;gap:14px}
+ .service-glance-counts>span {display:flex;align-items:baseline;gap:5px}
+ .service-glance-counts strong {font-size:14px}
+ .service-glance-counts small {margin-top:0}
+ .service-glance-chevron {margin-left:auto}
+ .service-glance-status time {font-size:9px}
+}
 .services-toolbar {flex-wrap:wrap;gap:12px}
 .services-toolbar>label:not(.search) {display:flex;align-items:center;gap:8px;font-size:12px;color:var(--fg3)}
 .services-toolbar select {background:var(--s1);color:var(--fg);border:1px solid var(--line2);border-radius:9px;padding:8px;max-width:220px}

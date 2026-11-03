@@ -46,6 +46,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: shellcheck install.sh deploy/docker-entrypoint.sh
+      - name: Validate development Compose
+        run: docker compose -p onefrog -f compose.dev.yml config --quiet
 
   docker:
     runs-on: ubuntu-latest

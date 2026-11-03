@@ -1,119 +1,68 @@
-# OneFrog
+# OneFrog · 一只青蛙
 
 <p align="center"><img src="web/public/assets/onefrog-logo-readme.png" width="96" alt="OneFrog logo"></p>
 
-OneFrog 是一个自托管的 **AI 运维面板**：把你的 Linux 服务器通过 SSH 接进来，用对话让 Bot 查看状态、执行命令、汇总结果；同时提供服务器探针、密钥保险箱、资产与订阅记账等模块。
+自托管的 AI 运维面板：通过对话管理服务器、Bot、密钥保险箱和自定义模块，执行过程、交互选项与审批结果都留在面板中。
 
-> ⚠️ OneFrog 会让 AI 在你的服务器上执行命令。使用前请阅读 [免责声明 / DISCLAIMER](DISCLAIMER.md)。
+[安装使用](#安装使用) · [文档导航](docs/README.md) · [参与开发](CONTRIBUTING.md) · [正式版](https://github.com/llc370219/onefrog/releases/latest) · [English](docs/README.en.md)
 
-## 功能
+## 能做什么
 
-- **AI 助理与多 Bot 协作**：主控 Bot 理解需求、分派任务，协作 Bot 通过 SSH 在你手动选中的服务器上执行命令，过程和结果显示在对话里。需要你拍板时（清理哪个目录、先重启还是先看日志），Bot 会给出选项卡片，点一下就继续。
-- **面板管理**：在 AI 助理中让主控查看和修改模块、Bot、连接和版本，执行进度与审批卡片随对话展示。
-- **命令审批**：首次登录时由你选择「智能审批」（只读命令直接执行，有风险的命令弹窗等你确认）或「关闭审批」，之后可随时修改；另有逐条确认、替我审批、仅规划等高级模式。
-- **SSH 主机指纹校验**：首次连接显示指纹并由你确认；指纹变化时拒绝连接，不会自动覆盖。
-- **密钥保险箱**：Bot 只拿到密钥名称，命令里写 `{{secret:名称}}`，执行时才在服务端替换，输出中的明文会被打码。
-- **模型渠道**：任意 OpenAI Chat Completions 兼容接口，主控 / 协作 / 单个 Bot / 审批可分别选择模型，并统计 Token 用量。另有可选的第三方账号登录（**风险自负**，见下文）。
-- **服务管理（官方模块）**：按服务器检测 systemd 服务、Docker 容器和监听端口，支持筛选、搜索、逐台或批量检测，并与 AI 助理共用结果。
-- **服务器探针**：只用 Python 标准库的只读采集脚本，展示 CPU、内存、磁盘、网络、延迟与丢包。
-- **资产与订阅**：记录 VPS、域名等的续费信息，计算剩余价值与到期提醒。
-- **模块管理与自定义模块**：「模块管理」Bot 负责开关面板模块、维护资产台账与模块数据；「自定义模块」工作台与 Bot 支持通过对话或源码构建自定义交互模块（如打卡卡片、待办清单、倒计时等），隔离沙箱运行、数据加密保存，并自动挂载到面板与模块目录。
+- **AI 助理与多 Bot 协作**：分派任务、独立记忆、逐步显示执行进度；需要选择、密钥或审批时展示交互卡片。
+- **服务器管理**：SSH 接入与指纹校验、远程命令、探针监控，以及 systemd 服务、Docker 容器和监听端口检测。
+- **面板与模块管理**：通过助理管理 Bot 和模块，记录资产与订阅，创建带交互界面的自定义模块。
+- **模型与密钥管理**：配置兼容渠道和模型路由，密钥加密保存并按名称调用，提供命令审批与变更记录。
 
-## 一行命令安装
+详细功能和操作见[使用说明](docs/使用说明.md)。新功能先进入测试版，正式版以 [Releases](https://github.com/llc370219/onefrog/releases) 为准。
 
-在一台 Linux 服务器（x86_64 或 arm64）上以 root 执行：
+## 安装使用
+
+在 Linux 服务器（x86_64 / arm64）上执行：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/llc370219/onefrog/main/install.sh | sudo bash
 ```
 
-需要 `curl`；没有 `curl` 时可以用 `wget -qO- https://raw.githubusercontent.com/llc370219/onefrog/main/install.sh | sudo bash`，脚本会先自动安装 `curl`。支持 Debian 12/13、Ubuntu 22.04/24.04 及更新版本、Rocky / AlmaLinux / CentOS Stream 9/10、Fedora；已停止维护的系统（如 Debian 11、CentOS 7）会给出明确提示。同一台机器装多个实例时用不同的 `OF_INSTALL_DIR` 和 `OF_PUBLISH_PORT`，见 [docs/安装.md](docs/安装.md#在同一台机器上安装多个实例)。
+安装脚本拉取预构建镜像，目标服务器不需要 Go 或 Node.js。没有 Docker 时会提示安装。首次生成随机密码，首次登录必须修改用户名和密码；再次运行同一命令可原地升级，使用自定义安装目录时需继续指定该目录。
 
-安装完成后终端会打印访问链接、用户名 `admin` 和随机初始密码；第一次登录必须同时修改用户名和密码。脚本会在需要时安装 Docker（先提示，可取消），然后拉取预构建镜像 `ghcr.io/llc370219/onefrog`，目标服务器不需要 Go 或 Node。
-
-默认监听 `0.0.0.0:8080`、明文 HTTP，安装脚本会为此打印警告。**生产使用请放在 HTTPS 反向代理后面，并只绑定本机：**
+**默认入口为公网 HTTP `:8080`。生产部署应使用 HTTPS 反向代理，并将应用绑定到本机：**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/llc370219/onefrog/main/install.sh \
   | sudo OF_BIND_ADDR=127.0.0.1 OF_PUBLIC_URL=https://ops.example.com bash
 ```
 
-**升级**：重新运行上面的安装命令即可原地升级（改过 `OF_INSTALL_DIR` 的要带上同一个值），账号、设置、对话、密钥和登录状态都会保留。面板会定期检查 GitHub 上的新版本并在顶部提示（可在「设置 → 关于与更新」关闭，或安装时设 `OF_UPDATE_CHECK=0`）。v0.1.8 起，用安装命令升级过一次之后，可以在这里点「立即升级」：面板只写入版本号，由宿主机拉取 `docker-compose.yml` 里已经固定的镜像，不把 Docker 接口挂进容器。
+反向代理需另行配置，`OF_PUBLIC_URL` 本身不会安装证书。完整安装选项、系统要求、多实例、升级、备份和排错见[安装文档](docs/安装.md)。
 
-安装选项、反向代理示例、升级、备份、卸载和排错见 **[docs/安装.md](docs/安装.md)**。
-
-## 安全须知
-
-- **使用 HTTPS。** 面板保存 SSH 凭据并能远程执行命令。Docker 发布的端口会绕过 ufw/firewalld，所以放在反向代理后面时务必设置 `OF_BIND_ADDR=127.0.0.1`。
-- **使用权限受限的 SSH 用户**，不要把 root 交给 OneFrog。AI 生成的命令可能出错或被日志、网页、附件中的内容误导。
-- **建议开启「智能审批」。** 它用服务端规则加 AI 自评判断风险，有风险的命令要你确认；能减少但不能消除风险，规则可能漏判少见的危险写法。选择「关闭审批」时 AI 会直接执行命令。服务器输出、文件和附件里的内容被当作不可信数据，由它们引出的命令会要求确认。详见 [docs/设置与模型配置.md](docs/设置与模型配置.md#命令审批)。
-- **核对 SSH 主机指纹**：面板显示密钥类型和 SHA256，在服务器上运行 `for f in /etc/ssh/ssh_host_*_key.pub; do ssh-keygen -lf "$f"; done`，核对类型相同的那一行。
-- **探针上报请使用 HTTPS 主控地址**，否则上报凭据以明文传输。
-- **`master.key` 与加密数据在同一个数据卷中**，拿到整个数据卷或备份即可解密；需要分开保管时用 `OF_MASTER_KEY` 从外部提供。
-- 未指定 `OF_PUBLIC_URL` 时，安装脚本会请求 `https://ifconfig.me` 获取公网 IP，仅用于打印链接。
-- 面板默认定期请求 `https://api.github.com` 检查新版本（匿名、只读、不自动安装），可用 `OF_UPDATE_CHECK=0` 或在设置中关闭。
-- 反向代理的地址默认按本机/内网信任 `X-Forwarded-For`，可用 `OF_TRUSTED_PROXIES` 调整（用于登录限流）。
-- 容器内服务以非 root 用户运行。浏览器端启用了 CSP、CSRF 请求头校验、WebSocket 来源校验和登录失败限流。
-- 发现安全问题请通过 GitHub 私下报告（Security → Report a vulnerability），不要公开提 issue，见 [SECURITY.md](SECURITY.md)。
-
-### 第三方账号登录（风险自负）
-
-「ChatGPT / Codex 登录」和「Google Antigravity 登录」使用**其他产品的官方客户端身份**调用**非公开内部接口**，可能违反提供方服务条款，账号可能被**限制或永久封禁**。每次登录前必须在弹窗中勾选确认。Google 登录不内置客户端凭据，需自行设置 `OF_GOOGLE_OAUTH_CLIENT_ID` / `OF_GOOGLE_OAUTH_CLIENT_SECRET`，否则按钮显示「需要配置」。详见 [docs/设置与模型配置.md](docs/设置与模型配置.md#第三方账号登录oauth风险自负) 和 [DISCLAIMER.md](DISCLAIMER.md)。不想承担这些风险时，只使用官方 API Key 的兼容渠道即可。
-
-## 文档
-
-| 文档 | 内容 |
+| 用途 | 入口 |
 | --- | --- |
-| [docs/安装.md](docs/安装.md) | 安装选项、HTTPS 反向代理、安全建议、数据持久化与备份、排错 |
-| [docs/使用说明.md](docs/使用说明.md) | 接入服务器、AI 助理、Bot、密钥、探针、资产模块与主要接口 |
-| [docs/设置与模型配置.md](docs/设置与模型配置.md) | 模型渠道、OAuth 登录、模型路由、审批模式、提示词 |
-| [docs/UI设计规范.md](docs/UI设计规范.md) | 前端贡献者的界面规范 |
+| 正式使用 | `main` 安装脚本、正式 Release、`latest` 镜像 |
+| 提前试用 | [测试版安装与渠道说明](https://github.com/llc370219/onefrog/blob/dev/docs/版本与发布.md)，使用 `dev` 脚本和 `beta` 镜像 |
+| 修改代码 / 预览 PR | [贡献指南](CONTRIBUTING.md)，从 `dev` 分支开始 |
 
-## 本地开发
+仓库根目录的 `compose.dev.yml` **仅用于本地开发**，不是生产部署配置。服务器上的生产 `docker-compose.yml` 由安装脚本生成。
 
-需要 Go（版本见 `go.mod`）和 Node.js 22。
+## 使用前了解
 
-```bash
-# 后端（memory 驱动 + 演示数据，仅本机）
-OF_HTTP_ADDR=127.0.0.1:8080 OF_DRIVER=memory OF_SEED=1 OF_ADMIN_PASSWORD=admin go run ./cmd/server
+OneFrog 能在已接入的服务器执行命令。建议使用权限受限的 SSH 账号，开启智能或人工审批，并保持独立备份。默认主密钥与加密数据同卷保存，完整数据备份仍应作为敏感资料保管。
 
-# 前端（另开终端，Vite 把 /api 和 /ws 代理到 127.0.0.1:8080）
-cd web && npm ci && npm run dev
+普通聊天内容、附件及参与分析的命令输出会按任务发送给配置的模型服务；密码请通过专用卡片或保险箱录入。可选的第三方账号登录使用非公开接口，存在账号受限或封禁风险。
 
-# 测试与构建
-go vet ./... && go test ./...
-cd web && npm run build
-docker build -t onefrog:dev .
-```
+请阅读[安全与隐私](docs/安全与隐私.md)和[免责声明](DISCLAIMER.md)。漏洞通过 [Security → Report a vulnerability](https://github.com/llc370219/onefrog/security/advisories/new) 私下报告。
 
-`docker-compose.yml` 和 `configs/config.example.env` 是**仅供本地开发**的配置（PostgreSQL、演示账号 `admin`/`admin`、只绑定 127.0.0.1），不要用于生产。
+## 文档与贡献
 
-欢迎提交 issue 和 PR。提交前请确保 `go vet`、`go test`、`npm run build` 通过；界面改动请遵循 [docs/UI设计规范.md](docs/UI设计规范.md)。
+- [文档导航](docs/README.md)：安装、使用、设置、开发和版本发布入口。
+- [参与开发](CONTRIBUTING.md)：本地预览、PR 目标、验证与开发 Compose。
+- [开发约定](AGENTS.md)：所有编码助手和协作者共用的规则。
+- [Issues](https://github.com/llc370219/onefrog/issues)：问题反馈与功能建议。
 
 ## English
 
-OneFrog is a self-hosted AI ops panel: connect your Linux servers over SSH and let a team of LLM bots inspect and operate them through chat, with per-command approval, clickable choice cards when a bot needs your decision, SSH host-key pinning, a secret vault, lightweight host probes and an asset/subscription ledger.
+OneFrog is a self-hosted AI operations panel for SSH server management, collaborative bots, approval workflows, monitoring, a secret vault, and custom interactive modules. Use `main` for stable installations and `dev` for development. Read the [English guide](docs/README.en.md) before deployment.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/llc370219/onefrog/main/install.sh | sudo bash
-```
+## 许可证
 
-It needs `curl`; without it, `wget -qO- https://raw.githubusercontent.com/llc370219/onefrog/main/install.sh | sudo bash` runs the installer, which installs `curl` via apt/dnf/yum first. Supported: Debian 12/13, Ubuntu 22.04/24.04 and newer, Rocky/AlmaLinux/CentOS Stream 9/10, Fedora; end-of-life releases (e.g. Debian 11, CentOS 7) stop with a clear message.
+[GNU AGPL v3.0](LICENSE)。修改后通过网络提供服务时，需按许可证提供相应源码。第三方许可见 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES)。
 
-The installer installs Docker if missing (after a notice; `OF_INSTALL_DOCKER=0` aborts instead), pulls the prebuilt image and prints the URL, username and a random initial password; both must be changed on first login. It listens on plain HTTP on all interfaces by default and warns about it. For real use, put it behind an HTTPS reverse proxy and bind to localhost with `OF_BIND_ADDR=127.0.0.1 OF_PUBLIC_URL=https://your.domain`, because it stores SSH credentials and Docker-published ports bypass host firewalls.
-
-- On first login you choose how commands are approved. **Smart approval** (recommended) runs allowlisted read-only commands directly and asks you before anything the server-side rules or the AI consider risky; it reduces risk but cannot eliminate it. **Off** runs AI commands without asking. Commands derived from server output, files or attachments always ask in smart mode. Give OneFrog a dedicated, least-privilege SSH user, not root.
-- Report security issues privately via GitHub (Security → Report a vulnerability), see [SECURITY.md](SECURITY.md).
-- The optional ChatGPT/Codex and Google Antigravity logins reuse another product's official client identity and unofficial internal endpoints. They may violate the provider's terms and can get your account restricted or permanently banned. You must acknowledge this in a dialog before logging in. Google login needs your own `OF_GOOGLE_OAUTH_CLIENT_ID` / `OF_GOOGLE_OAUTH_CLIENT_SECRET`.
-- `master.key` lives next to the encrypted data. Use `OF_MASTER_KEY` to keep them apart.
-- Without `OF_PUBLIC_URL`, the installer queries `https://ifconfig.me` to print a link.
-
-To upgrade, re-run the install command (with the same `OF_INSTALL_DIR` if you changed it); the account, settings, chats, secrets and login sessions are kept, all encrypted on disk. To run a second instance on the same host, use a different `OF_INSTALL_DIR` and `OF_PUBLISH_PORT`; each install dir gets its own compose project and data volume. The SSH host key is shown with its type (ED25519 preferred); check it with `for f in /etc/ssh/ssh_host_*_key.pub; do ssh-keygen -lf "$f"; done`. Probes installed by the panel live in `/opt/onefrog-probe`; deleting a server in the panel can uninstall its probe, see docs/安装.md for manual removal. The panel checks GitHub for a newer release at startup and every 12 hours. From v0.1.8, after one installer run on a systemd host, Settings can upgrade in place: the container writes a version tag and a root helper pulls the image already pinned in docker-compose.yml. The Docker socket is not mounted. Turn the check off under Settings → 关于与更新 or with `OF_UPDATE_CHECK=0`.
-
-See [DISCLAIMER.md](DISCLAIMER.md). OneFrog is not affiliated with OpenAI, Google or any other provider.
-
-## 许可证 / License
-
-[GNU Affero General Public License v3.0](LICENSE)（AGPL-3.0）。如果你修改 OneFrog 并通过网络向他人提供服务，需要按 AGPL-3.0 公开相应源码。第三方组件的许可见 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES)。
-
-项目徽标（`web/public/` 下的猫咪图标）是本项目作者的原创手绘作品，随本仓库一同按 AGPL-3.0 提供。/ The logo (the cat icons under `web/public/`) is original artwork by the project author and is provided under the same AGPL-3.0 license as this repository.
+`web/public/` 下的猫咪徽标为作者原创手绘作品，随项目按 AGPL-3.0 提供。OneFrog 与 OpenAI、Google 等服务商无隶属关系。

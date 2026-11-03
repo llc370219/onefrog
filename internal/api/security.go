@@ -88,7 +88,9 @@ func sameOrigin(r *http.Request, publicURL string) bool {
 	return false
 }
 
-// loginLimiter tracks failed logins per client IP and per username.
+// loginLimiter tracks failed logins per client IP. It deliberately does not lock
+// usernames: a username lock lets anyone keep the admin locked out by typing
+// wrong passwords from anywhere.
 type loginLimiter struct {
 	mu       sync.Mutex
 	now      func() time.Time
@@ -102,57 +104,43 @@ type failRecord struct {
 }
 
 const (
-	loginWindow       = 15 * time.Minute
-	userFailThreshold = 5
-	ipFailThreshold   = 20
-	maxLockout        = 30 * time.Minute
+	loginWindow     = 15 * time.Minute
+	ipFailThreshold = 5
+	maxLockout      = 30 * time.Minute
 )
 
 func newLoginLimiter() *loginLimiter {
 	return &loginLimiter{now: time.Now, failures: map[string]*failRecord{}}
 }
 
-func limiterKeys(ip, user string) (string, string) {
-	return "ip:" + ip, "user:" + strings.ToLower(strings.TrimSpace(user))
-}
-
-// blocked returns how long the caller must wait, or 0.
-func (l *loginLimiter) blocked(ip, user string) time.Duration {
+// blocked returns how long the client IP must wait, or 0.
+func (l *loginLimiter) blocked(ip string) time.Duration {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
-	var wait time.Duration
-	ik, uk := limiterKeys(ip, user)
-	for _, k := range []string{ik, uk} {
-		if f := l.failures[k]; f != nil && now.Before(f.until) {
-			if d := f.until.Sub(now); d > wait {
-				wait = d
-			}
-		}
+	if f := l.failures[ip]; f != nil && now.Before(f.until) {
+		return f.until.Sub(now)
 	}
-	return wait
+	return 0
 }
 
-func (l *loginLimiter) fail(ip, user string) {
+func (l *loginLimiter) fail(ip string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
-	ik, uk := limiterKeys(ip, user)
-	for k, threshold := range map[string]int{ik: ipFailThreshold, uk: userFailThreshold} {
-		f := l.failures[k]
-		if f == nil || now.Sub(f.first) > loginWindow && now.After(f.until) {
-			f = &failRecord{first: now}
-			l.failures[k] = f
+	f := l.failures[ip]
+	if f == nil || now.Sub(f.first) > loginWindow && now.After(f.until) {
+		f = &failRecord{first: now}
+		l.failures[ip] = f
+	}
+	f.count++
+	if f.count >= ipFailThreshold {
+		// Exponential backoff: 1, 2, 4 ... minutes, capped.
+		lock := time.Minute << min(f.count-ipFailThreshold, 5)
+		if lock > maxLockout {
+			lock = maxLockout
 		}
-		f.count++
-		if f.count >= threshold {
-			// Exponential backoff: 1, 2, 4 ... minutes, capped.
-			lock := time.Minute << min(f.count-threshold, 5)
-			if lock > maxLockout {
-				lock = maxLockout
-			}
-			f.until = now.Add(lock)
-		}
+		f.until = now.Add(lock)
 	}
 	if len(l.failures) > 10000 {
 		for k, f := range l.failures {
@@ -163,11 +151,12 @@ func (l *loginLimiter) fail(ip, user string) {
 	}
 }
 
-func (l *loginLimiter) succeed(ip, user string) {
+func (l *loginLimiter) succeed(ip string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	_, uk := limiterKeys(ip, user)
-	delete(l.failures, uk)
+	if f := l.failures[ip]; f != nil && !l.now().Before(f.until) {
+		delete(l.failures, ip)
+	}
 }
 
 func retryAfter(d time.Duration) string {

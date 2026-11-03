@@ -11,6 +11,9 @@ data/
 *.key
 master.key
 
+# local preview (scripts/dev.sh)
+.dev/
+
 # build output
 /server
 *.exe

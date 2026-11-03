@@ -1,8 +1,10 @@
 # syntax=docker/dockerfile:1
+# The web bundle is architecture-independent: build it once on the build host.
 FROM --platform=$BUILDPLATFORM node:22-alpine AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --no-audit --no-fund
 COPY web/ ./
 RUN npm run build
 
@@ -13,9 +15,14 @@ ARG TARGETARCH
 ARG VERSION=dev
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w -X onefrog/internal/version.Version=${VERSION}" -o /out/server ./cmd/server
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+# Only the Go sources: editing the web UI or docs no longer invalidates the Go build.
+COPY cmd/ cmd/
+COPY internal/ internal/
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w -X onefrog/internal/version.Version=${VERSION}" -o /out/server ./cmd/server
 
 FROM alpine:3.23
 ARG VERSION=dev

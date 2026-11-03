@@ -2,13 +2,15 @@ import { useEffect, useRef } from 'react';
 import { ArrowDown, ArrowUp, ChevronRight, Clock3, Cpu, HardDrive, MemoryStick, Network, Radio, Server, ShieldAlert, Wallet } from 'lucide-react';
 import type { AssetRecord, Host, ProbeNode } from '../api';
 import { Button } from './ui';
+import { cssVar, useTheme } from '../theme';
 
 export function bytes(value?:number,rate=false){if(value===undefined)return '—';let n=value;const units=['B','KiB','MiB','GiB','TiB','PiB'];let i=0;while(n>=1024&&i<units.length-1){n/=1024;i++;}return `${n.toFixed(i===0?0:n>=100?0:1)} ${units[i]}${rate?'/s':''}`;}
 export function uptime(seconds?:number){if(seconds===undefined)return '—';const d=Math.floor(seconds/86400),h=Math.floor(seconds%86400/3600),m=Math.floor(seconds%3600/60);return d?`${d} 天 ${h} 小时`:h?`${h} 小时 ${m} 分钟`:`${m} 分钟`;}
 export function probeStatus(node?:ProbeNode){return node?.status||'pending';}
 export function Sparkline({values,label}: {values:number[];label:string}){
  const ref=useRef<HTMLCanvasElement>(null);
- useEffect(()=>{const canvas=ref.current;if(!canvas)return;const ctx=canvas.getContext('2d');if(!ctx)return;const width=canvas.clientWidth,height=canvas.clientHeight,scale=window.devicePixelRatio||1;canvas.width=width*scale;canvas.height=height*scale;ctx.scale(scale,scale);ctx.clearRect(0,0,width,height);ctx.strokeStyle='#ffffff0b';ctx.lineWidth=1;for(let i=1;i<3;i++){ctx.beginPath();ctx.moveTo(0,height*i/3);ctx.lineTo(width,height*i/3);ctx.stroke();}if(values.length<2)return;const max=Math.max(10,...values)*1.15;ctx.beginPath();values.forEach((v,i)=>{const x=width*i/(values.length-1),y=height-4-v/max*(height-8);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);});ctx.strokeStyle='#a5b2ac';ctx.lineWidth=1.5;ctx.stroke();},[values]);
+ const {theme}=useTheme();
+ useEffect(()=>{const canvas=ref.current;if(!canvas)return;const ctx=canvas.getContext('2d');if(!ctx)return;const width=canvas.clientWidth,height=canvas.clientHeight,scale=window.devicePixelRatio||1;canvas.width=width*scale;canvas.height=height*scale;ctx.scale(scale,scale);ctx.clearRect(0,0,width,height);ctx.strokeStyle=cssVar('--chart-grid','#8882');ctx.lineWidth=1;for(let i=1;i<3;i++){ctx.beginPath();ctx.moveTo(0,height*i/3);ctx.lineTo(width,height*i/3);ctx.stroke();}if(values.length<2)return;const max=Math.max(10,...values)*1.15;ctx.beginPath();values.forEach((v,i)=>{const x=width*i/(values.length-1),y=height-4-v/max*(height-8);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);});ctx.strokeStyle=cssVar('--chart-line','#a5b2ac');ctx.lineWidth=1.5;ctx.stroke();},[values,theme]);
  return <canvas ref={ref} className="probe-sparkline" role="img" aria-label={label}/>;
 }
 function Resource({icon:Icon,label,used,total,percent}: {icon:typeof Cpu;label:string;used?:number;total?:number;percent?:number}){

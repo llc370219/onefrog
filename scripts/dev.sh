@@ -10,18 +10,36 @@
 # 需要：git、Docker（Docker Desktop 需在运行）、Node.js 20+。不需要安装 Go：
 # 后端在 Docker 里用当前目录的源码编译运行。
 # 前端改动由 Vite 热更新；后端（Go）改动会被检测到并自动重启后端。
-# 打开 http://localhost:5173 ，演示账号 admin / admin，仅监听本机。
+# 启动后自动打开浏览器（默认 http://127.0.0.1:5173，端口被占用时自动换一个），
+# 演示账号 admin / admin，仅监听本机。
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 root=$(pwd)
 container=onefrog-dev-api
 api_port=${OF_DEV_API_PORT:-8080}
+web_port=${OF_DEV_WEB_PORT:-5173}
+# proxy.golang.org is unreachable from some networks (e.g. mainland China);
+# "|" makes Go fall back to the next proxy on any error, not only on 404.
+go_proxy=${GOPROXY:-https://proxy.golang.org|https://goproxy.cn|direct}
 data_dir="$root/.dev/data"
 go_image=${OF_DEV_GO_IMAGE:-golang:1.26-alpine}
 
 say() { printf '%s\n' "$*"; }
 die() { printf '错误：%s\n' "$*" >&2; exit 1; }
+
+# True when something already listens on 127.0.0.1:<port>.
+port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+
+# Prints the first free port starting at $1 (tries 20 ports).
+free_port() {
+  local p=$1 last=$(($1 + 20))
+  while [ "$p" -lt "$last" ]; do
+    port_busy "$p" || { echo "$p"; return 0; }
+    p=$((p + 1))
+  done
+  die "端口 $1–$((last - 1)) 都被占用了，请关掉一些程序后再试。"
+}
 
 need() {
   command -v git >/dev/null 2>&1 || die "没有找到 git。macOS 可执行：xcode-select --install"
@@ -69,6 +87,9 @@ web_deps() {
 start_api() {
   stop_api
   mkdir -p "$data_dir"
+  local wanted=$api_port
+  api_port=$(free_port "$api_port")
+  [ "$api_port" = "$wanted" ] || say "→ 端口 $wanted 已被占用，后端改用 $api_port"
   say "→ 启动后端（第一次会下载 Go 依赖，可能需要几分钟）"
   docker run -d --name "$container" \
     -p "127.0.0.1:${api_port}:8080" \
@@ -76,12 +97,13 @@ start_api() {
     -v onefrog-dev-gomod:/go/pkg/mod \
     -v onefrog-dev-gobuild:/root/.cache/go-build \
     -v "$data_dir:/data" \
-    -e GOFLAGS=-buildvcs=false \
+    -e GOFLAGS=-buildvcs=false -e "GOPROXY=$go_proxy" \
     -e OF_DRIVER=memory -e OF_SEED=1 \
     -e OF_ADMIN_USER=admin -e OF_ADMIN_PASSWORD=admin \
     -e OF_DATA_DIR=/data -e OF_HTTP_ADDR=:8080 -e OF_WEB_DIR= \
     -e OF_UPDATE_CHECK=0 \
-    "$go_image" go run ./cmd/server >/dev/null
+    "$go_image" go run ./cmd/server >/dev/null \
+    || die "后端容器没能启动（见上面 Docker 的报错）。如果是拉取 $go_image 失败，可能是网络无法访问 Docker Hub，请在 Docker Desktop 里配置镜像加速后重试。"
   wait_api
 }
 
@@ -93,7 +115,8 @@ wait_api() {
       die "后端没有启动成功，上面是最后的日志。"
     fi
     i=$((i + 1))
-    [ "$i" -le 300 ] || die "后端 5 分钟内没有就绪。查看日志：docker logs $container"
+    [ "$i" -le 600 ] || die "后端 10 分钟内没有就绪。查看日志：docker logs $container"
+    [ $((i % 20)) -ne 0 ] || say "  …仍在下载依赖 / 编译后端（已 ${i} 秒）"
     sleep 1
   done
 }
@@ -116,7 +139,7 @@ watch_api() {
 # otherwise keep reading the new file from the old byte offset.
 main() {
   case "${1:-}" in
-    -h|--help|help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help|help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     stop) stop_api; say "预览后端已停止。"; exit 0 ;;
     reset) stop_api; rm -rf "$data_dir"; say "本地演示数据已清空，下次启动会重新生成。"; exit 0 ;;
     "") ;;
@@ -132,15 +155,18 @@ main() {
   watcher=$!
   trap 'kill "$watcher" 2>/dev/null || true; stop_api' EXIT INT TERM
 
+  local wanted=$web_port
+  web_port=$(free_port "$web_port")
+  [ "$web_port" = "$wanted" ] || say "→ 端口 $wanted 已被占用，前端改用 $web_port"
   branch=$(git rev-parse --abbrev-ref HEAD)
   say ""
   say "OneFrog 本地预览已启动（代码：$branch @ $(git rev-parse --short HEAD)）"
-  say "  地址：http://localhost:5173"
+  say "  地址：http://127.0.0.1:${web_port}"
   say "  账号：admin / admin"
   say "  改前端会自动刷新页面，改后端会自动重启。按 Ctrl+C 结束。"
   say ""
   cd web
-  npm run dev -- --open
+  OF_DEV_API_PORT=$api_port npm run dev -- --host 127.0.0.1 --port "$web_port" --open
 }
 
 main "$@"; exit $?

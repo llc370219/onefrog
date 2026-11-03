@@ -258,18 +258,18 @@ func (s *Server) login(c *gin.Context) {
 		return
 	}
 	ip := c.ClientIP()
-	if wait := s.limiter.blocked(ip, req.Username); wait > 0 {
+	if wait := s.limiter.blocked(ip); wait > 0 {
 		c.Header("Retry-After", retryAfter(wait))
 		fail(c, http.StatusTooManyRequests, "登录失败次数过多，请稍后再试")
 		return
 	}
 	user, hash, err := s.Store.UserByName(c.Request.Context(), strings.TrimSpace(req.Username))
 	if err != nil || bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) != nil {
-		s.limiter.fail(ip, req.Username)
+		s.limiter.fail(ip)
 		fail(c, http.StatusUnauthorized, "账号或密码不对")
 		return
 	}
-	s.limiter.succeed(ip, req.Username)
+	s.limiter.succeed(ip)
 	token := id.New() + id.New()
 	if err := s.Store.CreateSession(c.Request.Context(), user.ID, hashToken(token), time.Now().UTC().Add(7*24*time.Hour)); err != nil {
 		fail(c, http.StatusInternalServerError, "会话创建失败")

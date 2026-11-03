@@ -34,7 +34,9 @@ need() {
 }
 
 clean_tree() {
-  git diff --quiet && git diff --cached --quiet || die "当前目录有未提交的改动，切换前请先提交或执行 git stash 暂存。"
+  if ! git diff --quiet || ! git diff --cached --quiet; then
+    die "当前目录有未提交的改动，切换前请先提交或执行 git stash 暂存。"
+  fi
 }
 
 stop_api() { docker rm -f "$container" >/dev/null 2>&1 || true; }
@@ -109,29 +111,36 @@ watch_api() {
   done
 }
 
-case "${1:-}" in
-  -h|--help|help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-  stop) stop_api; say "预览后端已停止。"; exit 0 ;;
-  reset) stop_api; rm -rf "$data_dir"; say "本地演示数据已清空，下次启动会重新生成。"; exit 0 ;;
-  "") ;;
-  main) need; checkout main ;;
-  *[!0-9]*) die "不认识的参数：$1。用法见 ./scripts/dev.sh help" ;;
-  *) need; checkout "$1" ;;
-esac
-[ -n "${1:-}" ] || need
+# Everything runs from main(), which bash reads completely before executing it:
+# `dev.sh 12` checks out another version of this very file, and bash would
+# otherwise keep reading the new file from the old byte offset.
+main() {
+  case "${1:-}" in
+    -h|--help|help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    stop) stop_api; say "预览后端已停止。"; exit 0 ;;
+    reset) stop_api; rm -rf "$data_dir"; say "本地演示数据已清空，下次启动会重新生成。"; exit 0 ;;
+    "") ;;
+    main) need; checkout main ;;
+    *[!0-9]*) die "不认识的参数：$1。用法见 ./scripts/dev.sh help" ;;
+    *) need; checkout "$1" ;;
+  esac
+  [ -n "${1:-}" ] || need
 
-web_deps
-start_api
-watch_api &
-watcher=$!
-trap 'kill "$watcher" 2>/dev/null || true; stop_api' EXIT INT TERM
+  web_deps
+  start_api
+  watch_api &
+  watcher=$!
+  trap 'kill "$watcher" 2>/dev/null || true; stop_api' EXIT INT TERM
 
-branch=$(git rev-parse --abbrev-ref HEAD)
-say ""
-say "OneFrog 本地预览已启动（代码：$branch @ $(git rev-parse --short HEAD)）"
-say "  地址：http://localhost:5173"
-say "  账号：admin / admin"
-say "  改前端会自动刷新页面，改后端会自动重启。按 Ctrl+C 结束。"
-say ""
-cd web
-npm run dev -- --open
+  branch=$(git rev-parse --abbrev-ref HEAD)
+  say ""
+  say "OneFrog 本地预览已启动（代码：$branch @ $(git rev-parse --short HEAD)）"
+  say "  地址：http://localhost:5173"
+  say "  账号：admin / admin"
+  say "  改前端会自动刷新页面，改后端会自动重启。按 Ctrl+C 结束。"
+  say ""
+  cd web
+  npm run dev -- --open
+}
+
+main "$@"; exit $?

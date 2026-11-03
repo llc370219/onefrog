@@ -128,6 +128,8 @@ export type UpdateStatus = {
   enabled: boolean;
   disabled_by?: 'env' | 'settings' | 'dev' | 'repo';
   repo: string;
+  /** "stable" (正式版) or "beta" (测试版); older servers omit it. */
+  channel?: 'stable' | 'beta';
   checked_at?: string;
   error?: string;
   install_dir?: string;

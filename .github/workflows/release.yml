@@ -1,8 +1,13 @@
 name: Release image
 
+# Two channels, chosen by the tag:
+#   vX.Y.Z         (stable, cut from main) -> image :vX.Y.Z, :latest and :beta
+#   vX.Y.Z-beta.N  (test, cut from dev)     -> image :vX.Y.Z-beta.N and :beta
+# :beta always points at the newest build of either kind, so test installs never
+# fall behind a stable release. Stable installs only ever see :latest.
 on:
   push:
-    tags: ['v*']
+    tags: ['v*.*.*']
 
 permissions:
   contents: read
@@ -24,9 +29,11 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/onefrog
+          flavor: latest=false
           tags: |
             type=ref,event=tag
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+            type=raw,value=beta
       - uses: docker/build-push-action@v6
         with:
           context: .

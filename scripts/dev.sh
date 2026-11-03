@@ -3,7 +3,8 @@
 #
 #   ./scripts/dev.sh          用当前代码启动
 #   ./scripts/dev.sh 12       切到 PR #12 的代码再启动
-#   ./scripts/dev.sh main     切回 main 并拉取最新代码再启动
+#   ./scripts/dev.sh dev      切到 dev（测试版）并拉取最新代码再启动
+#   ./scripts/dev.sh main     切到 main（正式版）并拉取最新代码再启动
 #   ./scripts/dev.sh stop     停掉后台的预览后端
 #   ./scripts/dev.sh reset    清空本地演示数据（账号、服务器、对话等）
 #
@@ -61,12 +62,11 @@ stop_api() { docker rm -f "$container" >/dev/null 2>&1 || true; }
 
 checkout() {
   case "$1" in
-    main)
+    main|dev)
       clean_tree
-      say "→ 切换到 main 并拉取最新代码"
-      git fetch --quiet origin main
-      git checkout --quiet main
-      git merge --quiet --ff-only origin/main
+      say "→ 切换到 $1 并拉取最新代码"
+      git fetch --quiet origin "$1"
+      git checkout --quiet -B "$1" "origin/$1"
       ;;
     *)
       clean_tree
@@ -139,11 +139,11 @@ watch_api() {
 # otherwise keep reading the new file from the old byte offset.
 main() {
   case "${1:-}" in
-    -h|--help|help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help|help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     stop) stop_api; say "预览后端已停止。"; exit 0 ;;
     reset) stop_api; rm -rf "$data_dir"; say "本地演示数据已清空，下次启动会重新生成。"; exit 0 ;;
     "") ;;
-    main) need; checkout main ;;
+    main|dev) need; checkout "$1" ;;
     *[!0-9]*) die "不认识的参数：$1。用法见 ./scripts/dev.sh help" ;;
     *) need; checkout "$1" ;;
   esac

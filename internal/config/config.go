@@ -31,6 +31,8 @@ type Config struct {
 	UpdateCheck bool
 	// UpdateRepo (OF_UPDATE_REPO) is the owner/name whose releases are checked.
 	UpdateRepo string
+	// Channel (OF_CHANNEL) is the release channel: "stable" or "beta".
+	Channel string
 }
 
 func Load() (Config, error) {
@@ -53,6 +55,7 @@ func Load() (Config, error) {
 		ApprovalMode:         strings.ToLower(strings.TrimSpace(os.Getenv("OF_APPROVAL_MODE"))),
 		UpdateCheck:          !isOff(os.Getenv("OF_UPDATE_CHECK")),
 		UpdateRepo:           strings.TrimSpace(os.Getenv("OF_UPDATE_REPO")),
+		Channel:              strings.TrimSpace(os.Getenv("OF_CHANNEL")),
 	}
 	if cfg.DatabaseURL == "" && cfg.Driver == "postgres" {
 		cfg.DatabaseURL = "postgres://onefrog:onefrog@127.0.0.1:5432/onefrog?sslmode=disable"

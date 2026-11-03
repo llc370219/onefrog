@@ -367,3 +367,5 @@
 ::selection{background:color-mix(in srgb,var(--accent) 26%,transparent)}
 :focus-visible{outline-color:color-mix(in srgb,var(--accent) 80%,transparent)}
 input:focus,select:focus,textarea:focus{border-color:color-mix(in srgb,var(--accent) 55%,var(--line2))}
+
+.channel-tag{margin-left:8px;vertical-align:middle;color:var(--warn);border-color:color-mix(in srgb,var(--warn) 35%,transparent)}

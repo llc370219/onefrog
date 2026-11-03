@@ -41,6 +41,8 @@ curl -fsSL https://raw.githubusercontent.com/llc370219/onefrog/main/install.sh \
 
 **升级**：重新运行上面的安装命令即可原地升级（改过 `OF_INSTALL_DIR` 的要带上同一个值），账号、设置、对话、密钥和登录状态都会保留。面板会定期检查 GitHub 上的新版本并在顶部提示（可在「设置 → 关于与更新」关闭，或安装时设 `OF_UPDATE_CHECK=0`）。v0.1.8 起，用安装命令升级过一次之后，可以在这里点「立即升级」：面板只写入版本号，由宿主机拉取 `docker-compose.yml` 里已经固定的镜像，不把 Docker 接口挂进容器。
 
+**测试版**：新改动会先发布为测试版（`v0.1.26-beta.1` 这类版本号）。想提前试用，用 `dev` 分支的安装脚本并带上 `OF_CHANNEL=beta`：`curl -fsSL https://raw.githubusercontent.com/llc370219/onefrog/dev/install.sh | sudo OF_CHANNEL=beta bash`。说明见 [docs/版本与发布.md](docs/版本与发布.md)。
+
 安装选项、反向代理示例、升级、备份、卸载和排错见 **[docs/安装.md](docs/安装.md)**。
 
 ## 安全须知
@@ -70,6 +72,7 @@ curl -fsSL https://raw.githubusercontent.com/llc370219/onefrog/main/install.sh \
 | [docs/设置与模型配置.md](docs/设置与模型配置.md) | 模型渠道、OAuth 登录、模型路由、审批模式、提示词 |
 | [docs/UI设计规范.md](docs/UI设计规范.md) | 前端贡献者的界面规范 |
 | [docs/本地预览.md](docs/本地预览.md) | 一条命令在本机预览当前代码或任意 PR |
+| [docs/版本与发布.md](docs/版本与发布.md) | 正式版与测试版、发布流程、安装测试版 |
 
 ## 本地开发
 

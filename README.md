@@ -70,7 +70,6 @@ curl -fsSL https://raw.githubusercontent.com/llc370219/onefrog/main/install.sh \
 | [docs/设置与模型配置.md](docs/设置与模型配置.md) | 模型渠道、OAuth 登录、模型路由、审批模式、提示词 |
 | [docs/UI设计规范.md](docs/UI设计规范.md) | 前端贡献者的界面规范 |
 | [docs/本地预览.md](docs/本地预览.md) | 一条命令在本机预览当前代码或任意 PR |
-| [docs/预览服务器.md](docs/预览服务器.md) | 在一台服务器上常驻预览版，自动跟随最新 PR |
 
 ## 本地开发
 

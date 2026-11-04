@@ -205,6 +205,7 @@ export const api = {
  async usage():Promise<UsageRow[]>{return call('/api/usage');},
   async monitor():Promise<ProbeView>{return call("/api/monitor");},
   async probeToken(id:string,opts:{province?:string;targets?:string[]}={}):Promise<{token:string;server_id:string;ping_targets:PingTarget[]}>{return call("/api/servers/"+encodeURIComponent(id)+"/probe/token",{method:"POST",body:JSON.stringify(opts)});},
+  async probeProvince(id:string,province:string):Promise<{message:string}>{return call('/api/servers/'+encodeURIComponent(id)+'/probe/province',{method:'POST',body:JSON.stringify({province})});},
   async profile(body:{username:string;display_name:string;avatar:string;current_password:string;new_password:string}):Promise<Profile>{return call("/api/auth/profile",{method:"PUT",body:JSON.stringify(body)});},
   async sessions():Promise<ChatSession[]>{return (await call("/api/sessions"))||[];},
   async messages(id:string):Promise<{id:string;role:string;content:string;attachments?:Attachment[];choice?:Choice;secret_request?:SecretRequest;timeline?:TurnItem[]}[]>{return (await call("/api/sessions/"+encodeURIComponent(id)+"/messages"))||[];},

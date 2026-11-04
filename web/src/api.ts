@@ -15,7 +15,7 @@ export type Host = {
 };
 
 export type Mod = { id: string; name: string; desc: string; enabled: boolean; type?: string };
-export type AssetInput = { server_id?: string; name: string; provider?: string; region?: string; plan?: string; cycle?: string; currency?: string; amount_cents: number; paid_at?: string; starts_at?: string; expires_at?: string; auto_renew?: boolean; status?: string; ip?: string; specs?: string; order_no?: string; account?: string; invoice_url?: string; contact?: string; tags?: string[]; notes?: string };
+export type AssetInput = { server_id?: string; name: string; provider?: string; region?: string; plan?: string; cycle?: string; currency?: string; amount_cents: number; paid_at?: string; starts_at?: string; expires_at?: string; auto_renew?: boolean; status?: string; ip?: string; specs?: string; traffic_gb?: number; traffic_mode?: string; order_no?: string; account?: string; invoice_url?: string; contact?: string; tags?: string[]; notes?: string };
 export type AssetRecord = AssetInput & { id: string; tags: string[]; days_total: number; days_left: number; elapsed_ratio: number; residual_cents: number; daily_cents: number; derived_status: string; created_at: string; updated_at: string };
 export type AssetSummary = { count: number; active: number; expiring: number; expired: number; auto_renew: number; monthly_cents: Record<string, number>; residual_cents: Record<string, number>; next_expiry: string; next_name: string };
 export type AssetPage = { summary: AssetSummary; records: AssetRecord[] };

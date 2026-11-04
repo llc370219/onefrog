@@ -51,3 +51,27 @@ func TestResidualAndPersistence(t *testing.T) {
 		t.Fatal("expected date error")
 	}
 }
+
+func TestTrafficAllowance(t *testing.T) {
+	l, err := New("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, err := l.Create(Input{Name: "tyo", ExpiresAt: "2026-12-31", TrafficGB: 1024, TrafficMode: "out"})
+	if err != nil || row.TrafficGB != 1024 || row.TrafficMode != "out" {
+		t.Fatal(row, err)
+	}
+	row, err = l.Create(Input{Name: "lax", ExpiresAt: "2026-12-31", TrafficGB: 500})
+	if err != nil || row.TrafficMode != "both" {
+		t.Fatal(row, err)
+	}
+	if row, err = l.Create(Input{Name: "none", ExpiresAt: "2026-12-31", TrafficMode: "in"}); err != nil || row.TrafficMode != "" {
+		t.Fatal(row, err)
+	}
+	if _, err = l.Create(Input{Name: "bad", ExpiresAt: "2026-12-31", TrafficGB: 10, TrafficMode: "sum"}); err == nil {
+		t.Fatal("bad mode accepted")
+	}
+	if _, err = l.Create(Input{Name: "neg", ExpiresAt: "2026-12-31", TrafficGB: -1}); err == nil {
+		t.Fatal("negative allowance accepted")
+	}
+}

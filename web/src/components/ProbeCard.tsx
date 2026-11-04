@@ -1,6 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ArrowDown, ArrowUp, ChartColumn, Bot, Boxes, ChevronRight, Cpu, Gauge, Database, HardDrive, MemoryStick, Radio, Server, ShieldAlert, Wallet } from 'lucide-react';
-import type { AssetRecord, Host, PingMetric, ProbeNode, ServiceView } from '../api';
+import { api, type AssetInput, type AssetRecord, type Host, type PingMetric, type ProbeNode, type ServiceView } from '../api';
+import { Field, Modal } from './ui';
 import { money } from '../pages/Assets';
 import { cssVar, useTheme } from '../theme';
 import TrafficBreakdown from './TrafficBreakdown';
@@ -93,11 +95,38 @@ const modeLabel: Record<string, string> = { both: '双向', out: '单向 · 出�
 /** Traffic counted against the plan's allowance, per the provider's billing mode. */
 function billed(mode: string, rx: number, tx: number) { return mode === 'out' ? tx : mode === 'in' ? rx : mode === 'max' ? Math.max(rx, tx) : rx + tx; }
 
-export default function ProbeCard({ highlight, host, node, asset, services, onDetails, onConnect, onChat, onTest, onAsset, compact = false }: { highlight?: boolean; host: Host; node?: ProbeNode; asset?: AssetRecord; services?: ServiceView; onDetails: () => void; onConnect?: () => void; onChat?: () => void; onTest?: () => void; onAsset?: () => void; compact?: boolean }) {
+
+/** Quick edit of the plan's monthly traffic allowance, saved on the server's asset record. */
+function QuotaDialog({ asset, onClose, onSaved }: { asset: AssetRecord; onClose: () => void; onSaved?: (row: AssetRecord) => void }) {
+  const [gb, setGb] = useState(asset.traffic_gb ? String(asset.traffic_gb) : '');
+  const [mode, setMode] = useState(asset.traffic_mode || 'both');
+  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  async function save() {
+    const value = gb.trim() ? Number(gb) : 0;
+    if (!Number.isFinite(value) || value < 0) { setError('额度请填数字（GB），不限量留空'); return; }
+    setBusy(true); setError('');
+    try {
+      const { id, tags, created_at: _c, updated_at: _u, days_total: _t, days_left: _l, elapsed_ratio: _e, residual_cents: _r, daily_cents: _d, derived_status: _s, ...rest } = asset;
+      const body: AssetInput = { ...rest, tags, traffic_gb: value, traffic_mode: mode };
+      const row = await api.saveAsset(body, id) as AssetRecord;
+      onSaved?.(row); onClose();
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  }
+  return <Modal title={`月流量额度 · ${asset.name}`} note="按服务商的计费方式统计本月用量，卡片上显示已用和剩余。" onClose={() => !busy && onClose()} onSubmit={save} busy={busy} error={error}>
+    <div className="quota-form">
+      <Field label="每月额度（GB）" hint="不限量留空。"><input autoFocus inputMode="decimal" value={gb} placeholder="例如 1024" onChange={e => setGb(e.target.value)}/></Field>
+      <Field label="计费方式"><select value={mode} onChange={e => setMode(e.target.value)}><option value="both">双向（入 + 出）</option><option value="out">单向（只算出站）</option><option value="in">单向（只算入站）</option><option value="max">单向（取入、出较大者）</option></select></Field>
+    </div>
+  </Modal>;
+}
+
+export default function ProbeCard({ highlight, host, node, asset, services, onDetails, onConnect, onChat, onTest, onAsset, onAssetSaved, compact = false }: { onAssetSaved?: (row: AssetRecord) => void; highlight?: boolean; host: Host; node?: ProbeNode; asset?: AssetRecord; services?: ServiceView; onDetails: () => void; onConnect?: () => void; onChat?: () => void; onTest?: () => void; onAsset?: () => void; compact?: boolean }) {
   const s = node?.latest, status = probeStatus(node), live = status === 'online';
   const label = live ? '在线' : status === 'offline' ? '离线' : node?.enrolled ? '等待上报' : '未接探针';
   const tr = node?.traffic;
   const names = serviceNames(services);
+  const [quotaOpen, setQuotaOpen] = useState(false);
+  const editQuota = asset ? () => setQuotaOpen(true) : onAsset;
   const place = serverPlace(asset?.region, host.name, host.role);
   const renew = asset ? (asset.derived_status === 'expired' ? '已到期' : asset.expires_at ? `剩 ${asset.days_left} 天` : '') : '';
   const price = asset && asset.amount_cents ? `${money(asset.amount_cents, asset.currency || 'CNY')}${asset.cycle && asset.cycle !== 'once' ? '/' + (cycleUnit[asset.cycle] || asset.cycle) : ''}` : '';
@@ -134,9 +163,9 @@ export default function ProbeCard({ highlight, host, node, asset, services, onDe
         <div title={tr ? `本月（${tr.period}）自 ${new Date(tr.since).toLocaleDateString('zh-CN')} 起统计` : '本月流量统计中'}><span><ArrowUp size={13}/>本月出<strong>{tr ? bytes(tr.tx) : '—'}</strong></span><span><ArrowDown size={13}/>本月入<strong>{tr ? bytes(tr.rx) : '—'}</strong></span></div>
       </div>
       {quota ? <div className={`pc-quota ${level(usedPct, 80, 95)}`}>
-        <span><Database size={13}/>流量 <small>{modeLabel[mode]}</small><strong>{used === undefined ? '—' : bytes(used)}<small> / {bytes(quota)}</small></strong></span>
+        <span><Database size={13}/>流量{editQuota ? <button type="button" className="text-btn muted" onClick={editQuota} title="修改月流量额度">{modeLabel[mode]}</button> : <small> {modeLabel[mode]}</small>}<strong>{used === undefined ? '—' : bytes(used)}<small> / {bytes(quota)}</small></strong></span>
         <Blocks value={usedPct} tone={level(usedPct, 80, 95) || 'quota'}/>
-      </div> : <TrafficBreakdown out={tr?.tx} incoming={tr?.rx}/>}
+      </div> : <TrafficBreakdown out={tr?.tx} incoming={tr?.rx} action={editQuota && <button type="button" className="text-btn" onClick={editQuota} title={asset ? '设置月流量额度' : '先登记资产，再设置月流量额度'}>设置额度</button>}/>}
       {carriers.length ? <div className="pc-isps" aria-label="三网 TCP 延迟与连接失败率">
         <div className="pc-isps-head"><Radio size={12}/>三网延迟<small>{node?.province?.name || ''}</small>{onConnect&&<button type="button" className="text-btn" onClick={onConnect}>更换省份</button>}</div>
         {carriers.map(n => <IspRow key={n} name={n} history={ispHistory(n)}/>)}
@@ -148,5 +177,6 @@ export default function ProbeCard({ highlight, host, node, asset, services, onDe
       <span className="pc-services" title={names?.join('、')}><Boxes size={12}/><span>{names === null ? '服务未检测' : names.length ? names.join(' · ') : '无运行服务'}</span>{!!names && names.length > 2 && <small>{names.length}</small>}</span>
       <span className="pc-actions">{onChat && <button className="pc-icon" onClick={onChat} title="让 Bot 处理这台服务器" aria-label="让 Bot 处理这台服务器"><Bot size={14}/></button>}{!node?.enrolled && onConnect ? <button className="text-btn strong" onClick={onConnect}>接入探针</button> : <button className="text-btn" onClick={onDetails}>详情<ChevronRight size={13}/></button>}</span>
     </footer>
+    {quotaOpen && asset && createPortal(<QuotaDialog asset={asset} onClose={() => setQuotaOpen(false)} onSaved={onAssetSaved}/>, document.body)}
   </article>;
 }

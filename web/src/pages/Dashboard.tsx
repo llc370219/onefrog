@@ -23,10 +23,10 @@ export default function Dashboard({ hosts, mods, history, bots, job, sending, on
   const warning = hosts.filter(h => h.up && h.disk >= 70);
   const enabled = mods.filter(m => m.enabled && (m.id !== 'activity' || m.type === 'custom')).sort((a,b) => rank(a.id) - rank(b.id));
   const stats = [
-    { label: '在线服务器', value: online.toString().padStart(2,'0'), suffix: `/ ${hosts.length.toString().padStart(2,'0')}`, icon: Server, note: `${probeNodes.filter(n=>n.status==='pending').length} 台等待探针上报`, tone: '', action: onServers },
-    { label: '需要关注', value: (offline.length + warning.length).toString().padStart(2,'0'), suffix: '', icon: TriangleAlert, note: `${offline.length} 台离线 · ${warning.length} 台磁盘偏高`, tone: offline.length + warning.length ? 'warn' : '', action: onServers },
-    { label: '协作 Bot', value: bots.length.toString().padStart(2,'0'), suffix: '', icon: Bot, note: bots.length ? bots.map(b => b.name).join(' / ') : '尚未创建 Bot', tone: '', action: onBots },
-    { label: '安全拦截', value: blocked.length.toString().padStart(2,'0'), suffix: '', icon: ShieldCheck, note: '点击查看变更记录中的拦截详情', tone: '', action: () => onHistory('blocked', '') },
+    { label: '在线服务器', value: online.toString(), suffix: `/ ${hosts.length.toString()}`, icon: Server, note: `${probeNodes.filter(n=>n.status==='pending').length} 台等待探针上报`, tone: '', action: onServers },
+    { label: '需要关注', value: (offline.length + warning.length).toString(), suffix: '', icon: TriangleAlert, note: `${offline.length} 台离线 · ${warning.length} 台磁盘偏高`, tone: offline.length + warning.length ? 'warn' : '', action: onServers },
+    { label: '协作 Bot', value: bots.length.toString(), suffix: '', icon: Bot, note: bots.length ? bots.map(b => b.name).join(' / ') : '尚未创建 Bot', tone: '', action: onBots },
+    { label: '安全拦截', value: blocked.length.toString(), suffix: '', icon: ShieldCheck, note: '点击查看变更记录中的拦截详情', tone: '', action: () => onHistory('blocked', '') },
   ];
   return <div className="page dashboard"><PageHeading eyebrow="WORKSPACE / OVERVIEW" title="面板" note="掌握服务器状态，让助理直接处理。" actions={<><Button onClick={onSettings}><SlidersHorizontal size={15}/>设置</Button><Button variant="primary" onClick={onModules}><LayoutGrid size={15}/>选取模块</Button></>}/>
     <div className="metrics">{stats.map(({label, value, suffix, icon: Icon, note, tone, action}) => <button type="button" className="metric metric-btn" key={label} onClick={action}><div className="metric-top">{label}<Icon size={16} strokeWidth={1.5}/></div><div className={`metric-value ${tone}`}>{value}<span>{suffix}</span></div><p>{note}</p></button>)}</div>

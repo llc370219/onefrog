@@ -65,13 +65,18 @@ func (s *Server) probeToken(c *gin.Context) {
 func (s *Server) probeProvince(c *gin.Context) {
 	var req struct {
 		Province *string `json:"province"`
+		Interval *int    `json:"ping_interval_seconds"`
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1024)
 	if c.ShouldBindJSON(&req) != nil || req.Province == nil {
 		fail(c, 400, "请选择测速省份，或选择不测三网")
 		return
 	}
-	if err := s.Onboarding.ConfigureProvince(c.Request.Context(), c.Param("id"), strings.TrimSpace(*req.Province)); err != nil {
+	interval := 60
+	if req.Interval != nil {
+		interval = *req.Interval
+	}
+	if err := s.Onboarding.ConfigureProvince(c.Request.Context(), c.Param("id"), strings.TrimSpace(*req.Province), interval); err != nil {
 		fail(c, 400, err.Error())
 		return
 	}

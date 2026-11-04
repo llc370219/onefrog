@@ -205,7 +205,7 @@ export const api = {
  async usage():Promise<UsageRow[]>{return call('/api/usage');},
   async monitor():Promise<ProbeView>{return call("/api/monitor");},
   async probeToken(id:string,opts:{province?:string;targets?:string[]}={}):Promise<{token:string;server_id:string;ping_targets:PingTarget[]}>{return call("/api/servers/"+encodeURIComponent(id)+"/probe/token",{method:"POST",body:JSON.stringify(opts)});},
-  async probeProvince(id:string,province:string):Promise<{message:string}>{return call('/api/servers/'+encodeURIComponent(id)+'/probe/province',{method:'POST',body:JSON.stringify({province})});},
+  async probeProvince(id:string,province:string,pingIntervalSeconds=60):Promise<{message:string}>{return call('/api/servers/'+encodeURIComponent(id)+'/probe/province',{method:'POST',body:JSON.stringify({province,ping_interval_seconds:pingIntervalSeconds})});},
   async profile(body:{username:string;display_name:string;avatar:string;current_password:string;new_password:string}):Promise<Profile>{return call("/api/auth/profile",{method:"PUT",body:JSON.stringify(body)});},
   async sessions():Promise<ChatSession[]>{return (await call("/api/sessions"))||[];},
   async messages(id:string):Promise<{id:string;role:string;content:string;attachments?:Attachment[];choice?:Choice;secret_request?:SecretRequest;timeline?:TurnItem[]}[]>{return (await call("/api/sessions/"+encodeURIComponent(id)+"/messages"))||[];},
@@ -477,13 +477,13 @@ export type SettingsState = {
 };
 export type ApprovalRow = {id:string;created_at:string;bot_name:string;server_name:string;command:string;status:string;review:{allow:boolean;reason:string;risk:string;model:string;provider_id:string;mode:string;findings?:RiskFinding[];model_reason?:string;untrusted?:string}};
 
-export type PingMetric={name:string;target:string;latency_ms:number|null;loss_percent:number|null;samples:number};
+export type PingMetric={method?:'tcp'|'icmp';measured_at?:string;next_check_at?:string;name:string;target:string;latency_ms:number|null;loss_percent:number|null;samples:number};
 export type ProbeSample={received_at:string;hostname:string;os:string;arch:string;cpu_model:string;cpu_cores:number;cpu_percent:number;memory_used:number;memory_total:number;swap_used:number;swap_total:number;disk_used:number;disk_total:number;rx_bytes:number;tx_bytes:number;rx_rate:number;tx_rate:number;uptime_seconds:number;load:number[];tcp_connections:number;processes:number;pings:PingMetric[]};
 export type Province={code:string;name:string};
 /** This calendar month's interface traffic; since = when counting started in the month. */
 export type ProbeTraffic={period:string;since:string;rx:number;tx:number;prev_period?:string;prev_rx:number;prev_tx:number};
 export type PingTarget={name:string;host:string;port?:number};
-export type ProbeNode={server_id:string;status:'online'|'offline'|'pending';enrolled:boolean;province?:Province;traffic?:ProbeTraffic;latest:ProbeSample|null;history:ProbeSample[]};
+export type ProbeNode={ping_interval_seconds?:number;server_id:string;status:'online'|'offline'|'pending';enrolled:boolean;province?:Province;traffic?:ProbeTraffic;latest:ProbeSample|null;history:ProbeSample[]};
 export type ProbeView={nodes:ProbeNode[];stale_after_seconds:number;history_limit:number};
 
 export type OAuthDefinition={kind:string;name:string;base_url:string;experimental:boolean;scopes:string;configured:boolean;setup_hint?:string;setup_doc?:string};

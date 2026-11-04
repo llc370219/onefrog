@@ -3,6 +3,7 @@
 import json
 import os
 import platform
+import random
 import re
 import shutil
 import signal
@@ -10,6 +11,7 @@ import socket
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 import urllib.request
 from urllib.parse import urlparse
@@ -63,7 +65,7 @@ def tcp_count():
     return count
 
 
-TCP_ATTEMPTS = 4
+TCP_ATTEMPTS = 3
 
 
 def tcp_ping(host, port, attempts=TCP_ATTEMPTS, timeout=2.0):
@@ -121,6 +123,60 @@ def ping(target):
     return result
 
 
+def ping_interval(value):
+    try:
+        return max(60, min(300, int(value)))
+    except (TypeError, ValueError, OverflowError):
+        return 60
+
+
+class PingScheduler:
+    """Independent per-target deadlines; cached readings retain their timestamp.
+
+    The metrics loop never waits for DNS, TCP or ICMP. Failed targets back off
+    independently so an unavailable carrier cannot slow down healthy targets.
+    """
+    def __init__(self, targets, interval=60, clock=time.monotonic,
+                 wall=time.time, uniform=random.uniform, pool=None):
+        self.interval = ping_interval(interval)
+        self.clock, self.wall, self.uniform = clock, wall, uniform
+        self.pool = pool or ThreadPoolExecutor(max_workers=3)
+        now = clock()
+        self.tasks = [dict(target=t, due=now+uniform(0, 15), failures=0,
+                           future=None, result=None) for t in targets[:8]]
+
+    def measure(self, target):
+        result = ping(target)
+        result['method'] = 'tcp' if target.get('port') else 'icmp'
+        result['measured_at'] = datetime.fromtimestamp(self.wall(), timezone.utc).isoformat()
+        return result
+
+    def readings(self):
+        now = self.clock()
+        for task in self.tasks:
+            future = task['future']
+            if future is not None and future.done():
+                try:
+                    result = future.result()
+                except Exception:
+                    # Do not leak target configuration or credentials in errors.
+                    result = dict(name=str(task['target'].get('name', '')),
+                                  target=str(task['target'].get('host', '')),
+                                  latency_ms=None, loss_percent=None, samples=0,
+                                  method='tcp' if task['target'].get('port') else 'icmp',
+                                  measured_at=datetime.fromtimestamp(self.wall(), timezone.utc).isoformat())
+                failed = not result['samples'] or result['loss_percent'] is None or result['loss_percent'] >= 100
+                task['failures'] = min(4, task['failures']+1) if failed else 0
+                delay = min(900, self.interval * 2**task['failures'])
+                delay = min(900, delay+self.uniform(0, delay*0.1))
+                task['due'] = now+delay
+                result['next_check_at'] = datetime.fromtimestamp(self.wall()+delay, timezone.utc).isoformat()
+                task['result'], task['future'] = result, None
+            if task['future'] is None and now >= task['due']:
+                task['future'] = self.pool.submit(self.measure, task['target'])
+        return [dict(t['result']) for t in self.tasks if t['result'] is not None]
+
+
 def main(config_path):
     if sys.platform != 'linux':
         raise SystemExit('This probe currently supports Linux only.')
@@ -132,6 +188,7 @@ def main(config_path):
         raise SystemExit('Invalid report endpoint')
     interval = max(10, int(config.get('interval_seconds', 15)))
     targets = config.get('ping_targets', [])[:8]
+    scheduler = PingScheduler(targets, config.get('ping_interval_seconds', 60))
     interfaces = config.get('interfaces') or None
     token = config['token']
     # No automatic retry of command execution: this agent only reads and reports metrics.
@@ -166,9 +223,7 @@ def main(config_path):
                       uptime_seconds=int(float(open('/proc/uptime').read().split()[0])),
                       load=list(os.getloadavg()), tcp_connections=tcp_count(),
                       processes=sum(name.isdigit() for name in os.listdir('/proc')), pings=[])
-        if targets:
-            with ThreadPoolExecutor(max_workers=8) as pool:
-                sample['pings'] = list(pool.map(ping, targets))
+        sample['pings'] = scheduler.readings()
         sample.update(memory())
         previous_cpu, previous_net, previous_time = current_cpu, current_net, started
         request = urllib.request.Request(endpoint, data=json.dumps({'server_id': config['server_id'], 'sample': sample}).encode(),

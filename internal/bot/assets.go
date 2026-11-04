@@ -106,7 +106,7 @@ func inputFrom(row asset.View) asset.Input {
 		ServerID: row.ServerID, Name: row.Name, Provider: row.Provider, Region: row.Region, Plan: row.Plan,
 		Cycle: row.Cycle, Currency: row.Currency, AmountCents: row.AmountCents, PaidAt: row.PaidAt,
 		StartsAt: row.StartsAt, ExpiresAt: row.ExpiresAt, AutoRenew: row.AutoRenew, Status: row.Status,
-		IP: row.IP, Specs: row.Specs, OrderNo: row.OrderNo, Account: row.Account, InvoiceURL: row.InvoiceURL,
+		IP: row.IP, Specs: row.Specs, TrafficGB: row.TrafficGB, TrafficMode: row.TrafficMode, OrderNo: row.OrderNo, Account: row.Account, InvoiceURL: row.InvoiceURL,
 		Contact: row.Contact, Tags: tags, Notes: row.Notes,
 	}
 }
@@ -130,6 +130,7 @@ func applyAsset(in *asset.Input, raw map[string]json.RawMessage) error {
 	set("status", &in.Status)
 	set("ip", &in.IP)
 	set("specs", &in.Specs)
+	set("traffic_mode", &in.TrafficMode)
 	set("order_no", &in.OrderNo)
 	set("account", &in.Account)
 	set("invoice_url", &in.InvoiceURL)
@@ -141,6 +142,13 @@ func applyAsset(in *asset.Input, raw map[string]json.RawMessage) error {
 			return fmt.Errorf("auto_renew 必须是布尔值")
 		}
 		in.AutoRenew = flag
+	}
+	if v, ok := raw["traffic_gb"]; ok {
+		var gb float64
+		if err := json.Unmarshal(v, &gb); err != nil {
+			return fmt.Errorf("traffic_gb 必须是数字（GB）")
+		}
+		in.TrafficGB = gb
 	}
 	if v, ok := raw["amount_yuan"]; ok {
 		cents, err := yuanToCents(v)

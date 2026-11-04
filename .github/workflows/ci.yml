@@ -46,6 +46,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
       - run: npm audit --audit-level=moderate
+      - run: npm test
       - run: npm run build
 
   installer:

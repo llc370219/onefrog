@@ -497,6 +497,14 @@ func (s *Server) listModules(c *gin.Context) {
 	if items == nil {
 		items = []model.Module{}
 	}
+	for i := range items {
+		if items[i].ID == "assets" && items[i].Type != "custom" {
+			if stock, ok := module.Find("assets"); ok {
+				items[i].Name = stock.Name
+				items[i].Description = stock.Description
+			}
+		}
+	}
 	c.JSON(http.StatusOK, items)
 }
 

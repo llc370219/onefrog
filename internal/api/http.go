@@ -33,21 +33,22 @@ import (
 )
 
 type Server struct {
-	Services   *services.Scanner
-	OAuth      *providerlogin.Manager
-	Onboarding *onboarding.Manager
-	PublicURL  string
-	Files      *attachment.Manager
-	Usage      *usage.Manager
-	Store      store.Store
-	Box        *secret.Box
-	Agent      *bot.Agent
-	Secure     bool
-	WebDir     string
-	Settings   *preferences.Manager
-	Monitor    *monitor.Manager
-	Assets     *asset.Ledger
-	DevModules *devmodule.Book
+	Services      *services.Scanner
+	OAuth         *providerlogin.Manager
+	Onboarding    *onboarding.Manager
+	PublicURL     string
+	Files         *attachment.Manager
+	Usage         *usage.Manager
+	Store         store.Store
+	Box           *secret.Box
+	Agent         *bot.Agent
+	Secure        bool
+	WebDir        string
+	Settings      *preferences.Manager
+	Monitor       *monitor.Manager
+	Assets        *asset.Ledger
+	AssetExchange *asset.Exchange
+	DevModules    *devmodule.Book
 	// Updates checks GitHub for newer releases; nil reports a dev build.
 	Updates *update.Checker
 	// TrustedProxies is OF_TRUSTED_PROXIES (comma separated CIDRs/IPs, or "none").
@@ -56,6 +57,9 @@ type Server struct {
 }
 
 func (s *Server) Handler() http.Handler {
+	if s.AssetExchange == nil {
+		s.AssetExchange = asset.NewExchange()
+	}
 	if s.Settings == nil {
 		s.Settings, _ = preferences.New("", s.Box)
 	}
@@ -179,6 +183,7 @@ func (s *Server) Handler() http.Handler {
 	authed.POST("/modules/install", s.installModule)
 	authed.POST("/modules/:id/enable", s.enableModule)
 	authed.GET("/assets", s.listAssets)
+	authed.GET("/assets/rates", s.assetRates)
 	authed.POST("/assets", s.createAsset)
 	authed.PUT("/assets/:id", s.updateAsset)
 	authed.DELETE("/assets/:id", s.deleteAsset)

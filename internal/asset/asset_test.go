@@ -75,3 +75,35 @@ func TestTrafficAllowance(t *testing.T) {
 		t.Fatal("negative allowance accepted")
 	}
 }
+
+func TestSubscriptionSummaryHistoryAndSevenDayBoundary(t *testing.T) {
+	l, _ := New("", nil)
+	l.now = func() time.Time { return time.Date(2026, 11, 4, 8, 0, 0, 0, time.UTC) }
+	for _, in := range []Input{
+		{Name: "AI 会员", Cycle: "monthly", AmountCents: 2000, ExpiresAt: "2026-11-11"},
+		{Name: "域名", Cycle: "yearly", AmountCents: 1200, ExpiresAt: "2026-11-12"},
+		{Name: "过期不续费", Cycle: "monthly", AmountCents: 99900, ExpiresAt: "2026-11-03"},
+		{Name: "过期继续续费", Cycle: "monthly", AmountCents: 300, AutoRenew: true, ExpiresAt: "2026-11-03"},
+		{Name: "已结束", Cycle: "monthly", AmountCents: 88800, Status: StatusCancelled, ExpiresAt: "2026-12-01"},
+		{Name: "一次性", Cycle: "once", AmountCents: 500},
+	} {
+		if _, err := l.Create(in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := l.Summary()
+	if s.Count != 6 || s.Subscriptions != 4 || s.Historical != 2 || s.Expiring != 1 || s.MonthlyCents["USD"] != 2400 || s.NextName != "AI 会员" {
+		t.Fatalf("summary %+v", s)
+	}
+	for _, row := range l.List() {
+		if row.Name == "过期不续费" {
+			_, err := l.Update(row.ID, Input{Name: row.Name, Cycle: "monthly", AmountCents: 200, Currency: "USD", ExpiresAt: "2026-12-01"})
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if s = l.Summary(); s.Historical != 1 || s.Subscriptions != 5 || s.MonthlyCents["USD"] != 2600 {
+		t.Fatalf("renewal not reflected %+v", s)
+	}
+}

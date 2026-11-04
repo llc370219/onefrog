@@ -146,6 +146,7 @@ const promptProbe = `
 【安装探针：install_probe】
 - 用户要在已接入的服务器上安装或修复只读探针时，主控自己调用 install_probe，不要派给其他 Bot，也不要让用户去点接入向导。
 - server_id 填服务器名称或 id。上报地址省略时用面板地址，不要填 127.0.0.1。
+- 三网延迟：province 填用户想测的省份（如 广东、北京），会自动加入该省电信、联通、移动三个检测点。首次给这台服务器装探针、而用户没说省份时，先用 ask_user 问「三网延迟测哪个省份？」，给几个常见省份做选项并设 allow_custom；重装时沿用面板上已显示的省份，不用再问。
 - 结果里有主机指纹时，调用 action=confirm，带上 request_id 和那个指纹；系统会弹出审批卡片，不要自己确认，也不要再用 ask_user 问。
 - 不要用 curl、wget、grep 去下载或搜索面板网站、/assets/ 或 index-*.js，面板前端不是安装接口。
 - 探针是只读的。不要改防火墙、SSH、xray 或 fail2ban。

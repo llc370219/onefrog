@@ -6,6 +6,7 @@ import platform
 import re
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -62,11 +63,47 @@ def tcp_count():
     return count
 
 
+TCP_ATTEMPTS = 4
+
+
+def tcp_ping(host, port, attempts=TCP_ATTEMPTS, timeout=2.0):
+    """Measures TCP handshake time to host:port. Many carrier CDN nodes drop
+    ICMP, so the three-network targets are measured this way (port 80)."""
+    times, lost = [], 0
+    try:
+        infos = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+    except (OSError, UnicodeError):
+        return None, None, 0
+    if not infos:
+        return None, None, 0
+    addr = infos[0][4]
+    for i in range(attempts):
+        started = time.monotonic()
+        try:
+            with socket.create_connection(addr, timeout=timeout):
+                times.append((time.monotonic() - started) * 1000)
+        except OSError:
+            lost += 1
+        if i + 1 < attempts:
+            time.sleep(0.2)
+    latency = round(sum(times) / len(times), 2) if times else None
+    return latency, round(lost * 100.0 / attempts, 1), attempts
+
+
 def ping(target):
     name = str(target.get('name', target.get('host', '')))
     host = str(target.get('host', ''))
+    try:
+        port = int(target.get('port') or 0)
+    except (TypeError, ValueError):
+        port = 0
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9.-]{0,199}', host) and not re.fullmatch(r'[0-9a-fA-F:]{2,45}', host):
+        return dict(name=name, target=host, latency_ms=None, loss_percent=None, samples=0)
+    if 0 < port < 65536:
+        latency, loss, samples = tcp_ping(host, port)
+        return dict(name=name, target='%s:%d' % (host, port), latency_ms=latency, loss_percent=loss, samples=samples)
     result = dict(name=name, target=host, latency_ms=None, loss_percent=None, samples=3)
-    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9.:-]{0,199}', host) or not shutil.which('ping'):
+    if not shutil.which('ping'):
         result['samples'] = 0
         return result
     try:

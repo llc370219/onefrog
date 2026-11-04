@@ -40,6 +40,9 @@ type Request struct {
 	ReportBase string   `json:"report_base"`
 	Interval   int      `json:"interval"`
 	Targets    []string `json:"targets"`
+	// Province (code or name, e.g. "gd" / "广东") adds that province's 电信/联通/移动
+	// TCP-Ping targets in front of Targets.
+	Province string `json:"province"`
 }
 type Step struct {
 	ID      string `json:"id"`
@@ -219,8 +222,17 @@ func Validate(r *Request) error {
 		if r.Interval < 10 || r.Interval > 300 {
 			return errors.New("采集间隔为 10–300 秒")
 		}
-		if len(r.Targets) > 8 {
-			return errors.New("最多 8 个线路检测目标")
+		extra := 0
+		if r.Province != "" {
+			p, ok := monitor.LookupProvince(strings.TrimSpace(r.Province))
+			if !ok {
+				return errors.New("不认识的省份，请选择三网测速所在的省份")
+			}
+			r.Province = p.Code
+			extra = 3
+		}
+		if len(r.Targets)+extra > 8 {
+			return errors.New("最多 8 个线路检测目标（选了省份时三网占 3 个）")
 		}
 		for _, t := range r.Targets {
 			if net.ParseIP(t) == nil && !hostPattern.MatchString(t) {
@@ -458,11 +470,12 @@ func (m *Manager) run(key string, rec store.ServerRec, r Request) {
 		return
 	}
 	config := map[string]any{"server_id": rec.ID, "token": token, "endpoint": strings.TrimRight(r.ReportBase, "/") + "/api/probe/report", "interval_seconds": r.Interval}
-	targets := []map[string]string{}
-	for _, t := range r.Targets {
-		targets = append(targets, map[string]string{"name": t, "host": t})
+	config["ping_targets"] = ProbeTargets(r.Province, r.Targets)
+	if err := m.monitor.SetProvince(rec.ID, r.Province); err != nil {
+		m.step(key, "probe", "failed", "测速省份没有保存")
+		m.finish(key, "partial", "服务器已加入，探针未完成")
+		return
 	}
-	config["ping_targets"] = targets
 	raw, _ := json.Marshal(config)
 	out, err = run(installScript(raw))
 	if err != nil || !strings.Contains(out, "ONEFROG_PROBE_INSTALLED") {
@@ -644,4 +657,17 @@ func (m *Manager) RemoveProbe(ctx context.Context, rec store.ServerRec) ProbeRem
 	default:
 		return ProbeRemoval{"failed", "无法连接或卸载失败；请按文档在节点上手动卸载探针"}
 	}
+}
+
+// ProbeTargets builds the probe's ping_targets: the province's 电信/联通/移动
+// TCP-Ping targets first (when a province is given), then custom ICMP targets.
+func ProbeTargets(province string, custom []string) []monitor.PingTarget {
+	out := []monitor.PingTarget{}
+	if p, ok := monitor.LookupProvince(province); ok {
+		out = append(out, monitor.ISPTargets(p)...)
+	}
+	for _, t := range custom {
+		out = append(out, monitor.PingTarget{Name: t, Host: t})
+	}
+	return out
 }

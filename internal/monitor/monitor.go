@@ -49,18 +49,79 @@ type Sample struct {
 type Node struct {
 	TokenHash string   `json:"token_hash"`
 	Samples   []Sample `json:"samples"`
+	// Province is where the three-network (电信/联通/移动) targets are, e.g. "gd".
+	Province string  `json:"province,omitempty"`
+	Traffic  traffic `json:"traffic"`
 }
+
+// traffic accumulates interface counters per calendar month (panel time zone).
+// The probe reports counters since boot; a smaller value than last time means
+// the machine rebooted (or the counter reset) and the new value is all new traffic.
+type traffic struct {
+	Period     string    `json:"period"`
+	Since      time.Time `json:"since"`
+	RX         uint64    `json:"rx"`
+	TX         uint64    `json:"tx"`
+	PrevPeriod string    `json:"prev_period,omitempty"`
+	PrevRX     uint64    `json:"prev_rx,omitempty"`
+	PrevTX     uint64    `json:"prev_tx,omitempty"`
+	Seen       bool      `json:"seen"`
+	LastRX     uint64    `json:"last_rx"`
+	LastTX     uint64    `json:"last_tx"`
+	LastUptime uint64    `json:"last_uptime"`
+}
+
+// TrafficView is the month's traffic shown in the panel. Since is when counting
+// started in this period (the 1st, or the first report if the probe is newer).
+type TrafficView struct {
+	Period     string    `json:"period"`
+	Since      time.Time `json:"since"`
+	RX         uint64    `json:"rx"`
+	TX         uint64    `json:"tx"`
+	PrevPeriod string    `json:"prev_period,omitempty"`
+	PrevRX     uint64    `json:"prev_rx"`
+	PrevTX     uint64    `json:"prev_tx"`
+}
+
+func (t traffic) add(s Sample, now time.Time) traffic {
+	local := now.In(time.Local)
+	period := local.Format("2006-01")
+	if t.Period != period {
+		if t.Period != "" {
+			t.PrevPeriod, t.PrevRX, t.PrevTX = t.Period, t.RX, t.TX
+		}
+		t.Period, t.RX, t.TX = period, 0, 0
+		t.Since = now.UTC()
+		if t.Seen {
+			t.Since = time.Date(local.Year(), local.Month(), 1, 0, 0, 0, 0, time.Local).UTC()
+		}
+	}
+	if t.Seen {
+		if s.UptimeSeconds < t.LastUptime || s.RXBytes < t.LastRX || s.TXBytes < t.LastTX {
+			t.RX += s.RXBytes
+			t.TX += s.TXBytes
+		} else {
+			t.RX += s.RXBytes - t.LastRX
+			t.TX += s.TXBytes - t.LastTX
+		}
+	}
+	t.Seen, t.LastRX, t.LastTX, t.LastUptime = true, s.RXBytes, s.TXBytes, s.UptimeSeconds
+	return t
+}
+
 type Manager struct {
 	mu    sync.RWMutex
 	path  string
 	nodes map[string]Node
 }
 type View struct {
-	ServerID string   `json:"server_id"`
-	Status   string   `json:"status"`
-	Enrolled bool     `json:"enrolled"`
-	Latest   *Sample  `json:"latest"`
-	History  []Sample `json:"history"`
+	ServerID string       `json:"server_id"`
+	Status   string       `json:"status"`
+	Enrolled bool         `json:"enrolled"`
+	Province *Province    `json:"province,omitempty"`
+	Traffic  *TrafficView `json:"traffic,omitempty"`
+	Latest   *Sample      `json:"latest"`
+	History  []Sample     `json:"history"`
 }
 
 const MaxSamples = 120
@@ -195,6 +256,7 @@ func (m *Manager) Report(id string, s Sample, now time.Time) error {
 	}
 	s.ReceivedAt = now.UTC()
 	next := old
+	next.Traffic = old.Traffic.add(s, now)
 	next.Samples = append(append([]Sample{}, old.Samples...), s)
 	if len(next.Samples) > MaxSamples {
 		next.Samples = next.Samples[len(next.Samples)-MaxSamples:]
@@ -213,6 +275,12 @@ func (m *Manager) Views(ids []string, now time.Time) []View {
 	for _, id := range ids {
 		n := m.nodes[id]
 		v := View{ServerID: id, Status: "pending", Enrolled: n.TokenHash != "", History: []Sample{}}
+		if p, ok := LookupProvince(n.Province); ok {
+			v.Province = &p
+		}
+		if t := n.Traffic; t.Seen {
+			v.Traffic = &TrafficView{Period: t.Period, Since: t.Since, RX: t.RX, TX: t.TX, PrevPeriod: t.PrevPeriod, PrevRX: t.PrevRX, PrevTX: t.PrevTX}
+		}
 		if len(n.Samples) > 0 {
 			v.History = append([]Sample{}, n.Samples...)
 			last := n.Samples[len(n.Samples)-1]
@@ -225,6 +293,33 @@ func (m *Manager) Views(ids []string, now time.Time) []View {
 		out = append(out, v)
 	}
 	return out
+}
+
+// SetProvince records which province's 电信/联通/移动 targets the server's probe
+// measures. An empty value clears it.
+func (m *Manager) SetProvince(id, province string) error {
+	if province != "" {
+		p, ok := LookupProvince(province)
+		if !ok {
+			return errors.New("不认识的省份")
+		}
+		province = p.Code
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	old, existed := m.nodes[id]
+	next := old
+	next.Province = province
+	m.nodes[id] = next
+	if err := m.persist(); err != nil {
+		if existed {
+			m.nodes[id] = old
+		} else {
+			delete(m.nodes, id)
+		}
+		return err
+	}
+	return nil
 }
 
 // Remove forgets a server's probe credential and samples, so a deleted

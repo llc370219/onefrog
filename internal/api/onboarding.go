@@ -5,12 +5,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"onefrog/internal/model"
+	"onefrog/internal/monitor"
 	"onefrog/internal/onboarding"
 	"onefrog/internal/store"
 )
 
 func (s *Server) onboardingDefaults(c *gin.Context) {
-	c.JSON(200, gin.H{"report_base": s.PublicURL, "interval": 15, "configure": true})
+	c.JSON(200, gin.H{"report_base": s.PublicURL, "interval": 15, "configure": true, "provinces": monitor.Provinces})
 }
 func (s *Server) startOnboarding(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 384*1024)

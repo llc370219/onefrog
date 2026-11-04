@@ -50,7 +50,7 @@ export default function Dashboard({ hosts, mods, history, bots, job, sending, on
       {mod.id === 'develop' && <DevelopGlance onOpenStudio={() => onOpenModule('develop')} onOpenModule={onOpenModule}/>}
       {mod.type === 'custom' && <CustomModuleFrame moduleId={mod.id} title={mod.name} compact/>}</section>;
     })}</div>}
-    {setupHost&&<ProbeSetup key={setupHost.id} host={setupHost} enrolled={!!probeNodes.find(n=>n.server_id===setup)?.enrolled} province={probeNodes.find(n=>n.server_id===setup)?.province} onClose={()=>setSetup('')} onIssued={()=>{api.monitor().then(r=>setProbeNodes(r.nodes)).catch(()=>setProbeError('探针数据暂时不可用'));}}/>}
+    {setupHost&&<ProbeSetup key={setupHost.id} host={setupHost} enrolled={!!probeNodes.find(n=>n.server_id===setup)?.enrolled} province={probeNodes.find(n=>n.server_id===setup)?.province} pingIntervalSeconds={probeNodes.find(n=>n.server_id===setup)?.ping_interval_seconds} onClose={()=>setSetup('')} onIssued={()=>{api.monitor().then(r=>setProbeNodes(r.nodes)).catch(()=>setProbeError('探针数据暂时不可用'));}}/>}
     <footer className="workspace-foot"><span><ShieldCheck size={13}/>凭据加密存储 · 执行前审核</span><span>ONEFROG / OPERATIONS</span></footer>
   </div>;
 }

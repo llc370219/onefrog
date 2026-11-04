@@ -72,10 +72,10 @@ function History({ values, tone }: { values: (PingMetric | undefined)[]; tone: (
 function IspRow({ name, history }: { name: string; history: (PingMetric | undefined)[] }) {
   const last = history[history.length - 1];
   const lat = last?.latency_ms, loss = last?.loss_percent;
-  return <div className="pc-isp" title={last ? `${last.target} · 每次 ${last.samples} 个探测` : undefined}>
-    <div><span>{name}</span><strong className={latTone(lat)}>{lat === undefined ? '—' : lat === null ? '超时' : Math.round(lat)}{typeof lat === 'number' && <small>ms</small>}</strong></div>
+  return <div className="pc-isp" title={last ? `${last.target} · 每轮 ${last.samples} 次连接尝试${last.measured_at?' · 检测于 '+new Date(last.measured_at).toLocaleTimeString():''}${last.next_check_at?' · 下次检测不早于 '+new Date(last.next_check_at).toLocaleTimeString():''} · 连接失败率不等于网络丢包率` : undefined}>
+    <div><span>{name}</span><strong className={latTone(lat)}>{lat === undefined ? '—' : lat === null ? (last?.samples?'未连通':'未测得') : Math.round(lat)}{typeof lat === 'number' && <small>ms</small>}</strong></div>
     <History values={history} tone={p => p ? latTone(p.latency_ms) : ''}/>
-    <div><span>丢包</span><strong className={lossTone(loss)}>{loss === undefined || loss === null ? '—' : +loss.toFixed(1)}{typeof loss === 'number' && <small>%</small>}</strong></div>
+    <div><span>连接失败率</span><strong className={lossTone(loss)}>{loss === undefined || loss === null ? '—' : +loss.toFixed(1)}{typeof loss === 'number' && <small>%</small>}</strong></div>
     <History values={history} tone={p => p ? lossTone(p.loss_percent) : ''}/>
   </div>;
 }
@@ -110,7 +110,7 @@ export default function ProbeCard({ highlight, host, node, asset, services, onDe
   const history = node?.history || [];
   const matchesProvince = (target:string) => !node?.province || target.startsWith(node.province.code+'-');
   const carriers = ['电信', '联通', '移动'].filter(n => s?.pings.some(p => p.name === n&&matchesProvince(p.target)));
-  const ispHistory = (n: string) => { const rows = history.slice(-HISTORY).map(h => h.pings.find(p => p.name === n&&matchesProvince(p.target))); return [...Array<undefined>(HISTORY - rows.length).fill(undefined), ...rows]; };
+  const ispHistory = (n: string) => { const unique=new Map<string,PingMetric>();for(const h of history){const p=h.pings.find(p=>p.name===n&&matchesProvince(p.target));if(p)unique.set(p.measured_at||h.received_at,p);}const rows=[...unique.values()].slice(-HISTORY);return [...Array<undefined>(HISTORY-rows.length).fill(undefined),...rows]; };
   return <article className={`probe-card pc ${highlight ? 'newly-added' : ''} ${live ? 'live' : ''} ${status} ${compact ? 'probe-compact' : ''}`}>
     <header className="pc-head">
       <span className={`pc-flag ${place ? '' : 'none'}`} title={place?.name} aria-hidden="true">{place ? place.flag : <Server size={14}/>}</span>
@@ -135,7 +135,7 @@ export default function ProbeCard({ highlight, host, node, asset, services, onDe
         <span><Database size={13}/>流量 <small>{quota ? modeLabel[mode] : '双向合计'}</small><strong>{used === undefined ? '—' : bytes(used)}{quota ? <small> / {bytes(quota)}</small> : null}</strong></span>
         {quota ? <Blocks value={usedPct} tone={level(usedPct, 80, 95) || 'quota'}/> : onAsset ? <button type="button" className="text-btn" onClick={onAsset}>登记月流量额度，显示用量进度</button> : null}
       </div>
-      {carriers.length ? <div className="pc-isps" aria-label="三网延迟与丢包">
+      {carriers.length ? <div className="pc-isps" aria-label="三网 TCP 延迟与连接失败率">
         <div className="pc-isps-head"><Radio size={12}/>三网延迟<small>{node?.province?.name || ''}</small>{onConnect&&<button type="button" className="text-btn" onClick={onConnect}>更换省份</button>}</div>
         {carriers.map(n => <IspRow key={n} name={n} history={ispHistory(n)}/>)}
       </div> : <div className="pc-isps none"><Radio size={12}/>{node?.province?`${node.province.name} · 等待测速上报`:'未设置三网测速'}{onConnect && <button type="button" className="text-btn" onClick={onConnect}>{node?.province?'更换省份':'选择省份'}</button>}</div>}

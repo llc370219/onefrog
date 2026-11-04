@@ -16,11 +16,14 @@ import (
 )
 
 type Ping struct {
-	Name        string   `json:"name"`
-	Target      string   `json:"target"`
-	LatencyMS   *float64 `json:"latency_ms"`
-	LossPercent *float64 `json:"loss_percent"`
-	Samples     int      `json:"samples"`
+	Method      string     `json:"method,omitempty"`
+	MeasuredAt  *time.Time `json:"measured_at,omitempty"`
+	NextCheckAt *time.Time `json:"next_check_at,omitempty"`
+	Name        string     `json:"name"`
+	Target      string     `json:"target"`
+	LatencyMS   *float64   `json:"latency_ms"`
+	LossPercent *float64   `json:"loss_percent"`
+	Samples     int        `json:"samples"`
 }
 type Sample struct {
 	ReceivedAt     time.Time `json:"received_at"`
@@ -47,8 +50,9 @@ type Sample struct {
 	Pings          []Ping    `json:"pings"`
 }
 type Node struct {
-	TokenHash string   `json:"token_hash"`
-	Samples   []Sample `json:"samples"`
+	PingIntervalSeconds int      `json:"ping_interval_seconds,omitempty"`
+	TokenHash           string   `json:"token_hash"`
+	Samples             []Sample `json:"samples"`
 	// Province is where the three-network (电信/联通/移动) targets are, e.g. "gd".
 	Province string  `json:"province,omitempty"`
 	Traffic  traffic `json:"traffic"`
@@ -115,13 +119,14 @@ type Manager struct {
 	nodes map[string]Node
 }
 type View struct {
-	ServerID string       `json:"server_id"`
-	Status   string       `json:"status"`
-	Enrolled bool         `json:"enrolled"`
-	Province *Province    `json:"province,omitempty"`
-	Traffic  *TrafficView `json:"traffic,omitempty"`
-	Latest   *Sample      `json:"latest"`
-	History  []Sample     `json:"history"`
+	PingIntervalSeconds int          `json:"ping_interval_seconds"`
+	ServerID            string       `json:"server_id"`
+	Status              string       `json:"status"`
+	Enrolled            bool         `json:"enrolled"`
+	Province            *Province    `json:"province,omitempty"`
+	Traffic             *TrafficView `json:"traffic,omitempty"`
+	Latest              *Sample      `json:"latest"`
+	History             []Sample     `json:"history"`
 }
 
 const MaxSamples = 120
@@ -275,6 +280,10 @@ func (m *Manager) Views(ids []string, now time.Time) []View {
 	for _, id := range ids {
 		n := m.nodes[id]
 		v := View{ServerID: id, Status: "pending", Enrolled: n.TokenHash != "", History: []Sample{}}
+		v.PingIntervalSeconds = n.PingIntervalSeconds
+		if v.PingIntervalSeconds == 0 {
+			v.PingIntervalSeconds = 60
+		}
 		if p, ok := LookupProvince(n.Province); ok {
 			v.Province = &p
 		}
@@ -297,7 +306,10 @@ func (m *Manager) Views(ids []string, now time.Time) []View {
 
 // SetProvince records which province's 电信/联通/移动 targets the server's probe
 // measures. An empty value clears it.
-func (m *Manager) SetProvince(id, province string) error {
+func (m *Manager) SetProvince(id, province string, interval ...int) error {
+	if len(interval) > 0 && (interval[0] < 60 || interval[0] > 300) {
+		return errors.New("线路检测间隔为 60–300 秒")
+	}
 	if province != "" {
 		p, ok := LookupProvince(province)
 		if !ok {
@@ -310,6 +322,9 @@ func (m *Manager) SetProvince(id, province string) error {
 	old, existed := m.nodes[id]
 	next := old
 	next.Province = province
+	if len(interval) > 0 {
+		next.PingIntervalSeconds = interval[0]
+	}
 	m.nodes[id] = next
 	if err := m.persist(); err != nil {
 		if existed {

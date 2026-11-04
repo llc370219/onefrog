@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Activity, ArrowRight, Bot, Box, Code2, HardDrive, LayoutGrid, Server, ShieldCheck, SlidersHorizontal, TriangleAlert, Wallet } from 'lucide-react';
+import { Activity, ArrowRight, Bot, Box, CalendarClock, Code2, HardDrive, LayoutGrid, Server, ShieldCheck, SlidersHorizontal, TriangleAlert, Wallet } from 'lucide-react';
 import { api, type ApprovalDecision, type ProbeNode, type Host, type Mod, type Hist, type BotRow, type AssetRecord, type ServiceView } from '../api';
 import PanelTaskResult, { type PanelJob } from '../components/PanelTaskResult';
 import { Button, Empty, PageHeading } from '../components/ui';
@@ -19,8 +19,9 @@ export default function Dashboard({ hosts, mods, history, bots, job, sending, on
   const [setup,setSetup]=useState('');
   const setupHost=hosts.find(h=>h.id===setup);
   const [assets,setAssets]=useState<AssetRecord[]>([]);
+  const [expiringSubscriptions,setExpiringSubscriptions]=useState<number|null|undefined>(undefined);
   const [services,setServices]=useState<ServiceView[]>([]);
-  useEffect(()=>{let active=true;async function refresh(){try{const [res,ast,svc]=await Promise.all([api.monitor(),api.assets().catch(()=>({records:[] as AssetRecord[]})),api.services().catch(()=>({nodes:[] as ServiceView[]}))]);if(active){setProbeNodes(res.nodes);setAssets(ast.records||[]);setServices(svc.nodes||[]);setProbeError('');}}catch{if(active)setProbeError('探针数据暂时不可用');}}refresh();const timer=window.setInterval(()=>{if(!document.hidden)refresh();},15000);return()=>{active=false;clearInterval(timer);};},[]);
+  useEffect(()=>{let active=true;async function refresh(){const [res,ast,svc]=await Promise.all([api.monitor().catch(()=>null),api.assets().catch(()=>null),api.services().catch(()=>null)]);if(active){if(res){setProbeNodes(res.nodes);setProbeError('');}else setProbeError('探针数据暂时不可用');setAssets(ast?.records||[]);setExpiringSubscriptions(ast?.summary.expiring??null);setServices(svc?.nodes||[]);}}refresh();const timer=window.setInterval(()=>{if(!document.hidden)refresh();},15000);return()=>{active=false;clearInterval(timer);};},[]);
   hosts=hosts.map(h=>{const n=probeNodes.find(n=>n.server_id===h.id);const s=n?.latest;return {...h,status:n?.status==='pending'?'unknown':n?.status||'unknown',up:n?.status==='online',disk:s&&s.disk_total?s.disk_used/s.disk_total*100:0,load:s?.load.map(v=>v.toFixed(2)).join(' / ')||'—'};});
   const online = probeNodes.filter(n=>n.status==='online').length;
   const offline = hosts.filter(h => h.status === 'offline');
@@ -31,7 +32,7 @@ export default function Dashboard({ hosts, mods, history, bots, job, sending, on
     { label: '在线服务器', value: online.toString(), suffix: `/ ${hosts.length.toString()}`, icon: Server, note: `${probeNodes.filter(n=>n.status==='pending').length} 台等待探针上报`, tone: '', action: onServers },
     { label: '需要关注', value: (offline.length + warning.length).toString(), suffix: '', icon: TriangleAlert, note: `${offline.length} 台离线 · ${warning.length} 台磁盘偏高`, tone: offline.length + warning.length ? 'warn' : '', action: onServers },
     { label: '协作 Bot', value: bots.length.toString(), suffix: '', icon: Bot, note: bots.length ? bots.map(b => b.name).join(' / ') : '尚未创建 Bot', tone: '', action: onBots },
-    { label: '安全拦截', value: blocked.length.toString(), suffix: '', icon: ShieldCheck, note: '点击查看变更记录中的拦截详情', tone: '', action: () => onHistory('blocked', '') },
+    { label: '即将到期', value: expiringSubscriptions==null?'—':String(expiringSubscriptions), suffix: '', icon: CalendarClock, note: expiringSubscriptions===undefined?'正在读取订阅…':expiringSubscriptions===null?'订阅数据暂时不可用':'7 天内到期的订阅', tone: expiringSubscriptions?'warn':'', action: onAssets },
   ];
   return <div className="page dashboard"><PageHeading eyebrow="WORKSPACE / OVERVIEW" title="面板" note="掌握服务器状态，让助理直接处理。" actions={<><Button onClick={onSettings}><SlidersHorizontal size={15}/>设置</Button><Button variant="primary" onClick={onModules}><LayoutGrid size={15}/>选取模块</Button></>}/>
     <div className="metrics">{stats.map(({label, value, suffix, icon: Icon, note, tone, action}) => <button type="button" className="metric metric-btn" key={label} onClick={action}><div className="metric-top">{label}<Icon size={16} strokeWidth={1.5}/></div><div className={`metric-value ${tone}`}>{value}<span>{suffix}</span></div><p>{note}</p></button>)}</div>

@@ -2,23 +2,16 @@ import { useEffect, useMemo, useState } from 'react';
 import { Bot, ExternalLink, Pencil, Plus, Search, Server, Trash2, Wallet } from 'lucide-react';
 import { api, type AssetInput, type AssetRecord, type AssetSummary, type Host } from '../api';
 import { Button, Empty, Field, Modal, Notice, PageHeading } from '../components/ui';
+import SubscriptionSummary from '../components/SubscriptionSummary';
+import { money } from '../lib/format';
+export { money } from '../lib/format';
 
 const cycles: Record<string, string> = { monthly: '月付', quarterly: '季付', yearly: '年付', once: '一次性' };
-const currencies = ['CNY', 'USD', 'EUR', 'HKD', 'JPY', 'USDT'];
-const empty = { name: '', server_id: '', provider: '', region: '', plan: '', cycle: 'monthly', currency: 'CNY', amount: '', paid_at: '', starts_at: '', expires_at: '', auto_renew: false, status: 'active', ip: '', specs: '', traffic: '', traffic_mode: 'both', order_no: '', account: '', invoice_url: '', contact: '', tags: '', notes: '' };
+const currencies = ['USD','CNY','EUR','GBP','CAD','HKD','JPY','AUD','SGD','USDT'];
+const empty = { name: '', server_id: '', provider: '', region: '', plan: '', cycle: 'monthly', currency: 'USD', amount: '', paid_at: '', starts_at: '', expires_at: '', auto_renew: false, status: 'active', ip: '', specs: '', traffic: '', traffic_mode: 'both', order_no: '', account: '', invoice_url: '', contact: '', tags: '', notes: '' };
 type Draft = typeof empty;
 const message = (err: unknown) => err instanceof Error ? err.message : '操作失败，请重试';
 
-export function money(cents = 0, currency = 'CNY') {
-  const neg = cents < 0;
-  const abs = Math.abs(Math.trunc(cents));
-  const unit = ({ CNY: '¥', USD: '$', EUR: '€', HKD: 'HK$', JPY: '¥', USDT: 'USDT ' } as Record<string, string>)[currency] || currency + ' ';
-  return (neg ? '-' : '') + unit + Math.floor(abs / 100).toLocaleString('zh-CN') + '.' + String(abs % 100).padStart(2, '0');
-}
-function moneyMap(values: Record<string, number> = {}) {
-  const rows = Object.entries(values).filter(([, n]) => n);
-  return rows.length ? rows.map(([cur, n]) => money(n, cur)).join(' / ') : '—';
-}
 function toCents(value: string) {
   const text = value.trim();
   if (!text) return 0;
@@ -50,7 +43,7 @@ export function AssetGlance() {
   useEffect(() => { api.assets().then(v => setSummary(v.summary)).catch(() => setError('资产数据暂时不可用')); }, []);
   if (error) return <p className="card-foot danger">{error}</p>;
   if (!summary) return <p className="card-foot">正在读取资产…</p>;
-  return <div className="asset-glance"><div><span>在册</span><strong>{summary.count}</strong></div><div><span>即将到期</span><strong className={summary.expiring ? 'warn' : ''}>{summary.expiring}</strong></div><div><span>折合月费</span><strong>{moneyMap(summary.monthly_cents)}</strong></div><div><span>剩余价值</span><strong>{moneyMap(summary.residual_cents)}</strong></div><p>{summary.next_name ? summary.next_name + ' 将在 ' + summary.next_expiry + ' 到期' : '还没有即将到期的订阅'}</p></div>;
+  return <SubscriptionSummary summary={summary} compact/>;
 }
 
 export default function Assets({ hosts, focusServer, onConsumedFocus, onOpenServer, onChatServer, onAsk }: { hosts: Host[]; focusServer?: Host | null; onConsumedFocus?: () => void; onOpenServer?: (id: string) => void; onChatServer?: (id: string, name: string) => void; onAsk: (text: string) => void }) {
@@ -58,7 +51,7 @@ export default function Assets({ hosts, focusServer, onConsumedFocus, onOpenServ
   const [loaded, setLoaded] = useState(false);
   const [summary, setSummary] = useState<AssetSummary | null>(null);
   const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilter] = useState('current');
   const [error, setError] = useState('');
   const [draft, setDraft] = useState<Draft | null>(null);
   const [editID, setEditID] = useState('');
@@ -87,6 +80,8 @@ export default function Assets({ hosts, focusServer, onConsumedFocus, onOpenServ
     const text = [row.name, row.provider, row.region, row.plan, row.ip, row.account, row.specs, ...(row.tags || [])].join(' ').toLowerCase();
     const matched = text.includes(query.trim().toLowerCase());
     if (!matched) return false;
+    if (filter === 'current') return !row.historical;
+    if (filter === 'historical') return !!row.historical;
     if (filter === 'expiring') return row.derived_status === 'expiring';
     if (filter === 'expired') return row.derived_status === 'expired';
     if (filter === 'cancelled') return row.derived_status === 'cancelled';
@@ -109,24 +104,48 @@ export default function Assets({ hosts, focusServer, onConsumedFocus, onOpenServ
     } catch (err) { setFormError(message(err)); }
     finally { setBusy(false); }
   }
+  async function end(row:AssetRecord){setBusy(true);setError('');try{await api.saveAsset({...row,status:'cancelled',auto_renew:false},row.id);await load();}catch(err){setError(message(err));}finally{setBusy(false);}}
   async function remove(id: string) {
     setBusy(true); setError('');
     try { await api.deleteAsset(id); setConfirmID(''); await load(); }
     catch (err) { setError(message(err)); }
     finally { setBusy(false); }
   }
-  const metrics = [
-    ['在册资产', String(summary?.count || 0), '包含停用记录'],
-    ['即将到期', String(summary?.expiring || 0), '14 天内到期'],
-    ['折合月费', moneyMap(summary?.monthly_cents), '年付按 12 期，季付按 3 期'],
-    ['剩余价值', moneyMap(summary?.residual_cents), '按剩余天数折算未消耗金额'],
-  ];
-  return <div className="page assets-page"><PageHeading eyebrow="MODULE / ASSETS" title="资产与订阅" note="记录服务器资费、提供商和到期时间，并按剩余天数计算剩余价值。" actions={<><Button onClick={() => onAsk('请列出资产与订阅里即将到期的服务器，并说明剩余价值和是否自动续费。')}><Bot size={15}/>交给模块管理</Button><Button variant="primary" onClick={() => edit()}><Plus size={15}/>登记资产</Button></>}/>
+
+  return <div className="page assets-page"><PageHeading eyebrow="MODULE / ASSETS" title="订阅" note="统一记录服务器、域名、软件会员和其他订阅的费用与到期时间。" actions={<><Button onClick={() => onAsk('请列出订阅台账里 7 天内到期的订阅（不限于服务器），并说明费用和续费状态。')}><Bot size={15}/>交给模块管理</Button><Button variant="primary" onClick={() => edit()}><Plus size={15}/>添加订阅</Button></>}/>
     {error && <Notice error>{error}</Notice>}
-    <div className="metrics asset-metrics">{metrics.map(([label, value, note]) => <section className="metric" key={label}><div className="metric-top">{label}<Wallet size={15}/></div><div className="metric-value asset-metric-value">{value}</div><p>{note}</p></section>)}</div>
-    <div className="list-toolbar"><div className="tabs" role="group" aria-label="资产筛选">{[['all','全部'],['expiring','即将到期'],['expired','已到期'],['cancelled','已停用']].map(([id,label]) => <button key={id} className={filter===id?'active':''} aria-pressed={filter===id} onClick={() => setFilter(id)}>{label}</button>)}</div><label className="search"><Search size={15}/><input aria-label="搜索资产" placeholder="搜索名称、提供商、IP…" value={query} onChange={e => setQuery(e.target.value)}/></label></div>
-    {!visible.length ? <Empty title={rows.length ? '没有匹配的资产' : '还没有资产记录'} body="登记一台服务器的套餐、资费和到期日，剩余价值会自动计算。" action={!rows.length ? <Button onClick={() => edit()}>登记第一台</Button> : undefined}/> : <div className="asset-board">{visible.map(row => {const linkedHost = hosts.find(h => h.id === row.server_id || (row.ip && h.host === row.ip)); return <article className="card asset-card" key={row.id}><header><span className="catalog-icon"><Wallet size={18}/></span><div><strong>{row.name}</strong><small>{row.provider || '未填提供商'}{row.region ? ' · ' + row.region : ''}</small></div><span className={'status ' + tone(row.derived_status)}><i/>{statusLabel(row.derived_status)}</span></header><dl><div><dt>资费</dt><dd>{money(row.amount_cents, row.currency)}<small>{(row.cycle && cycles[row.cycle]) || row.cycle || '—'}{row.auto_renew ? ' · 自动续费' : ''}</small></dd></div><div><dt>时间</dt><dd>{remain(row)}<small>{row.starts_at || '—'} → {row.expires_at || '—'}</small></dd></div><div><dt>剩余价值</dt><dd>{money(row.residual_cents, row.currency)}<small>{row.days_total ? '日均 ' + money(row.daily_cents, row.currency) : '缺少完整周期'}</small></dd></div><div><dt>关联服务器</dt><dd>{linkedHost && onOpenServer ? <button type="button" className="text-btn linked-jump" onClick={() => onOpenServer(linkedHost.id)}><Server size={12}/>{linkedHost.name}<ExternalLink size={11}/></button> : (linkedHost?.name || '未关联')}<small>{row.ip || linkedHost?.host || row.plan || '—'}</small></dd></div></dl>{row.days_total > 0 && <div className={'meter ' + (row.derived_status === 'expiring' ? 'warn' : '')}><i style={{ width: Math.min(100, Math.round(row.elapsed_ratio * 100)) + '%' }}/></div>}<p>{[row.plan, row.specs, row.order_no && '订单 ' + row.order_no, row.account && '账号 ' + row.account, ...(row.tags || [])].filter(Boolean).join(' · ') || '可补充套餐、配置、订单号和账号备注'}</p>{row.notes && <p className="asset-note">{row.notes}</p>}<footer><Button onClick={() => edit(row)}><Pencil size={13}/>编辑</Button>{linkedHost && onChatServer && <Button onClick={() => onChatServer(linkedHost.id, linkedHost.name)}><Bot size={13}/>巡检此机</Button>}{confirmID === row.id ? <Button onClick={() => remove(row.id)} disabled={busy}>确认删除</Button> : <Button variant="ghost" onClick={() => setConfirmID(row.id)}><Trash2 size={13}/>删除</Button>}</footer></article>;})}</div>}
-    <p className="page-footnote">剩余价值 = 本期金额 × 剩余天数 ÷ 周期总天数，首尾两天都计入。已到期和已停用不计入剩余价值。折合月费不包含一次性费用。账号栏只保存备注，不保存密码。</p>
-    {draft && <Modal wide title={editID ? '编辑资产' : '登记资产'} note="金额按填写的货币保存。到期后剩余价值自动归零；与服务器同 IP 或同名称会自动联动。" onClose={() => !busy && setDraft(null)} onSubmit={save} busy={busy} error={formError} confirm={editID ? '保存修改' : '登记'}><div className="form-grid asset-form"><Field label="名称"><input required value={draft.name} placeholder="例如 洛杉矶-01" onChange={e => setDraft({ ...draft, name: e.target.value })}/></Field><Field label="关联服务器"><select value={draft.server_id} onChange={e => { const sid = e.target.value; const srv = hosts.find(h => h.id === sid); setDraft({ ...draft, server_id: sid, name: draft.name || srv?.name || '', ip: draft.ip || srv?.host || '' }); }}><option value="">不关联</option>{hosts.map(h => <option key={h.id} value={h.id}>{h.name}（{h.host}）</option>)}</select></Field><Field label="提供商"><input value={draft.provider} placeholder="搬瓦工、腾讯云、Hetzner…" onChange={e => setDraft({ ...draft, provider: e.target.value })}/></Field><Field label="地区"><input value={draft.region} placeholder="例如 洛杉矶 CN2" onChange={e => setDraft({ ...draft, region: e.target.value })}/></Field><Field label="套餐"><input value={draft.plan} placeholder="例如 CN2 GIA 2G" onChange={e => setDraft({ ...draft, plan: e.target.value })}/></Field><Field label="配置"><input value={draft.specs} placeholder="2C / 2G / 40G" onChange={e => setDraft({ ...draft, specs: e.target.value })}/></Field><Field label="月流量额度（GB）" hint="探针卡片据此显示已用流量，不限量留空。"><input inputMode="decimal" value={draft.traffic} placeholder="例如 1024" onChange={e => setDraft({ ...draft, traffic: e.target.value })}/></Field><Field label="流量计费方式"><select value={draft.traffic_mode} onChange={e => setDraft({ ...draft, traffic_mode: e.target.value })}><option value="both">双向（入 + 出）</option><option value="out">单向（只算出站）</option><option value="in">单向（只算入站）</option><option value="max">单向（取入、出较大者）</option></select></Field><Field label="计费周期"><select value={draft.cycle} onChange={e => setDraft({ ...draft, cycle: e.target.value })}>{Object.entries(cycles).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></Field><Field label="币种"><select value={draft.currency} onChange={e => setDraft({ ...draft, currency: e.target.value })}>{currencies.map(id => <option key={id}>{id}</option>)}</select></Field><Field label="本期金额" hint="按元填写，最多两位小数"><input inputMode="decimal" value={draft.amount} placeholder="36.50" onChange={e => setDraft({ ...draft, amount: e.target.value })}/></Field><Field label="IP 或主机名"><input value={draft.ip} placeholder="203.0.113.10" onChange={e => setDraft({ ...draft, ip: e.target.value })}/></Field><Field label="付款日期"><input type="date" value={draft.paid_at} onChange={e => setDraft({ ...draft, paid_at: e.target.value })}/></Field><Field label="开始日期"><input type="date" value={draft.starts_at} onChange={e => setDraft({ ...draft, starts_at: e.target.value })}/></Field><Field label="到期日期"><input type="date" value={draft.expires_at} onChange={e => setDraft({ ...draft, expires_at: e.target.value })}/></Field><Field label="订单号"><input value={draft.order_no} onChange={e => setDraft({ ...draft, order_no: e.target.value })}/></Field><Field label="提供商账号" hint="只写账号备注，不要写密码"><input value={draft.account} onChange={e => setDraft({ ...draft, account: e.target.value })}/></Field><Field label="联系方式"><input value={draft.contact} onChange={e => setDraft({ ...draft, contact: e.target.value })}/></Field></div><Field label="账单链接"><input value={draft.invoice_url} placeholder="https://" onChange={e => setDraft({ ...draft, invoice_url: e.target.value })}/></Field><Field label="标签" hint="用逗号分隔，例如 生产，CN2"><input value={draft.tags} onChange={e => setDraft({ ...draft, tags: e.target.value })}/></Field><Field label="备注"><textarea rows={3} value={draft.notes} onChange={e => setDraft({ ...draft, notes: e.target.value })}/></Field><div className="asset-toggles"><label><span>自动续费</span><button type="button" className={'switch ' + (draft.auto_renew ? 'on' : '')} role="switch" aria-checked={draft.auto_renew} onClick={() => setDraft({ ...draft, auto_renew: !draft.auto_renew })}><i/></button></label><label><span>停用这条记录</span><button type="button" className={'switch ' + (draft.status === 'cancelled' ? 'on' : '')} role="switch" aria-checked={draft.status === 'cancelled'} onClick={() => setDraft({ ...draft, status: draft.status === 'cancelled' ? 'active' : 'cancelled' })}><i/></button></label></div></Modal>}
+    <SubscriptionSummary summary={summary}/>
+    <div className="list-toolbar"><div className="tabs" role="group" aria-label="资产筛选">{[['current','当前订阅'],['expiring','7 天内到期'],['historical','历史订阅'],['all','全部']].map(([id,label]) => <button key={id} className={filter===id?'active':''} aria-pressed={filter===id} onClick={() => setFilter(id)}>{label}</button>)}</div><label className="search"><Search size={15}/><input aria-label="搜索资产" placeholder="搜索名称、提供商、IP…" value={query} onChange={e => setQuery(e.target.value)}/></label></div>
+    {!visible.length ? <Empty title={rows.length ? '没有匹配的订阅' : '还没有订阅记录'} body="添加服务器、域名、软件会员等订阅，关联服务器可留空。" action={!rows.length ? <Button onClick={() => edit()}>添加第一个订阅</Button> : undefined}/> : <div className="asset-board">{visible.map(row => {const linkedHost = hosts.find(h => h.id === row.server_id || (row.ip && h.host === row.ip)); return <article className="card asset-card" key={row.id}><header><span className="catalog-icon"><Wallet size={18}/></span><div><strong>{row.name}</strong><small>{row.provider || '未填提供商'}{row.region ? ' · ' + row.region : ''}</small></div><span className={'status ' + tone(row.derived_status)}><i/>{row.historical?'历史订阅':statusLabel(row.derived_status)}</span></header><dl><div><dt>资费</dt><dd>{money(row.amount_cents, row.currency)}<small>{(row.cycle && cycles[row.cycle]) || row.cycle || '—'}{row.auto_renew ? ' · 自动续费' : ''}</small></dd></div><div><dt>时间</dt><dd>{remain(row)}<small>{row.starts_at || '—'} → {row.expires_at || '—'}</small></dd></div><div><dt>剩余价值</dt><dd>{money(row.residual_cents, row.currency)}<small>{row.days_total ? '日均 ' + money(row.daily_cents, row.currency) : '缺少完整周期'}</small></dd></div><div><dt>关联服务器</dt><dd>{linkedHost && onOpenServer ? <button type="button" className="text-btn linked-jump" onClick={() => onOpenServer(linkedHost.id)}><Server size={12}/>{linkedHost.name}<ExternalLink size={11}/></button> : (linkedHost?.name || '未关联')}<small>{row.ip || linkedHost?.host || row.plan || '—'}</small></dd></div></dl>{row.days_total > 0 && <div className={'meter ' + (row.derived_status === 'expiring' ? 'warn' : '')}><i style={{ width: Math.min(100, Math.round(row.elapsed_ratio * 100)) + '%' }}/></div>}<p>{[row.plan, row.specs, row.order_no && '订单 ' + row.order_no, row.account && '账号 ' + row.account, ...(row.tags || [])].filter(Boolean).join(' · ') || '可补充套餐、配置、订单号和账号备注'}</p>{row.notes && <p className="asset-note">{row.notes}</p>}<footer><Button onClick={() => edit(row)}><Pencil size={13}/>编辑</Button>{row.historical&&<Button onClick={()=>{edit(row);setDraft(d=>d?{...d,status:'active'}:d);}}>续费 / 恢复</Button>}{!row.historical&&row.derived_status==='expired'&&<Button onClick={()=>end(row)}>不再续费</Button>}{linkedHost && onChatServer && <Button onClick={() => onChatServer(linkedHost.id, linkedHost.name)}><Bot size={13}/>巡检此机</Button>}{confirmID === row.id ? <Button onClick={() => remove(row.id)} disabled={busy}>确认删除</Button> : <Button variant="ghost" onClick={() => setConfirmID(row.id)}><Trash2 size={13}/>删除</Button>}</footer></article>;})}</div>}
+    <p className="page-footnote">剩余价值 = 本期金额 × 剩余天数 ÷ 周期总天数，首尾两天都计入。已到期和已停用不计入剩余价值。折合月费不包含一次性费用和历史订阅。到期且未启用续费、或已停用的记录归入历史，修改到期日可恢复；原币金额保留。账号栏只保存备注，不保存密码。</p>
+    {draft && <Modal wide title={editID ? '编辑订阅' : '添加订阅'} note="记录任意订阅，无需关联服务器。原币金额保留；汇总按所选显示币种估算。" onClose={() => !busy && setDraft(null)} onSubmit={save} busy={busy} error={formError} confirm={editID ? '保存修改' : '添加'}>
+<div className="form-grid asset-form">
+<Field label="名称"><input required value={draft.name} placeholder="例如 AI 会员、域名、洛杉矶 VPS" onChange={e => setDraft({ ...draft, name: e.target.value })}/></Field>
+<Field label="提供商"><input value={draft.provider} placeholder="OpenAI、域名商、云服务商…" onChange={e => setDraft({ ...draft, provider: e.target.value })}/></Field>
+<Field label="套餐"><input value={draft.plan} placeholder="例如 Pro 年付 / 2G VPS" onChange={e => setDraft({ ...draft, plan: e.target.value })}/></Field>
+<Field label="计费周期"><select value={draft.cycle} onChange={e => setDraft({ ...draft, cycle: e.target.value })}>{Object.entries(cycles).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></Field>
+<Field label="币种"><select value={draft.currency} onChange={e => setDraft({ ...draft, currency: e.target.value })}>{currencies.map(id => <option key={id}>{id}</option>)}</select></Field>
+<Field label="本期金额" hint="按所选币种填写，最多两位小数"><input inputMode="decimal" value={draft.amount} placeholder="36.50" onChange={e => setDraft({ ...draft, amount: e.target.value })}/></Field>
+<Field label="付款日期"><input type="date" value={draft.paid_at} onChange={e => setDraft({ ...draft, paid_at: e.target.value })}/></Field>
+<Field label="开始日期"><input type="date" value={draft.starts_at} onChange={e => setDraft({ ...draft, starts_at: e.target.value })}/></Field>
+<Field label="到期日期"><input type="date" value={draft.expires_at} onChange={e => setDraft({ ...draft, expires_at: e.target.value })}/></Field>
+<Field label="提供商账号" hint="只写账号备注，不要写密码"><input value={draft.account} onChange={e => setDraft({ ...draft, account: e.target.value })}/></Field>
+<Field label="订单号"><input value={draft.order_no} onChange={e => setDraft({ ...draft, order_no: e.target.value })}/></Field>
+<Field label="联系方式"><input value={draft.contact} onChange={e => setDraft({ ...draft, contact: e.target.value })}/></Field>
+</div>
+<details className="server-advanced"><summary>服务器关联与流量（可选）</summary><div className="form-grid asset-form">
+<Field label="关联服务器"><select value={draft.server_id} onChange={e => { const sid = e.target.value; const srv = hosts.find(h => h.id === sid); setDraft({ ...draft, server_id: sid, name: draft.name || srv?.name || '', ip: draft.ip || srv?.host || '' }); }}><option value="">不关联</option>{hosts.map(h => <option key={h.id} value={h.id}>{h.name}（{h.host}）</option>)}</select></Field>
+<Field label="地区"><input value={draft.region} placeholder="例如 洛杉矶 CN2" onChange={e => setDraft({ ...draft, region: e.target.value })}/></Field>
+<Field label="配置"><input value={draft.specs} placeholder="2C / 2G / 40G" onChange={e => setDraft({ ...draft, specs: e.target.value })}/></Field>
+<Field label="IP 或主机名"><input value={draft.ip} placeholder="203.0.113.10" onChange={e => setDraft({ ...draft, ip: e.target.value })}/></Field>
+<Field label="月流量额度（GB）" hint="探针卡片据此显示已用流量，不限量留空。"><input inputMode="decimal" value={draft.traffic} placeholder="例如 1024" onChange={e => setDraft({ ...draft, traffic: e.target.value })}/></Field>
+<Field label="流量计费方式"><select value={draft.traffic_mode} onChange={e => setDraft({ ...draft, traffic_mode: e.target.value })}><option value="both">双向（入 + 出）</option><option value="out">单向（只算出站）</option><option value="in">单向（只算入站）</option><option value="max">单向（取入、出较大者）</option></select></Field>
+</div></details>
+<Field label="账单链接"><input value={draft.invoice_url} placeholder="https://" onChange={e => setDraft({ ...draft, invoice_url: e.target.value })}/></Field>
+<Field label="标签" hint="用逗号分隔，例如 生产，CN2"><input value={draft.tags} onChange={e => setDraft({ ...draft, tags: e.target.value })}/></Field>
+<Field label="备注"><textarea rows={3} value={draft.notes} onChange={e => setDraft({ ...draft, notes: e.target.value })}/></Field>
+<div className="asset-toggles"><label><span>自动续费</span><button type="button" className={'switch ' + (draft.auto_renew ? 'on' : '')} role="switch" aria-label="自动续费" aria-checked={draft.auto_renew} onClick={() => setDraft({ ...draft, auto_renew: !draft.auto_renew })}><i/></button></label><label><span>结束订阅 / 不再续费</span><button type="button" className={'switch ' + (draft.status === 'cancelled' ? 'on' : '')} role="switch" aria-label="结束订阅" aria-checked={draft.status === 'cancelled'} onClick={() => setDraft({ ...draft, status: draft.status === 'cancelled' ? 'active' : 'cancelled' })}><i/></button></label></div>
+<p className="model-hidden-note">到期且未启用续费的记录自动归入历史。仍会继续的订阅可更新到期日期；提前结束也可在此标记。</p>
+</Modal>}
   </div>;
 }

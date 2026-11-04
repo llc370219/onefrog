@@ -26,7 +26,7 @@ func (a *Agent) writeAssets(b *strings.Builder, item model.Bot) {
 		if sum.Count == 0 {
 			return
 		}
-		fmt.Fprintf(b, "\n资产与订阅概览：在册 %d 项，即将到期 %d 项，已到期 %d 项。", sum.Count, sum.Expiring, sum.Expired)
+		fmt.Fprintf(b, "\n订阅概览：当前 %d 项，7 天内到期 %d 项，历史订阅 %d 项。", sum.Subscriptions, sum.Expiring, sum.Historical)
 		if sum.NextName != "" {
 			fmt.Fprintf(b, " 最近到期：%s（%s）。", sum.NextName, sum.NextExpiry)
 		}
@@ -64,7 +64,7 @@ func (a *Agent) manageAssetWithContext(ctx context.Context, botID string, call t
 		action = "list"
 	}
 	idv := strings.TrimSpace(jsonText(raw["id"]))
-	in := asset.Input{Currency: "CNY", Cycle: "monthly", Status: asset.StatusActive}
+	in := asset.Input{Currency: "USD", Cycle: "monthly", Status: asset.StatusActive}
 	if action == "update" {
 		old, err := a.Assets.Get(idv)
 		if err != nil {

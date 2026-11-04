@@ -13,10 +13,10 @@ func TestAssetRecords(t *testing.T) {
 	defer srv.Close()
 	login(t, client, srv, "admin", "admin", http.StatusOK)
 	today := time.Now().UTC()
-	body := map[string]any{"name": "洛杉矶-01", "provider": "搬瓦工", "cycle": "yearly", "currency": "usd", "amount_cents": 36500, "starts_at": today.Format("2006-01-02"), "expires_at": today.AddDate(0, 0, 9).Format("2006-01-02"), "region": "洛杉矶", "specs": "2C 2G", "auto_renew": true}
+	body := map[string]any{"name": "洛杉矶-01", "provider": "搬瓦工", "cycle": "yearly", "currency": "usd", "amount_cents": 36500, "starts_at": today.Format("2006-01-02"), "expires_at": today.AddDate(0, 0, 6).Format("2006-01-02"), "region": "洛杉矶", "specs": "2C 2G", "auto_renew": true}
 	var created asset.View
 	postJSON(t, client, srv.URL+"/api/assets", body, http.StatusCreated, &created)
-	if created.DaysTotal != 10 || created.DaysLeft != 10 || created.ResidualCents != 36500 || created.DerivedStatus != asset.StatusExpiring || created.Currency != "USD" {
+	if created.DaysTotal != 7 || created.DaysLeft != 7 || created.ResidualCents != 36500 || created.DerivedStatus != asset.StatusExpiring || created.Currency != "USD" {
 		t.Fatalf("%+v", created)
 	}
 	var page struct {

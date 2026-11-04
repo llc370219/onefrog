@@ -3,8 +3,10 @@ import { ArrowDown, ArrowUp, ChartColumn, Bot, Boxes, ChevronRight, Cpu, Gauge, 
 import type { AssetRecord, Host, PingMetric, ProbeNode, ServiceView } from '../api';
 import { money } from '../pages/Assets';
 import { cssVar, useTheme } from '../theme';
+import TrafficBreakdown from './TrafficBreakdown';
+import { bytes } from '../lib/format';
+export { bytes } from '../lib/format';
 
-export function bytes(value?:number,rate=false){if(value===undefined)return '—';let n=value;const units=['B','KiB','MiB','GiB','TiB','PiB'];let i=0;while(n>=1024&&i<units.length-1){n/=1024;i++;}return `${n.toFixed(i===0?0:n>=100?0:1)} ${units[i]}${rate?'/s':''}`;}
 export function uptime(seconds?:number){if(seconds===undefined)return '—';const d=Math.floor(seconds/86400),h=Math.floor(seconds%86400/3600),m=Math.floor(seconds%3600/60);return d?`${d} 天 ${h} 小时`:h?`${h} 小时 ${m} 分钟`:`${m} 分钟`;}
 export function probeStatus(node?:ProbeNode){return node?.status||'pending';}
 export function Sparkline({values,label}: {values:number[];label:string}){
@@ -131,10 +133,10 @@ export default function ProbeCard({ highlight, host, node, asset, services, onDe
         <div title="实时速率"><span><ArrowUp size={13}/>上传<strong>{bytes(s.tx_rate, true)}</strong></span><span><ArrowDown size={13}/>下载<strong>{bytes(s.rx_rate, true)}</strong></span></div>
         <div title={tr ? `本月（${tr.period}）自 ${new Date(tr.since).toLocaleDateString('zh-CN')} 起统计` : '本月流量统计中'}><span><ArrowUp size={13}/>本月出<strong>{tr ? bytes(tr.tx) : '—'}</strong></span><span><ArrowDown size={13}/>本月入<strong>{tr ? bytes(tr.rx) : '—'}</strong></span></div>
       </div>
-      <div className={`pc-quota ${level(usedPct, 80, 95)}`}>
-        <span><Database size={13}/>流量 <small>{quota ? modeLabel[mode] : '双向合计'}</small><strong>{used === undefined ? '—' : bytes(used)}{quota ? <small> / {bytes(quota)}</small> : null}</strong></span>
-        {quota ? <Blocks value={usedPct} tone={level(usedPct, 80, 95) || 'quota'}/> : onAsset ? <button type="button" className="text-btn" onClick={onAsset}>登记月流量额度，显示用量进度</button> : null}
-      </div>
+      {quota ? <div className={`pc-quota ${level(usedPct, 80, 95)}`}>
+        <span><Database size={13}/>流量 <small>{modeLabel[mode]}</small><strong>{used === undefined ? '—' : bytes(used)}<small> / {bytes(quota)}</small></strong></span>
+        <Blocks value={usedPct} tone={level(usedPct, 80, 95) || 'quota'}/>
+      </div> : <TrafficBreakdown out={tr?.tx} incoming={tr?.rx}/>}
       {carriers.length ? <div className="pc-isps" aria-label="三网 TCP 延迟与连接失败率">
         <div className="pc-isps-head"><Radio size={12}/>三网延迟<small>{node?.province?.name || ''}</small>{onConnect&&<button type="button" className="text-btn" onClick={onConnect}>更换省份</button>}</div>
         {carriers.map(n => <IspRow key={n} name={n} history={ispHistory(n)}/>)}

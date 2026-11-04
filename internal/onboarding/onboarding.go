@@ -471,6 +471,7 @@ func (m *Manager) run(key string, rec store.ServerRec, r Request) {
 	}
 	config := map[string]any{"server_id": rec.ID, "token": token, "endpoint": strings.TrimRight(r.ReportBase, "/") + "/api/probe/report", "interval_seconds": r.Interval}
 	config["ping_targets"] = ProbeTargets(r.Province, r.Targets)
+	config["ping_interval_seconds"] = m.monitor.Views([]string{rec.ID}, time.Now())[0].PingIntervalSeconds
 	if err := m.monitor.SetProvince(rec.ID, r.Province); err != nil {
 		m.step(key, "probe", "failed", "测速省份没有保存")
 		m.finish(key, "partial", "服务器已加入，探针未完成")

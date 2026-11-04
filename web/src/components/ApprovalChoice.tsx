@@ -19,7 +19,7 @@ export default function ApprovalChoice({ onDone, onLogout }: { onDone: (mode: Ap
   }
   return <div className="login-screen"><ThemeToggle className="login-theme"/><div className="login-brand"><span className="brand-icon"><img src="/assets/onefrog-logo.png" alt=""/></span><strong>OneFrog<span>FIRST SIGN IN</span></strong></div>
     <form className="login-card setup-card approval-choice" onSubmit={e => { e.preventDefault(); save(); }}>
-      <span className="eyebrow">COMMAND APPROVAL</span>
+      
       <h1>AI 执行命令前要不要问你？</h1>
       <p>AI 会通过 SSH 在你的服务器上执行命令。请选择一种方式，之后可以随时在“设置 → 命令审批”里修改。</p>
       <div className="approval-modes" role="radiogroup" aria-label="命令审批方式">

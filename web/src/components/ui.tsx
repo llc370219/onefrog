@@ -20,8 +20,9 @@ export function Empty({ title, body, action }: { title: string; body?: string; a
 export function Notice({ error, children }: { error?: boolean; children: ReactNode }) {
   return <div className={`notice ${error ? 'error' : ''}`} role={error ? 'alert' : 'status'}>{error ? <AlertCircle size={16}/> : <Check size={16}/>}<span>{children}</span></div>;
 }
-export function PageHeading({ eyebrow, title, note, actions }: { eyebrow?: string; title: string; note: string; actions?: ReactNode }) {
-  return <header className="page-heading"><div>{eyebrow && <div className="eyebrow">{eyebrow}</div>}<h1>{title}</h1><p>{note}</p></div>{actions && <div className="heading-actions">{actions}</div>}</header>;
+// `eyebrow` is accepted for compatibility but no longer rendered: the page title alone is clearer.
+export function PageHeading({ title, note, actions }: { eyebrow?: string; title: string; note: string; actions?: ReactNode }) {
+  return <header className="page-heading"><div><h1>{title}</h1><p>{note}</p></div>{actions && <div className="heading-actions">{actions}</div>}</header>;
 }
 export function Modal({ title, note, children, onClose, onSubmit, busy, error, submitDisabled, confirm = '保存', cancel = '取消', wide }: { title: string; note: string; children?: ReactNode; onClose: () => void; onSubmit?: () => void; busy?: boolean; error?: string; submitDisabled?: boolean; confirm?: string; cancel?: string; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);

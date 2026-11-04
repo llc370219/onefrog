@@ -113,7 +113,7 @@ export default function Chat({
       <div className="conversation">
         <header className="conversation-heading">
           <div>
-            <span className="eyebrow">AI WORKSPACE</span>
+            
             <h1>AI 助理 <span className="tag">{activeBot?.name || '主控'}</span></h1>
           </div>
           <Button onClick={onNew} disabled={sending}><Plus size={15}/>新对话</Button>
@@ -122,7 +122,7 @@ export default function Chat({
           {!lines.length ? (
             <div className="chat-welcome">
               <div className="welcome-icon"><Bot size={30} strokeWidth={1.3}/></div>
-              <span className="eyebrow">{isDevelop ? 'CUSTOM MODULES' : isModMgr ? 'MODULE & ASSET MANAGER' : 'YOUR OPERATIONS COPILOT'}</span>
+              
               <h2>{welcomeTitle}</h2>
               <p>{welcomeNote}</p>
               <div className="suggestions">

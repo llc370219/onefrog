@@ -8,6 +8,7 @@
 - 两个长期分支：`dev`（测试版）和 `main`（正式版）。改动走分支和 PR，**PR 的目标分支是 `dev`**，不直接推 `dev` 或 `main`。PR 描述里写清改了什么、怎么验证的。
 - 发布 = 合并一个修改根目录 `VERSION` 的 PR，并同时新增 `docs/releases/<版本>.md` 发布说明（第一行 `# 标题`）。`dev` 上写 `vX.Y.Z-beta.N` 发测试版（镜像 `beta`，GitHub 预发布），`main` 上写 `vX.Y.Z` 发正式版（镜像 `latest`）。`.github/workflows/release.yml` 自动构建镜像、打标签、创建 Release。不要手动改 Release。
 - 正式版只在维护者确认测试版没问题后发布：从 `dev` 开 PR 到 `main`，把 `VERSION` 改成正式版号。完整流程见 `docs/版本与发布.md`。
+- 署名：AI 编写的提交以 `Claude <noreply@anthropic.com>` 为作者（或在提交信息末尾加 `Co-Authored-By: Claude <noreply@anthropic.com>`）。合并 AI 的 PR 用 rebase 合并、`dev` 合入 `main` 用普通合并（merge commit），不要 squash，这样提交作者会保留，GitHub 贡献者列表里才会显示。
 - 维护者用 `./scripts/dev.sh <PR 号>` 在本地预览 PR（见 `docs/本地预览.md`）。开完 PR 后告诉维护者 PR 编号和这条命令。
 
 ## 提交前检查

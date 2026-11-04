@@ -28,6 +28,8 @@ jobs:
       - run: go test ./...
       - name: Service inventory collector
         run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s internal/services -p '*_test.py'
+      - name: Probe agent
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s internal/monitor -p '*_test.py'
       - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
   web:

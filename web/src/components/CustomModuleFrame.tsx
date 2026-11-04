@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bot, TriangleAlert } from 'lucide-react';
 import { api } from '../api';
 import { Button } from './ui';
+import { useTheme } from '../theme';
 
 function randomToken() {
   const bytes = new Uint8Array(16);
@@ -28,6 +29,14 @@ export default function CustomModuleFrame({
   const token = useMemo(() => randomToken(), [moduleId, version]);
   const [height, setHeight] = useState(compact ? 148 : 220);
   const [runtimeError, setRuntimeError] = useState('');
+  const { theme } = useTheme();
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
+
+  // The sandbox follows the panel's light/dark theme.
+  useEffect(() => {
+    frameRef.current?.contentWindow?.postMessage({ __onefrog_theme: true, theme }, '*');
+  }, [theme]);
 
   useEffect(() => {
     setRuntimeError('');
@@ -41,7 +50,7 @@ export default function CustomModuleFrame({
       try {
         const data = await api.devModuleData(moduleId, { action: 'get' });
         if (!alive) return;
-        win.postMessage({ __onefrog_init: true, token, compact: Boolean(compact), data }, '*');
+        win.postMessage({ __onefrog_init: true, token, compact: Boolean(compact), theme: themeRef.current, data }, '*');
       } catch (err) {
         if (!alive) return;
         setRuntimeError(err instanceof Error ? err.message : '读取模块数据失败');

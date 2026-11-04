@@ -568,7 +568,7 @@ func (a *Agent) workerPrompt(ctx context.Context, bot model.Bot, serverID string
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, promptWorker, bot.Name, strings.TrimSpace(bot.Description))
-	b.WriteString(promptPriorityReply)
+	// promptPriorityReply is for bots that may delegate; a worker must not.
 	a.writeOperations(&b, ctx)
 	b.WriteString(promptConnect)
 	b.WriteString(promptNoPanelSource)

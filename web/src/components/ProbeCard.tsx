@@ -108,8 +108,9 @@ export default function ProbeCard({ highlight, host, node, asset, services, onDe
   const used = tr ? billed(mode, tr.rx, tr.tx) : undefined;
   const usedPct = quota && used !== undefined ? used / quota * 100 : undefined;
   const history = node?.history || [];
-  const carriers = ['电信', '联通', '移动'].filter(n => s?.pings.some(p => p.name === n));
-  const ispHistory = (n: string) => { const rows = history.slice(-HISTORY).map(h => h.pings.find(p => p.name === n)); return [...Array<undefined>(HISTORY - rows.length).fill(undefined), ...rows]; };
+  const matchesProvince = (target:string) => !node?.province || target.startsWith(node.province.code+'-');
+  const carriers = ['电信', '联通', '移动'].filter(n => s?.pings.some(p => p.name === n&&matchesProvince(p.target)));
+  const ispHistory = (n: string) => { const rows = history.slice(-HISTORY).map(h => h.pings.find(p => p.name === n&&matchesProvince(p.target))); return [...Array<undefined>(HISTORY - rows.length).fill(undefined), ...rows]; };
   return <article className={`probe-card pc ${highlight ? 'newly-added' : ''} ${live ? 'live' : ''} ${status} ${compact ? 'probe-compact' : ''}`}>
     <header className="pc-head">
       <span className={`pc-flag ${place ? '' : 'none'}`} title={place?.name} aria-hidden="true">{place ? place.flag : <Server size={14}/>}</span>
@@ -135,9 +136,9 @@ export default function ProbeCard({ highlight, host, node, asset, services, onDe
         {quota ? <Blocks value={usedPct} tone={level(usedPct, 80, 95) || 'quota'}/> : onAsset ? <button type="button" className="text-btn" onClick={onAsset}>登记月流量额度，显示用量进度</button> : null}
       </div>
       {carriers.length ? <div className="pc-isps" aria-label="三网延迟与丢包">
-        <div className="pc-isps-head"><Radio size={12}/>三网延迟<small>{node?.province?.name || ''}</small></div>
+        <div className="pc-isps-head"><Radio size={12}/>三网延迟<small>{node?.province?.name || ''}</small>{onConnect&&<button type="button" className="text-btn" onClick={onConnect}>更换省份</button>}</div>
         {carriers.map(n => <IspRow key={n} name={n} history={ispHistory(n)}/>)}
-      </div> : <div className="pc-isps none"><Radio size={12}/>未设置三网测速{onConnect && <button className="text-btn" onClick={onConnect}>选择省份</button>}</div>}
+      </div> : <div className="pc-isps none"><Radio size={12}/>{node?.province?`${node.province.name} · 等待测速上报`:'未设置三网测速'}{onConnect && <button type="button" className="text-btn" onClick={onConnect}>{node?.province?'更换省份':'选择省份'}</button>}</div>}
       {status === 'offline' && <p className="probe-stale">以上是最后一次上报的数据，已停止刷新。</p>}
     </> : <div className="probe-empty-body"><strong>{node?.enrolled ? '探针已接入，等待第一次上报' : '还没有监控数据'}</strong><p>{node?.enrolled ? '通常一分钟内出现。如果一直没有，请检查节点能否访问面板地址。' : '接入只读探针后显示 CPU、内存、磁盘、负载、实时速率、流量和三网延迟。'}</p></div>}
     <footer className="pc-foot">

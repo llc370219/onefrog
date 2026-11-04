@@ -62,6 +62,21 @@ func (s *Server) probeToken(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	c.JSON(200, gin.H{"token": token, "server_id": c.Param("id"), "ping_targets": targets})
 }
+func (s *Server) probeProvince(c *gin.Context) {
+	var req struct {
+		Province *string `json:"province"`
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1024)
+	if c.ShouldBindJSON(&req) != nil || req.Province == nil {
+		fail(c, 400, "请选择测速省份，或选择不测三网")
+		return
+	}
+	if err := s.Onboarding.ConfigureProvince(c.Request.Context(), c.Param("id"), strings.TrimSpace(*req.Province)); err != nil {
+		fail(c, 400, err.Error())
+		return
+	}
+	c.JSON(200, gin.H{"message": "测速配置已应用，等待探针下一次上报"})
+}
 func (s *Server) probeReport(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
 	var req struct {

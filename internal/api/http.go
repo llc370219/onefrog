@@ -132,6 +132,7 @@ func (s *Server) Handler() http.Handler {
 	authed.GET("/services", s.serviceViews)
 	authed.POST("/servers/:id/services/scan", s.scanServices)
 	authed.POST("/servers/:id/probe/token", s.probeToken)
+	authed.POST("/servers/:id/probe/province", s.probeProvince)
 	authed.GET("/servers", s.listServers)
 	authed.GET("/servers/onboarding/defaults", s.onboardingDefaults)
 	authed.POST("/servers/onboarding", s.startOnboarding)

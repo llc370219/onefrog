@@ -2,8 +2,14 @@ import { useEffect, useState } from 'react';
 import { Download, KeyRound, ShieldCheck } from 'lucide-react';
 import { api, type Host, type PingTarget, type Province } from '../api';
 import { Button, Field, Modal, Notice } from './ui';
+import ProbeProvince from './ProbeProvince';
 
-export default function ProbeSetup({host,enrolled,province:current,onClose,onIssued}: {host:Host;enrolled:boolean;province?:Province;onClose:()=>void;onIssued:()=>void}){
+type Props = {host:Host;enrolled:boolean;province?:Province;onClose:()=>void;onIssued:()=>void};
+export default function ProbeSetup(props:Props){
+ const [manual,setManual]=useState(false);
+ return props.enrolled&&!manual ? <ProbeProvince host={props.host} province={props.province} onClose={props.onClose} onApplied={props.onIssued} onManual={()=>setManual(true)}/> : <ManualProbeSetup {...props}/>;
+}
+function ManualProbeSetup({host,enrolled,province:current,onClose,onIssued}: Props){
  const [base,setBase]=useState(location.origin);const [targets,setTargets]=useState('');const [interfaces,setInterfaces]=useState('');const [interval,setInterval]=useState(15);const [token,setToken]=useState('');const [province,setProvince]=useState(current?.code||'');const [provinces,setProvinces]=useState<Province[]>([]);const [pingTargets,setPingTargets]=useState<PingTarget[]>([]);
  useEffect(()=>{api.enrollmentDefaults().then(d=>setProvinces(d.provinces||[])).catch(()=>{});},[]);const [busy,setBusy]=useState(false);const [error,setError]=useState('');
  async function issue(){setBusy(true);setError('');try{const custom=targets.split('\n').map(s=>s.trim()).filter(Boolean);if(custom.some(s=>!s.match(/^[A-Za-z0-9][A-Za-z0-9.:-]{0,199}$/)))throw new Error('检测目标仅支持 IP 或域名');if(!province)throw new Error('请先选择三网延迟测哪个省份；不需要可以选「不测三网」');const res=await api.probeToken(host.id,{province:province==='none'?'':province,targets:custom});setToken(res.token);setPingTargets(res.ping_targets||[]);onIssued();}catch(e){setError(e instanceof Error?e.message:'无法生成凭据');}finally{setBusy(false);}}

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { ArrowUp, Blocks, Bot, Code2, HardDrive, History, KeyRound, LoaderCircle, LockKeyhole, Plus, Server, ShieldCheck, Sparkles, Paperclip, Wallet } from 'lucide-react';
+import { ArrowUp, Blocks, Bot, Code2, HardDrive, History, KeyRound, LoaderCircle, LockKeyhole, Plus, Server, ShieldCheck, Sparkles, Paperclip, Send, Wallet } from 'lucide-react';
 import type { ApprovalDecision, BotRow, ChatLine, Host, Attachment, SecretRow, SettingsState } from '../api';
 import ChatControls, { type ChatControlState } from '../components/ChatControls';
 import Attachments from '../components/Attachments';
@@ -140,7 +140,8 @@ export default function Chat({
               {lines.map((line, i) => (
                 <article className={`message ${line.who}`} key={i}>
                   {line.who === 'user' ? (
-                    <div className="user-message-content">
+                    <div className={line.fromBot ? 'user-message-content from-bot' : 'user-message-content'}>
+                      {line.fromBot && <div className="from-bot-label"><Send size={12}/>来自 Bot {bots.find(b => b.id === line.fromBot)?.name || line.fromBot}</div>}
                       {line.text && <div className="user-text">{line.text}</div>}
                       <Attachments files={line.attachments || []}/>
                     </div>

@@ -483,7 +483,7 @@ func (p *Postgres) AddMessage(ctx context.Context, msg model.Message) (model.Mes
 		raw, _ := json.Marshal(msg.Timeline)
 		timeline = string(raw)
 	}
-	_, err := p.pool.Exec(ctx, "INSERT INTO messages (id, session_id, role, content, created_at,attachments,choice,secret_request,timeline) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb)", msg.ID, msg.SessionID, msg.Role, msg.Content, msg.CreatedAt, string(attachments), choice, secretReq, timeline)
+	_, err := p.pool.Exec(ctx, "INSERT INTO messages (id, session_id, role, content, created_at,attachments,choice,secret_request,timeline,from_bot) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10)", msg.ID, msg.SessionID, msg.Role, msg.Content, msg.CreatedAt, string(attachments), choice, secretReq, timeline, msg.FromBot)
 	return msg, mapErr(err)
 }
 
@@ -536,7 +536,7 @@ func (p *Postgres) MarkSecretProvided(ctx context.Context, sessionID, messageID 
 }
 
 func (p *Postgres) ListMessages(ctx context.Context, sessionID string) ([]model.Message, error) {
-	rows, err := p.pool.Query(ctx, "SELECT id, session_id, role, content, created_at, attachments, choice, secret_request, timeline FROM messages WHERE session_id=$1 ORDER BY created_at", sessionID)
+	rows, err := p.pool.Query(ctx, "SELECT id, session_id, role, content, created_at, attachments, choice, secret_request, timeline, from_bot FROM messages WHERE session_id=$1 ORDER BY created_at", sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -545,7 +545,7 @@ func (p *Postgres) ListMessages(ctx context.Context, sessionID string) ([]model.
 	for rows.Next() {
 		var msg model.Message
 		var attachments, choice, secretReq, timeline []byte
-		if err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &msg.Content, &msg.CreatedAt, &attachments, &choice, &secretReq, &timeline); err != nil {
+		if err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &msg.Content, &msg.CreatedAt, &attachments, &choice, &secretReq, &timeline, &msg.FromBot); err != nil {
 			return nil, err
 		}
 		if len(choice) > 0 {

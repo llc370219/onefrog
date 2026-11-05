@@ -1,4 +1,4 @@
-import { Check, CircleCheck, Copy, GitBranch, LoaderCircle, Terminal, XCircle } from 'lucide-react';
+import { Check, CircleCheck, Copy, GitBranch, LoaderCircle, Send, Terminal, XCircle } from 'lucide-react';
 import type { ApprovalDecision, Choice, Host, SecretRequest, TurnItem } from '../api';
 import ApprovalCard from './ApprovalCard';
 import ChoiceCard from './ChoiceCard';
@@ -105,6 +105,14 @@ export default function TurnStream({
             <div className="inline-step delegate" key={'del-' + idx}>
               <GitBranch size={13}/>
               <span><strong>{item.bot || '主控'} → {item.target || '协作 Bot'}</strong> · {item.task}</span>
+            </div>
+          );
+        }
+        if (item.kind === 'message') {
+          return (
+            <div className="inline-step message" key={'msg-' + idx} title="异步消息，已放进对方的收件箱">
+              <Send size={13}/>
+              <span><strong>{item.bot || '主控'} → {item.target || 'Bot'} 收件箱</strong> · {item.task}</span>
             </div>
           );
         }

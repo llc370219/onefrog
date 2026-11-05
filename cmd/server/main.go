@@ -147,6 +147,7 @@ func main() {
 			Onboarding:   onboard,
 			Probes:       probe,
 			PublicURL:    cfg.PublicURL,
+			Mail:         bot.NewMailbox(),
 		},
 	}
 	log.Printf("listening on %s", cfg.Addr)

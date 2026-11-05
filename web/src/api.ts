@@ -35,7 +35,7 @@ export type Hist = {
 };
 export type SecretRow = { id: string; name: string; desc: string };
 export type ChatStep = {
-  kind: "delegate" | "tool";
+  kind: "delegate" | "message" | "tool";
   bot?: string;
   target?: string;
   task?: string;
@@ -67,7 +67,7 @@ export type ApprovalCardData = {
   note?: string;
 };
 export type TurnItem = {
-  kind: 'say' | 'step' | 'delegate' | 'approval' | 'approval_pending' | string;
+  kind: 'say' | 'step' | 'delegate' | 'message' | 'approval' | 'approval_pending' | string;
   bot?: string;
   text?: string;
   target?: string;
@@ -87,6 +87,8 @@ export type ChatLine = {
   choice?: Choice;
   secret?: SecretRequest;
   pending?: boolean;
+  /** Set when another bot wrote this line into the inbox with message_agent. */
+  fromBot?: string;
   activeStatus?: string;
   steps?: ChatStep[];
   timeline?: TurnItem[];
@@ -208,7 +210,7 @@ export const api = {
   async probeProvince(id:string,province:string,pingIntervalSeconds=60):Promise<{message:string}>{return call('/api/servers/'+encodeURIComponent(id)+'/probe/province',{method:'POST',body:JSON.stringify({province,ping_interval_seconds:pingIntervalSeconds})});},
   async profile(body:{username:string;display_name:string;avatar:string;current_password:string;new_password:string}):Promise<Profile>{return call("/api/auth/profile",{method:"PUT",body:JSON.stringify(body)});},
   async sessions():Promise<ChatSession[]>{return (await call("/api/sessions"))||[];},
-  async messages(id:string):Promise<{id:string;role:string;content:string;attachments?:Attachment[];choice?:Choice;secret_request?:SecretRequest;timeline?:TurnItem[]}[]>{return (await call("/api/sessions/"+encodeURIComponent(id)+"/messages"))||[];},
+  async messages(id:string):Promise<{id:string;role:string;content:string;from_bot?:string;attachments?:Attachment[];choice?:Choice;secret_request?:SecretRequest;timeline?:TurnItem[]}[]>{return (await call("/api/sessions/"+encodeURIComponent(id)+"/messages"))||[];},
   async deleteSession(id:string){return call("/api/sessions/"+encodeURIComponent(id),{method:"DELETE"});},
   async updateStatus():Promise<UpdateStatus>{return call("/api/update");},
   async checkUpdate():Promise<UpdateStatus>{return call("/api/update/check",{method:"POST",body:"{}"});},
@@ -350,8 +352,8 @@ type ChatReply = ChatResult & {
 };
 
 function toStep(raw: NonNullable<ChatReply["steps"]>[number]): ChatStep {
-  if (raw.kind === "delegate") {
-    return { kind: "delegate", bot: raw.bot, target: raw.target, task: raw.task };
+  if (raw.kind === "delegate" || raw.kind === "message") {
+    return { kind: raw.kind, bot: raw.bot, target: raw.target, task: raw.task };
   }
   return { kind: "tool", bot: raw.bot, server: raw.server_id, command: raw.command, ok: raw.ok, output: raw.output };
 }
@@ -441,7 +443,7 @@ function liveChat(body: ChatRequest, handlers: LiveChatHandlers) {
         return;
       }
       if (msg.type === "session") session = msg.session_id || "";
-      if (msg.type === "delegate" || msg.type === "tool") handlers.onStep?.(toStep({
+      if (msg.type === "delegate" || msg.type === "message" || msg.type === "tool") handlers.onStep?.(toStep({
         kind: msg.type,
         bot: msg.bot,
         target: msg.target,

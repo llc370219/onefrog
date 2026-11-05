@@ -57,6 +57,10 @@ OneFrog 能在已接入的服务器执行命令。建议使用权限受限的 SS
 - [开发约定](AGENTS.md)：所有编码助手和协作者共用的规则。
 - [Issues](https://github.com/llc370219/onefrog/issues)：问题反馈与功能建议。
 
+## 社区
+
+[LINUX DO](https://linux.do/) — 真诚、友善、团结、专业的技术社区。
+
 ## English
 
 OneFrog is a self-hosted AI operations panel for SSH server management, collaborative bots, approval workflows, monitoring, a secret vault, and custom interactive modules. Use `main` for stable installations and `dev` for development. Read the [English guide](docs/README.en.md) before deployment.

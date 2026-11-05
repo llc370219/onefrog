@@ -27,7 +27,17 @@ import Develop, { CustomModulePage } from './pages/Develop';
 type View = 'panel' | 'chat' | 'servers' | 'agents' | 'secrets' | 'modules' | 'history';
 type Dialog = 'account' | 'settings' | 'modules' | 'server' | 'secret' | 'rotate' | 'agent' | 'rollback' | null;
 const navigation = [{id:'panel',label:'面板',icon:LayoutDashboard}, {id:'chat',label:'AI 助理',icon:MessageSquare}, {id:'modules',label:'模块',icon:Blocks}, {id:'servers',label:'服务器',icon:Server}, {id:'agents',label:'Bot',icon:Bot}, {id:'secrets',label:'密钥保险箱',icon:KeyRound}, {id:'history',label:'变更记录',icon:History}] as const;
-const emptyForm = {name:'',host:'',role:'',value:'',port:'22',username:'root',auth_type:'password',description:'',system_prompt:''};
+const emptyForm = {name:'',host:'',role:'',value:'',port:'22',username:'root',auth_type:'password',description:'',system_prompt:'',secret_mode:'manual',gen_length:'32',gen_charset:'alnum'};
+type SecretForm = typeof emptyForm;
+const secretCharsets = [['alnum','大小写字母和数字'],['symbols','字母、数字和安全符号'],['hex','十六进制'],['base64url','Base64URL'],['digits','纯数字']] as const;
+
+/** Lets the user type a secret or have the server generate one that nobody sees. */
+function SecretSource({form,onForm,rotate}:{form:SecretForm;onForm:(f:SecretForm)=>void;rotate?:boolean}) {
+  const random = form.secret_mode === 'random';
+  return <><div className="tabs secret-mode" role="group" aria-label="密钥来源">{[['manual','手动输入'],['random','随机生成']].map(([id,label]) => <button type="button" key={id} className={form.secret_mode===id?'active':''} aria-pressed={form.secret_mode===id} onClick={() => onForm({...form,secret_mode:id,value:''})}>{label}</button>)}</div>
+    {random ? <><div className="form-grid"><Field label="长度" hint="8–256 个字符"><input type="number" min={8} max={256} required value={form.gen_length} onChange={e => onForm({...form,gen_length:e.target.value})}/></Field><Field label="字符集"><select value={form.gen_charset} onChange={e => onForm({...form,gen_charset:e.target.value})}>{secretCharsets.map(([id,label]) => <option key={id} value={id}>{label}</option>)}</select></Field></div><p className="model-hidden-note">由服务端用安全随机数生成并直接加密保存，浏览器和 Bot 都看不到明文。</p></>
+      : <Field label={rotate ? '新的密钥内容' : '密钥内容'}><textarea required className="secret-textarea" autoComplete="off" value={form.value} placeholder={rotate ? '输入新的密码、API Key 或私钥' : '输入密码、API Key 或私钥'} rows={4} onChange={e => onForm({...form,value:e.target.value})}/></Field>}</>;
+}
 const message = (err: unknown) => err instanceof Error ? err.message : '操作失败，请重试';
 
 /** The chat opens on the lead bot (主控) by default, never on specialist module bots. */
@@ -132,10 +142,18 @@ export default function App() {
     try {
       if(dialog === 'server') {const port = Number(form.port); if(!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('端口必须是 1–65535 的整数'); await api.createServer({name:form.name.trim(),host:form.host.trim(),role:form.role.trim(),port,username:form.username.trim(),auth_type:form.auth_type,secret:form.value});}
       if(dialog === 'secret' || dialog === 'rotate') {
-        const value = form.value;
-        setForm(cur => ({...cur, value: ''}));
-        if(dialog === 'secret') await api.createSecret({name:form.name.trim(),value,description:form.description.trim()});
-        else await api.rotateSecret(rotateID,{value,description:form.description.trim()});
+        if(form.secret_mode === 'random') {
+          const length = Number(form.gen_length);
+          if(!Number.isInteger(length) || length < 8 || length > 256) throw new Error('长度必须是 8–256 的整数');
+          const spec = {length, charset: form.gen_charset, description: form.description.trim()};
+          if(dialog === 'secret') await api.generateSecret({name:form.name.trim(), ...spec});
+          else await api.regenerateSecret(rotateID, spec);
+        } else {
+          const value = form.value;
+          setForm(cur => ({...cur, value: ''}));
+          if(dialog === 'secret') await api.createSecret({name:form.name.trim(),value,description:form.description.trim()});
+          else await api.rotateSecret(rotateID,{value,description:form.description.trim()});
+        }
       }
       if(dialog === 'agent') {if(!botModels||botModelsLoading) throw new Error('模型配置尚未加载，请关闭后重试');if(botRoute.provider_id&&!botRoute.model)throw new Error('请选择模型');await api.createBot({name:form.name.trim(),description:form.description.trim(),system_prompt:form.system_prompt.trim(),model_route:botRoute});}
       setDialog(null);setForm(emptyForm);setNotice('已保存');await load();
@@ -425,7 +443,7 @@ export default function App() {
     {dialog === 'settings' && <SettingsPanel bots={bots} onUpdateStatus={setUpdateStatus} onClose={close} onSaved={() => {setNotice('设置已保存，下一轮任务生效');load();}}/>}
     {dialog === 'modules' && <Modal title="定制面板模块" note="选择你想持续关注的内容，开关即时保存。" onClose={close} confirm="完成"><div className="module-picker">{mods.map(m => <div key={m.id}><span className="host-icon"><Blocks size={16}/></span><div><strong>{m.name}</strong><small>{m.desc}</small></div><button className={`switch ${m.enabled ? 'on' : ''}`} role="switch" aria-checked={m.enabled} aria-label={`显示${m.name}`} disabled={!!switching} onClick={() => toggle(m.id)}><i/></button></div>)}</div></Modal>}
     {dialog === 'server' && <AddServer onClose={close} onChanged={load} onDone={id=>{setSelected(id);setAddedServer(id);setNotice('服务器接入状态已更新');load();}}/>}
-    {dialog === 'secret' && <Modal title="添加密钥" note="在这里录入敏感内容，Bot 只能按名称引用。" onClose={close} onSubmit={submit} busy={busy} error={formError}><Field label="密钥名称" hint="命令引用格式：{{secret:名称}}"><input required value={form.name} placeholder="例如 production-db-password" onChange={e => setForm({...form,name:e.target.value})}/></Field><Field label="密钥内容"><textarea required className="secret-textarea" autoComplete="off" value={form.value} placeholder="输入密码、API Key 或私钥" rows={4} onChange={e => setForm({...form,value:e.target.value})}/></Field><Field label="用途说明"><input value={form.description} placeholder="例如：生产数据库连接凭据" onChange={e => setForm({...form,description:e.target.value})}/></Field><div className="inline-help"><LockKeyhole size={15}/>关闭窗口会清空未保存的敏感内容。</div></Modal>}{dialog === 'rotate' && <Modal title="轮换密钥" note={'替换「' + form.name + '」的密文。名称不变，明文不会显示。'} onClose={close} onSubmit={submit} busy={busy} error={formError} confirm="保存新内容"><Field label="密钥名称"><input value={form.name} readOnly/></Field><Field label="新的密钥内容"><textarea required className="secret-textarea" autoComplete="off" value={form.value} placeholder="输入新的密码、API Key 或私钥" rows={4} onChange={e => setForm({...form,value:e.target.value})}/></Field><Field label="用途说明"><input value={form.description} placeholder="可选，留空则清空说明" onChange={e => setForm({...form,description:e.target.value})}/></Field><div className="inline-help"><LockKeyhole size={15}/>提交后输入框会清空。模型仍然只能看到名称。</div></Modal>}
+    {dialog === 'secret' && <Modal title="添加密钥" note="在这里录入敏感内容，Bot 只能按名称引用。" onClose={close} onSubmit={submit} busy={busy} error={formError}><Field label="密钥名称" hint="命令引用格式：{{secret:名称}}"><input required value={form.name} placeholder="例如 production-db-password" onChange={e => setForm({...form,name:e.target.value})}/></Field><SecretSource form={form} onForm={setForm}/><Field label="用途说明"><input value={form.description} placeholder="例如：生产数据库连接凭据" onChange={e => setForm({...form,description:e.target.value})}/></Field><div className="inline-help"><LockKeyhole size={15}/>关闭窗口会清空未保存的敏感内容。</div></Modal>}{dialog === 'rotate' && <Modal title="轮换密钥" note={'替换「' + form.name + '」的密文。名称不变，明文不会显示。'} onClose={close} onSubmit={submit} busy={busy} error={formError} confirm="保存新内容"><Field label="密钥名称"><input value={form.name} readOnly/></Field><SecretSource form={form} onForm={setForm} rotate/><Field label="用途说明"><input value={form.description} placeholder="可选，留空则清空说明" onChange={e => setForm({...form,description:e.target.value})}/></Field><div className="inline-help"><LockKeyhole size={15}/>提交后输入框会清空。模型仍然只能看到名称。</div></Modal>}
     {dialog === 'agent' && <Modal title="创建 Bot" note="描述分工，让主控知道何时把任务交给它。" onClose={close} onSubmit={submit} busy={busy} submitDisabled={botModelsLoading||!botModels} error={formError} confirm="创建 Bot"><Field label="Bot 名称"><input required placeholder="例如：数据库专家" value={form.name} onChange={e => setForm({...form,name:e.target.value})}/></Field><Field label="职责描述"><input required placeholder="例如：分析数据库性能与慢查询" value={form.description} onChange={e => setForm({...form,description:e.target.value})}/></Field>{botModelsLoading?<div className="loading-inline"><LoaderCircle size={16} className="spin"/>加载可选模型…</div>:botModels&&<><RoutePicker label="Bot 模型" note="跟随协作默认模型，或为此 Bot 单独选择渠道和模型；创建后可在设置中修改。" providers={botModels.providers} value={botRoute} onChange={setBotRoute} inherit/>{!botModels.providers.some(p=>p.enabled)&&<p className="model-hidden-note">尚无可用渠道，可先跟随默认配置，稍后在设置中配置。</p>}</>}<Field label="工作指令" hint="可选，用于约束这个 Bot 的工作方式。"><textarea placeholder="例如：先收集证据，只执行只读查询。" rows={4} value={form.system_prompt} onChange={e => setForm({...form,system_prompt:e.target.value})}/></Field></Modal>}
     {dialog === 'rollback' && <Modal title="撤回详情" note="当前版本仅支持记录撤回标记，暂不恢复服务器上的文件或服务。" onClose={close} confirm="知道了"><div className="rollback-detail"><Terminal size={18}/><code>{history.find(h => h.id === rollback)?.action}</code></div><p className="muted">实际恢复需要有效快照与恢复执行器。这里暂不提供恢复操作，避免将记录更新误认为服务器已恢复。</p></Modal>}
   </div>;

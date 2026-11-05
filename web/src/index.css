@@ -483,3 +483,4 @@ input:focus,select:focus,textarea:focus{border-color:color-mix(in srgb,var(--acc
 .pc .probe-empty-body p{font-size:11.5px;line-height:1.6;color:var(--fg4)}
 .pc .probe-stale{margin:0}
 @media(max-width:760px){.pc-meters,.pc-isp{column-gap:14px}}
+.modal .secret-mode{margin-top:18px}

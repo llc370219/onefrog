@@ -489,6 +489,73 @@ func (s *Server) deleteSecret(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// randomCiphertext draws a value with crypto/rand and encrypts it at once. The
+// plaintext never leaves this function, so neither the browser nor a Bot sees it.
+func (s *Server) randomCiphertext(c *gin.Context, spec secret.Spec) (string, bool) {
+	value, err := secret.Generate(spec)
+	if err != nil {
+		fail(c, http.StatusBadRequest, err.Error())
+		return "", false
+	}
+	enc, err := s.Box.Encrypt(value)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, "加密失败")
+		return "", false
+	}
+	return enc, true
+}
+
+func (s *Server) generateSecret(c *gin.Context) {
+	var req struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		secret.Spec
+	}
+	if err := c.BindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, "请求无效")
+		return
+	}
+	name, err := secret.ValidName(req.Name)
+	if err != nil {
+		fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	enc, ok := s.randomCiphertext(c, req.Spec)
+	if !ok {
+		return
+	}
+	item, err := s.Store.CreateSecret(c.Request.Context(), store.SecretRec{Secret: model.Secret{Name: name, Description: secret.CleanDescription(req.Description)}, EncryptedValue: enc})
+	if mapStore(c, err) {
+		return
+	}
+	c.JSON(http.StatusCreated, item)
+}
+
+func (s *Server) regenerateSecret(c *gin.Context) {
+	var req struct {
+		secret.Spec
+		Description *string `json:"description"`
+	}
+	if err := c.BindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, "请求无效")
+		return
+	}
+	enc, ok := s.randomCiphertext(c, req.Spec)
+	if !ok {
+		return
+	}
+	var desc *string
+	if req.Description != nil {
+		cleaned := secret.CleanDescription(*req.Description)
+		desc = &cleaned
+	}
+	item, err := s.Store.UpdateSecret(c.Request.Context(), c.Param("id"), enc, desc)
+	if mapStore(c, err) {
+		return
+	}
+	c.JSON(http.StatusOK, item)
+}
+
 func (s *Server) listModules(c *gin.Context) {
 	items, err := s.Store.ListModules(c.Request.Context())
 	if mapStore(c, err) {

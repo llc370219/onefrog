@@ -256,7 +256,7 @@ func TestInstallProbeRefusesPlanAndWorker(t *testing.T) {
 	}
 	worker := usageContext(ownerCtx(), "w", "worker", "")
 	out := agent.execCall(worker, model.Bot{ID: "w", Name: "巡检"}, credentials{}, "", callInstall("{"+"\"server_id\":\"matrix\""+"}"), false, nil)
-	if !strings.Contains(out, "只有主控") {
+	if !strings.Contains(out, "协作任务里不能安装探针") {
 		t.Fatal(out)
 	}
 	asset := agent.execCall(ownerCtx(), model.Bot{ID: "module-builder", Name: "模块管理"}, credentials{}, "", callInstall("{"+"\"server_id\":\"matrix\""+"}"), false, nil)

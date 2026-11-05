@@ -69,11 +69,10 @@ func options(ctx context.Context) Options { v, _ := ctx.Value(optionsKey{}).(Opt
 func isDirect(ctx context.Context) bool { return options(ctx).Mode == "direct" && !isWorker(ctx) }
 
 // commandsPanel reports whether speaker may change the panel or install probes.
+// Any bot the user talks to directly may; a delegated worker only does the one
+// task it was handed, and asset bots never run commands.
 func (a *Agent) commandsPanel(ctx context.Context, speaker model.Bot) bool {
-	if isWorker(ctx) || a.managesAssets(speaker) {
-		return false
-	}
-	return !isDirect(ctx) || speaker.ID == "main"
+	return !isWorker(ctx) && !a.managesAssets(speaker)
 }
 func usageContext(ctx context.Context, id, purpose, provider string) context.Context {
 	return context.WithValue(ctx, usageKey{}, usageActor{id, purpose, provider})

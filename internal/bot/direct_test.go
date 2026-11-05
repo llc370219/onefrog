@@ -47,12 +47,14 @@ func TestDirectChatTalksToOneBotWithOwnMemory(t *testing.T) {
 	}
 	first, _ := json.Marshal(bodies[0])
 	raw := string(first)
-	for _, bad := range []string{"运维主控", "各 Bot 最近记住的标题", "只给主控", "\"name\":\"panel\"", "\"name\":\"install_probe\""} {
+	for _, bad := range []string{"运维主控", "各 Bot 最近记住的标题", "只给主控"} {
 		if strings.Contains(raw, bad) {
 			t.Fatalf("direct prompt leaked %q: %s", bad, raw)
 		}
 	}
-	for _, want := range []string{"单独对话", "巡检笔记", "需要时可以请这些 Bot 协助", "ask_agent", "message_agent"} {
+	// A sub-bot works on its own in a direct chat: it gets the same panel,
+	// probe and module tools as the lead, not a "please ask main" stub.
+	for _, want := range []string{"单独对话", "巡检笔记", "需要时可以请这些 Bot 协助", "ask_agent", "message_agent", "\"name\":\"panel\"", "\"name\":\"install_probe\"", "\"name\":\"develop_module\"", "【管理面板：panel】"} {
 		if !strings.Contains(raw, want) {
 			t.Fatalf("direct prompt missing %q", want)
 		}
@@ -95,11 +97,26 @@ func TestDirectChatModeValidationAndLimits(t *testing.T) {
 	if out := a.recallCall(direct, worker, recallArgs(`{"bot_id":"main"}`)); !strings.Contains(out, "独立对话只能读取自己的记忆") {
 		t.Fatal(out)
 	}
-	if out := a.execCall(direct, worker, credentials{}, "", callPanel(`{"action":"overview"}`), false, nil); !strings.Contains(out, "只有主控") {
+	if out := a.execCall(direct, worker, credentials{}, "", callPanel(`{"action":"overview"}`), false, nil); strings.Contains(out, "不能直接改管理面板") {
 		t.Fatal(out)
+	}
+	if !a.commandsPanel(direct, worker) {
+		t.Fatal("sub-bot lost panel access in direct chat")
 	}
 	if !a.commandsPanel(direct, model.Bot{ID: "main", Name: "主控"}) {
 		t.Fatal("main lost panel access in direct chat")
+	}
+	// A delegated worker still only does the task it was handed.
+	delegated := usageContext(direct, "worker", "worker", "")
+	if a.commandsPanel(delegated, worker) {
+		t.Fatal("delegated worker got panel access")
+	}
+	// A sub-bot may manage peers but must not switch off or delete the lead.
+	if out, ok := a.panelSetBot(direct, worker, "main", new(bool)); ok || !strings.Contains(out, "主控") {
+		t.Fatal(out)
+	}
+	if out, ok := a.panelDeleteBot(direct, worker, "main"); ok || !strings.Contains(out, "主控") {
+		t.Fatal(out)
 	}
 	// Team mode keeps the leader's view of peer memory.
 	if out := a.recallCall(ctx, worker, recallArgs(`{"bot_id":"main"}`)); !strings.Contains(out, "只给主控") {

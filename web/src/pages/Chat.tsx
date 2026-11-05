@@ -90,7 +90,7 @@ export default function Chat({
     : isModMgr
     ? '查看或开关面板模块、维护资产与订阅台账，或管理自定义模块里的数据记录。'
     : mode === 'direct'
-    ? `只和「${activeBot?.name || 'Bot'}」一对一对话，它用自己的记忆回答。需要别的能力时，它会自己找其他 Bot 协助。`
+    ? `只和「${activeBot?.name || 'Bot'}」一对一对话。它带着自己的记忆独立干活，能操作服务器和面板；别的 Bot 更熟悉时，它会自己找对方协助。`
     : '主控会按任务自动拉其他 Bot 一起处理，你可以在右侧或下方选项里剔除、拉入 Bot。遇到选项、加密凭据或高危操作时，会在对话中弹出卡片逐步确认。';
 
   const suggestions = isDevelop
@@ -303,7 +303,7 @@ export default function Chat({
                   {memories?.slice(0, 4).map(m => <small key={m.id} title={m.body}>{m.title}</small>)}
                   {memories?.length === 0 && <small className="muted wrap">还没有记忆，聊天中学到的事会记在这里。</small>}
                 </div>
-                <p className="muted">只读取它自己的记忆。需要别的能力时，它会自己找其他 Bot 协助，过程显示在对话里。</p>
+                <p className="muted">它独立完成任务，只读取自己的记忆。需要时会自己找其他 Bot 协助，过程显示在对话里。</p>
               </div>
             ) : <p className="muted">未选择 Bot。</p>}
           </div>

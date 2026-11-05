@@ -334,6 +334,11 @@ func (a *Agent) execCall(ctx context.Context, speaker model.Bot, creds credentia
 		return "已把选项卡片展示给用户。本轮到此结束，等用户选择后再继续。"
 	case "request_secret":
 		return a.requestSecret(ctx, call, tr)
+	case "generate_secret":
+		if a.managesAssets(speaker) || a.developsModules(speaker) {
+			return "这个 Bot 不能生成密钥"
+		}
+		return a.generateSecret(ctx, speaker, call, tr)
 	case "remember":
 		return a.rememberCall(ctx, speaker, call, tr)
 	case "recall":
@@ -883,7 +888,7 @@ func toolDefs(delegate, manage bool) []map[string]any {
 	}
 	out := []map[string]any{}
 	if !manage {
-		out = append(out, connect, command, rememberTool, recallTool)
+		out = append(out, connect, command, generateSecretTool, rememberTool, recallTool)
 		if delegate {
 			out = append(out, ask)
 		}

@@ -258,6 +258,13 @@ export const api = {
   async rotateSecret(id: string, body: { value: string; description?: string }) {
     return call("/api/secrets/" + encodeURIComponent(id), { method: "PUT", body: JSON.stringify(body) });
   },
+  /** The server draws and encrypts the value; the response carries only metadata. */
+  async generateSecret(body: { name: string; description?: string; length: number; charset: string }) {
+    return call("/api/secrets/generate", { method: "POST", body: JSON.stringify(body) });
+  },
+  async regenerateSecret(id: string, body: { description?: string; length: number; charset: string }) {
+    return call("/api/secrets/" + encodeURIComponent(id) + "/generate", { method: "POST", body: JSON.stringify(body) });
+  },
   async deleteSecret(id: string) {
     return call("/api/secrets/" + encodeURIComponent(id), { method: "DELETE" });
   },

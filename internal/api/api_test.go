@@ -372,3 +372,61 @@ func TestSecretVaultRotateDeleteAndLimits(t *testing.T) {
 		t.Fatal("deleted secret still listed")
 	}
 }
+
+func TestGenerateSecretKeepsPlaintextServerSide(t *testing.T) {
+	mem := store.NewMemory()
+	box, err := secret.New(bytes.Repeat([]byte{7}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := boot.Prepare(context.Background(), mem, config.Config{AdminUser: "admin", AdminPassword: "admin", Seed: true}); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer((&Server{Store: mem, Box: box, Agent: &bot.Agent{Store: mem, Box: box}}).Handler())
+	defer srv.Close()
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	login(t, client, srv, "admin", "admin", http.StatusOK)
+
+	raw := postSecret(t, client, srv.URL+"/api/secrets/generate", map[string]any{"name": "redis", "description": "缓存", "length": 48, "charset": "symbols"}, http.StatusCreated)
+	var created model.Secret
+	if err := json.Unmarshal([]byte(raw), &created); err != nil || created.Name != "redis" || created.Description != "缓存" {
+		t.Fatalf("created %s %v", raw, err)
+	}
+	rec, err := mem.SecretByName(context.Background(), "redis")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _ := box.Decrypt(rec.EncryptedValue)
+	if len(first) != 48 || strings.Contains(raw, first) || strings.Contains(getBody(t, client, srv.URL+"/api/secrets"), first) {
+		t.Fatalf("bad length or leaked: %d", len(first))
+	}
+
+	raw = postSecret(t, client, srv.URL+"/api/secrets/"+created.ID+"/generate", map[string]any{"description": "缓存（已轮换）"}, http.StatusOK)
+	rec, _ = mem.SecretByName(context.Background(), "redis")
+	second, _ := box.Decrypt(rec.EncryptedValue)
+	if len(second) != secret.DefaultGenLength || second == first || strings.Contains(raw, second) || rec.Description != "缓存（已轮换）" {
+		t.Fatalf("regenerate failed or leaked: %s", raw)
+	}
+
+	postSecret(t, client, srv.URL+"/api/secrets/generate", map[string]any{"name": "redis"}, http.StatusConflict)
+	postSecret(t, client, srv.URL+"/api/secrets/generate", map[string]any{"name": "short", "length": 4}, http.StatusBadRequest)
+	postSecret(t, client, srv.URL+"/api/secrets/generate", map[string]any{"name": "odd", "charset": "emoji"}, http.StatusBadRequest)
+	postSecret(t, client, srv.URL+"/api/secrets/generate", map[string]any{"name": "has space"}, http.StatusBadRequest)
+	postSecret(t, client, srv.URL+"/api/secrets/missing/generate", map[string]any{}, http.StatusNotFound)
+}
+
+func postSecret(t *testing.T, client *http.Client, url string, payload any, want int) string {
+	t.Helper()
+	raw, _ := json.Marshal(payload)
+	res, err := client.Post(url, "application/json", bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode != want {
+		t.Fatalf("%s: want %d got %d %s", url, want, res.StatusCode, body)
+	}
+	return string(body)
+}

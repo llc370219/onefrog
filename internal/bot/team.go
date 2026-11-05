@@ -78,7 +78,7 @@ func (a *Agent) lead(ctx context.Context, leader model.Bot, serverID, sessionID 
 	} else if isDirect(ctx) {
 		system = a.directPrompt(ctx, leader, serverID)
 	}
-	messages, err := a.sessionMessages(ctx, sessionID, system)
+	messages, err := a.sessionMessages(ctx, sessionID, system, leader.Name)
 	if err != nil {
 		return Result{}, err
 	}
@@ -443,6 +443,10 @@ func (a *Agent) handOff(ctx context.Context, speaker model.Bot, creds credential
 	if text == "" {
 		text = "没有结论"
 	}
+	if tr != nil && text != "没有结论" {
+		// The worker speaks in the chat under its own name, like a group member.
+		tr.emit(Step{Kind: "say", Bot: target.Name, Output: text})
+	}
 	if text != "没有结论" && !strings.HasPrefix(text, "这轮步骤用完了") {
 		title := clip(strings.Join(strings.Fields(args.Task), " "), 40)
 		if title == "" {
@@ -494,7 +498,10 @@ func (t *trace) noteTool(botName string, ev ToolEvent) {
 	t.emit(Step{Kind: "tool", Bot: botName, Name: ev.Name, Command: ev.Command, ServerID: ev.ServerID, OK: ev.OK, Output: ev.Output})
 }
 
-func (a *Agent) sessionMessages(ctx context.Context, sessionID, system string) ([]map[string]any, error) {
+// sessionMessages rebuilds the chat history for speaker. Lines other bots said
+// in the same turn are tagged with their name so speaker never mistakes a
+// worker's reply for its own words.
+func (a *Agent) sessionMessages(ctx context.Context, sessionID, system, speaker string) ([]map[string]any, error) {
 	items, err := a.Store.ListMessages(ctx, sessionID)
 	if err != nil {
 		return nil, err
@@ -524,7 +531,11 @@ func (a *Agent) sessionMessages(ctx context.Context, sessionID, system string) (
 				var says []string
 				for _, ti := range item.Timeline {
 					if ti.Kind == "say" && strings.TrimSpace(ti.Text) != "" {
-						says = append(says, strings.TrimSpace(ti.Text))
+						line := strings.TrimSpace(ti.Text)
+						if ti.Bot != "" && ti.Bot != speaker {
+							line = "[" + ti.Bot + "] " + line
+						}
+						says = append(says, line)
 					}
 				}
 				if len(says) > 0 {

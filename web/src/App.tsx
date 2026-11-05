@@ -25,6 +25,7 @@ import Assets from './pages/Assets';
 import Develop, { CustomModulePage } from './pages/Develop';
 import { BotAvatar } from './components/BotAvatar';
 import { latestDirect } from './lib/chatGroups';
+import Automations from './pages/Automations';
 
 type View = 'panel' | 'chat' | 'servers' | 'agents' | 'secrets' | 'modules' | 'history';
 type Dialog = 'account' | 'settings' | 'modules' | 'server' | 'secret' | 'rotate' | 'agent' | 'rollback' | 'group' | null;
@@ -45,7 +46,7 @@ const message = (err: unknown) => err instanceof Error ? err.message : '操作�
 /** The chat opens on the lead bot (主控) by default, never on specialist module bots. */
 const defaultBot=(list:BotRow[])=>(list.find(x=>x.id==='main'&&x.enabled)||list.find(x=>x.enabled&&x.id!=='module-builder'&&x.id!=='develop')||list.find(x=>x.enabled))?.id||'';
 /** Inbox sessions belong to one bot, so they open as a direct chat. */
-const sessionMode=(s:ChatSession):ChatMode=>s.options?.mode==='direct'||s.id.startsWith('inbox-')?'direct':'team';
+const sessionMode=(s:ChatSession):ChatMode=>s.options?.mode==='direct'||s.id.startsWith('inbox-')||s.id.startsWith('auto-')?'direct':'team';
 
 type MessageRow = Awaited<ReturnType<typeof api.messages>>[number];
 /** Turns stored messages into chat lines, hiding the automatic follow-ups sent after a choice or secret card. */
@@ -107,7 +108,7 @@ export default function App() {
     const tick=async()=>{
       try{
         const list=await api.sessions();if(!active||sendingRef.current||uploadRef.current)return;setSessions(list);
-        const cur=session.startsWith('inbox-')?list.find(s=>s.id===session):undefined;
+        const cur=session.startsWith('inbox-')||session.startsWith('auto-')?list.find(s=>s.id===session):undefined;
         const mark=cur?cur.id+'|'+cur.updated_at:'';
         if(!cur||inboxSeen.current===mark)return;
         const first=!inboxSeen.current.startsWith(cur.id+'|');inboxSeen.current=mark;if(first)return;
@@ -443,8 +444,9 @@ export default function App() {
     {view === 'modules' && activeModule === 'services' && <Services hosts={hosts} focusServer={serviceFocus} onServer={openServerById} onAsk={(id,text)=>{newChat();setSelected(id);openChat(text);}}/>}
     {view === 'modules' && activeModule === 'assets' && <Assets hosts={hosts} focusServer={assetFocusServer} onConsumedFocus={() => setAssetFocusServer(null)} onOpenServer={openServerById} onChatServer={(id, name) => { setSelected(id); openChat('检查服务器 ' + name + ' 的运行状态和磁盘情况。'); }} onAsk={text => {const bot = bots.find(b => (b.id === 'module-builder' || b.name === '模块管理' || b.name === '模块构建') && b.enabled); if (bot) newChat(bot.id); go('chat'); setDraft(text);}}/>}
     {view === 'modules' && activeModule === 'develop' && <Develop bots={bots} settings={chatConfig} onOpenChat={text => {const bot = bots.find(b => (b.id === 'develop' || b.name === '自定义模块' || b.name === '二次开发') && b.enabled); if (bot) newChat(bot.id); go('chat'); setDraft(text);}} onOpenSettings={openSettings} onOpenModule={id => setActiveModule(id)} onChanged={load}/>}
-    {view === 'modules' && activeModule !== '' && activeModule !== 'assets' && activeModule !== 'services' && activeModule !== 'develop' && mods.find(m => m.id === activeModule)?.type === 'custom' && <CustomModulePage mod={mods.find(m => m.id === activeModule)!} onBack={() => setActiveModule('develop')} onAskDevelop={text => {const bot = bots.find(b => (b.id === 'develop' || b.name === '自定义模块' || b.name === '二次开发') && b.enabled); if (bot) newChat(bot.id); go('chat'); setDraft(text);}} onChanged={load}/>}
-    {view === 'modules' && activeModule !== 'assets' && activeModule !== 'services' && activeModule !== 'develop' && mods.find(m => m.id === activeModule)?.type !== 'custom' && <Modules mods={activeModule?mods.filter(m=>m.id===activeModule):mods} onToggle={toggle} pending={switching} onOpen={id => {if(id==='services')openServices();else setActiveModule(id);}}/>}
+    {view === 'modules' && activeModule === 'automations' && <Automations bots={bots} hosts={hosts} onOpenSession={async id => {let item = sessions.find(s => s.id === id); if (!item) {try {const list = await api.sessions(); setSessions(list); item = list.find(s => s.id === id);} catch (e) {setPageError(message(e)); return;}} if (item) {await restoreChat(item); go('chat');} else setPageError('这段对话已被删除');}}/>}
+    {view === 'modules' && activeModule !== '' && activeModule !== 'assets' && activeModule !== 'services' && activeModule !== 'develop' && activeModule !== 'automations' && mods.find(m => m.id === activeModule)?.type === 'custom' && <CustomModulePage mod={mods.find(m => m.id === activeModule)!} onBack={() => setActiveModule('develop')} onAskDevelop={text => {const bot = bots.find(b => (b.id === 'develop' || b.name === '自定义模块' || b.name === '二次开发') && b.enabled); if (bot) newChat(bot.id); go('chat'); setDraft(text);}} onChanged={load}/>}
+    {view === 'modules' && activeModule !== 'assets' && activeModule !== 'services' && activeModule !== 'develop' && activeModule !== 'automations' && mods.find(m => m.id === activeModule)?.type !== 'custom' && <Modules mods={activeModule?mods.filter(m=>m.id===activeModule):mods} onToggle={toggle} pending={switching} onOpen={id => {if(id==='services')openServices();else setActiveModule(id);}}/>}
     {view === 'history' && <HistoryPage history={history} initialFilter={historyFilter.filter} initialQuery={historyFilter.query} onOpenServer={openServerByName} onOpenBot={openBotByName} onUndo={id => {setRollback(id);open('rollback');}}/>}
     </div></main>
     {notice && <div className="toast" role="status"><Check size={16}/>{notice}<IconButton label="关闭通知" onClick={() => setNotice('')}><X size={14}/></IconButton></div>}

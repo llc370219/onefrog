@@ -10,6 +10,7 @@ func Catalog() []model.Module {
 		{ID: "compare", Name: "磁盘对比", Version: "1.0.0", Type: "builtin", Description: "把几台机器的磁盘放在一起看", Enabled: false},
 		{ID: "assets", Name: "订阅", Version: "1.1.0", Type: "builtin", Description: "统一记录服务器、域名和软件订阅，汇总月费、7 天内到期与历史订阅", Enabled: true},
 		{ID: "develop", Name: "自定义模块", Version: "1.0.0", Type: "builtin", Description: "通过对话或源码创建可交互的自定义模块，挂载到面板与模块目录", Enabled: true},
+		{ID: "automations", Name: "自动化", Version: "1.0.0", Type: "builtin", Description: "让 Bot 按计划定时执行任务，结果写入对话与历史记录", Enabled: true},
 	}
 }
 

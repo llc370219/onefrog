@@ -42,7 +42,7 @@ func isInbox(ctx context.Context) bool {
 }
 
 func sendLimit(ctx context.Context) int {
-	if isInbox(ctx) {
+	if isInbox(ctx) || isAutomation(ctx) {
 		return maxSendsPerInbox
 	}
 	return maxSendsPerTurn

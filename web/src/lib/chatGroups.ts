@@ -1,8 +1,8 @@
 import type { BotRow, ChatSession } from '../api';
 
-/** A one-to-one chat with a single bot. Inbox sessions belong to one bot too. */
+/** A one-to-one chat with a single bot. Inbox and automation sessions belong to one bot too. */
 export function isDirect(s: Pick<ChatSession, 'id' | 'options'>): boolean {
-  return s.options?.mode === 'direct' || s.id.startsWith('inbox-');
+  return s.options?.mode === 'direct' || s.id.startsWith('inbox-') || s.id.startsWith('auto-');
 }
 
 /** Splits sessions into group chats and each bot's own one-to-one history, keeping the newest first. */

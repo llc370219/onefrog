@@ -16,6 +16,7 @@ test('direct and inbox sessions count as one-to-one chats',()=>{
  assert.equal(isDirect(sessions[1]),true);
  assert.equal(isDirect(sessions[2]),true);
  assert.equal(isDirect(sessions[4]),false);
+ assert.equal(isDirect(s('auto-a1-check','check','2026-11-06T13:00:00Z')),true);
 });
 
 test('group chats and each bot history are kept apart, newest first',()=>{

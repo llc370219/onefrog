@@ -217,10 +217,11 @@ func (a *Agent) answerChoice(ctx context.Context, sessionID string, r ChoiceRepl
 }
 
 // isWorker reports whether nobody is reading this turn live: a delegated
-// worker or a background inbox turn. Such turns cannot ask the user.
+// worker, a background inbox turn or a scheduled automation. Such turns
+// cannot ask the user.
 func isWorker(ctx context.Context) bool {
 	actor, ok := ctx.Value(usageKey{}).(usageActor)
-	return ok && (actor.Purpose == "worker" || actor.Purpose == "inbox")
+	return ok && (actor.Purpose == "worker" || actor.Purpose == "inbox" || actor.Purpose == "automation")
 }
 
 var askUserTool = map[string]any{

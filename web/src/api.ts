@@ -189,8 +189,18 @@ export type WatchTarget = {kind: ServiceItem['kind']; name: string};
 export type WatchState = 'pending' | 'ok' | 'fault' | 'missing' | 'unknown';
 export type WatchStatus = WatchTarget & {server_id: string; state: WatchState; detail: string; checked_at?: string; changed_at?: string};
 export type ServiceWatch = {interval_seconds: number; servers: Record<string, WatchTarget[]>; status: WatchStatus[]};
+export type AutomationKind = 'interval' | 'daily' | 'weekly' | 'once';
+export type AutomationSchedule = {kind: AutomationKind; minutes?: number; time?: string; weekday?: number; at?: string};
+export type AutomationMode = '' | 'smart' | 'model' | 'plan';
+export type Automation = {id: string; name: string; prompt: string; bot_id: string; server_id: string; schedule: AutomationSchedule; approval_mode: AutomationMode; enabled: boolean; owner_id: string; next_run_at?: string; last_run_at?: string; last_status?: 'running' | 'success' | 'failed'; last_error?: string; last_summary?: string; session_id?: string; created_at: string; updated_at: string};
+export type AutomationInput = Pick<Automation, 'name' | 'prompt' | 'bot_id' | 'server_id' | 'schedule' | 'approval_mode' | 'enabled'>;
 
 export const api = {
+ async automations():Promise<Automation[]>{return (await call('/api/automations'))?.items||[];},
+ async createAutomation(body:AutomationInput):Promise<Automation>{return call('/api/automations',{method:'POST',body:JSON.stringify(body)});},
+ async updateAutomation(id:string,body:AutomationInput):Promise<Automation>{return call('/api/automations/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(body)});},
+ async deleteAutomation(id:string){return call('/api/automations/'+encodeURIComponent(id),{method:'DELETE'});},
+ async runAutomation(id:string):Promise<Automation>{return call('/api/automations/'+encodeURIComponent(id)+'/run',{method:'POST',body:'{}'});},
  async services():Promise<{nodes:ServiceView[]}>{return call('/api/services');},
  async serviceWatch():Promise<ServiceWatch>{return call('/api/services/watch');},
  async saveServiceWatch(body:{interval_seconds:number;servers:Record<string,WatchTarget[]>}):Promise<ServiceWatch>{return call('/api/services/watch',{method:'PUT',body:JSON.stringify(body)});},

@@ -7,6 +7,7 @@ import (
 	"onefrog/internal/api"
 	"onefrog/internal/asset"
 	"onefrog/internal/attachment"
+	"onefrog/internal/automation"
 	"onefrog/internal/boot"
 	"onefrog/internal/bot"
 	"onefrog/internal/config"
@@ -119,8 +120,13 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	autos, err := automation.New(filepath.Join(cfg.DataDir, "automations.enc"), box, db)
+	if err != nil {
+		log.Fatal(err)
+	}
 	app := &api.Server{
 		ServiceWatch: watch,
+		Automations:  autos,
 		Updates:      updates,
 		OAuth:        oauth,
 		Onboarding:   onboard,
@@ -160,6 +166,7 @@ func main() {
 	// Handler attaches the shared inventory scanner before polling starts.
 	handler := app.Handler()
 	go watch.Run(ctx)
+	go autos.Run(ctx)
 	srv := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           handler,

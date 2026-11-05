@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Blocks, Code2, Search, Users, Plus, ArrowLeft, ChevronRight, Inbox, Trash2 } from 'lucide-react';
+import { Blocks, CalendarClock, Code2, Search, Users, Plus, ArrowLeft, ChevronRight, Inbox, Trash2 } from 'lucide-react';
 import type { BotRow, ChatMode, ChatSession, Mod } from '../api';
 import { IconButton } from './ui';
 import { BotAvatar } from './BotAvatar';
@@ -58,7 +58,7 @@ export default function SecondaryNav({ view, bots, sessions, mods, activeBot, se
                 {shownTopics.map(s => (
                   <div className={`directory-topic ${session === s.id ? 'selected' : ''}`} key={s.id}>
                     <button className="conversation-open" onClick={() => onSession(s)} disabled={disabled}>
-                      <strong>{s.id.startsWith('inbox-') && <span className="inbox-tag"><Inbox size={11}/>收件箱</span>}{s.title}</strong>
+                      <strong>{s.id.startsWith('inbox-') && <span className="inbox-tag"><Inbox size={11}/>收件箱</span>}{s.id.startsWith('auto-') && <span className="inbox-tag"><CalendarClock size={11}/>自动化</span>}{s.title}</strong>
                       <time>{when(s.updated_at)}</time>
                     </button>
                     <IconButton label={`删除话题 ${s.title}`} disabled={disabled} onClick={() => onDelete(s)}><Trash2 size={12}/></IconButton>

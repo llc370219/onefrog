@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowUp, Blocks, Code2, HardDrive, History, Inbox, KeyRound, LoaderCircle, LockKeyhole, Plus, Server, ShieldCheck, Sparkles, Paperclip, Send, Trash2, Users, Wallet } from 'lucide-react';
+import { ArrowUp, Blocks, CalendarClock, Code2, HardDrive, History, Inbox, KeyRound, LoaderCircle, LockKeyhole, Plus, Server, ShieldCheck, Sparkles, Paperclip, Send, Trash2, Users, Wallet } from 'lucide-react';
 import { api, type ApprovalDecision, type BotMemory, type BotRow, type ChatLine, type ChatMode, type ChatSession, type Host, type Attachment, type SecretRow, type SettingsState } from '../api';
 import ChatControls, { type ChatControlState } from '../components/ChatControls';
 import Attachments from '../components/Attachments';
@@ -344,7 +344,7 @@ export default function Chat({
                 {topics.map(s => (
                   <div className={`topic-row ${session === s.id ? 'selected' : ''}`} key={s.id}>
                     <button type="button" onClick={() => onSession?.(s)} disabled={sending || session === s.id} aria-current={session === s.id ? 'true' : undefined}>
-                      <strong>{s.id.startsWith('inbox-') && <Inbox size={11}/>}{s.title}</strong>
+                      <strong>{s.id.startsWith('inbox-') && <Inbox size={11}/>}{s.id.startsWith('auto-') && <CalendarClock size={11}/>}{s.title}</strong>
                       <time>{when(s.updated_at)}</time>
                     </button>
                     {onDeleteSession && <IconButton label={`删除话题 ${s.title}`} disabled={sending} onClick={() => onDeleteSession(s)}><Trash2 size={12}/></IconButton>}

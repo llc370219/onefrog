@@ -211,6 +211,15 @@ const promptInbox = `
 - 现在没有人在线审批：需要确认的命令会被拒绝。需要用户决定的事写进回复，等用户来处理。
 `
 
+// promptAutomation is added for a scheduled automation run.
+const promptAutomation = `
+【自动化任务】
+- 这是用户预设的定时任务，最新的消息是这次要做的事。现在没有人在线，用户之后会在这个对话里看到你的回复。
+- 没有人在线审批：需要确认的命令会被拒绝，不要换个写法绕过。需要用户决定的事写进回复。
+- 只做任务要求的事，优先只读检查；没有明确要求就不要修改配置、重启服务或删除数据。
+- 完成后把结论写在回复开头：一句话结论，再列关键数据、异常与建议。一切正常时简短说明即可。
+`
+
 // promptOperations is shared by the leader and worker prompts.
 const promptOperations = `
 【运维工作方式】

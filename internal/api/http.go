@@ -16,6 +16,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"onefrog/internal/asset"
 	"onefrog/internal/attachment"
+	"onefrog/internal/automation"
 	"onefrog/internal/bot"
 	"onefrog/internal/devmodule"
 	"onefrog/internal/id"
@@ -50,6 +51,8 @@ type Server struct {
 	Assets        *asset.Ledger
 	AssetExchange *asset.Exchange
 	DevModules    *devmodule.Book
+	// Automations holds scheduled Bot tasks; nil keeps an in-memory book.
+	Automations *automation.Book
 	// Updates checks GitHub for newer releases; nil reports a dev build.
 	Updates *update.Checker
 	// TrustedProxies is OF_TRUSTED_PROXIES (comma separated CIDRs/IPs, or "none").
@@ -117,6 +120,20 @@ func (s *Server) Handler() http.Handler {
 	s.ServiceWatch.Attach(s.Services)
 	if s.Agent != nil {
 		s.Agent.Services = s.Services
+	}
+	if s.Automations == nil {
+		s.Automations, _ = automation.New("", s.Box, s.Store)
+	}
+	if s.Agent != nil {
+		agent := s.Agent
+		s.Automations.SetRunner(func(ctx context.Context, it automation.Automation) (string, string, error) {
+			sid := automation.SessionID(it)
+			res, err := agent.RunAutomation(ctx, it.BotID, it.ServerID, sid, it.Name, it.Prompt, it.OwnerID, it.ApprovalMode)
+			if res.SessionID != "" {
+				sid = res.SessionID
+			}
+			return sid, res.Text, err
+		})
 	}
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -204,6 +221,11 @@ func (s *Server) Handler() http.Handler {
 	authed.POST("/dev/modules/:id/data", s.devModuleData)
 	authed.GET("/dev/modules/:id/frame", s.devModuleFrame)
 	authed.GET("/history", s.listHistory)
+	authed.GET("/automations", s.listAutomations)
+	authed.POST("/automations", s.createAutomation)
+	authed.PUT("/automations/:id", s.updateAutomation)
+	authed.DELETE("/automations/:id", s.deleteAutomation)
+	authed.POST("/automations/:id/run", s.runAutomation)
 	authed.POST("/history/:id/rollback", s.rollback)
 	authed.POST("/chat", s.chat)
 	authed.GET("/sessions", s.listSessions)

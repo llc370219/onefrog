@@ -71,10 +71,13 @@ func (a *Agent) lead(ctx context.Context, leader model.Bot, serverID, sessionID 
 	ctx = context.WithValue(ctx, traceKey{}, tr)
 	tr.ctx = ctx
 	system, canDelegate := a.leaderPrompt(ctx, leader, serverID), a.hasPeers(ctx, leader.ID)
-	if isInbox(ctx) {
-		// A background inbox turn works like a worker: no user to ask, no
-		// delegation, only an optional reply via message_agent.
+	if isInbox(ctx) || isAutomation(ctx) {
+		// A background inbox or automation turn works like a worker: no user
+		// to ask, no delegation, only an optional note via message_agent.
 		system, canDelegate = a.workerPrompt(ctx, leader, serverID), false
+		if isAutomation(ctx) {
+			system += promptAutomation
+		}
 	} else if isDirect(ctx) {
 		system = a.directPrompt(ctx, leader, serverID)
 	}

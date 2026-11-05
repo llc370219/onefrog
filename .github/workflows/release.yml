@@ -1,15 +1,78 @@
-name: Release image
+name: Release
 
+# Publishing a version = merging a change to the VERSION file.
+#   dev  + VERSION vX.Y.Z-beta.N -> test build: image :vX.Y.Z-beta.N and :beta,
+#                                   GitHub pre-release
+#   main + VERSION vX.Y.Z        -> stable: image :vX.Y.Z, :latest and :beta,
+#                                   GitHub release
+# Release notes come from docs/releases/<version>.md (first "# " line = title).
+# The tag and the GitHub release are created only after the image is pushed,
+# so panels never offer a version whose image does not exist yet. Pushing a
+# v*.*.* tag by hand still works and follows the same rules.
+# :beta always points at the newest build of either kind, so test installs never
+# fall behind a stable release. Stable installs only ever see :latest.
 on:
   push:
-    tags: ['v*']
+    branches: [main, dev]
+    paths: [VERSION]
+    tags: ['v*.*.*']
+  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      channel: ${{ steps.v.outputs.channel }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME}"
+          else
+            version=$(tr -d ' \r\n' < VERSION)
+          fi
+          if printf '%s' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            channel=stable
+          elif printf '%s' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$'; then
+            channel=beta
+          else
+            echo "::error::版本号 ${version} 不合法：正式版写 v1.2.3，测试版写 v1.2.3-beta.1"; exit 1
+          fi
+          if [ "${GITHUB_REF_TYPE}" = "branch" ]; then
+            case "${GITHUB_REF_NAME}:${channel}" in
+              main:stable|dev:beta) ;;
+              main:beta) echo "::error::main 只发布正式版，VERSION 不能带 -beta"; exit 1 ;;
+              dev:stable) echo "::notice::dev 上的 VERSION 是正式版号 ${version}，正式版只从 main 发布，跳过"; echo "publish=false" >> "$GITHUB_OUTPUT"; exit 0 ;;
+            esac
+          fi
+          if gh release view "$version" >/dev/null 2>&1; then
+            echo "::notice::${version} 已经发布过，跳过"
+            echo "publish=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          [ -f "docs/releases/${version}.md" ] || { echo "::error::缺少发布说明 docs/releases/${version}.md"; exit 1; }
+          {
+            echo "version=${version}"
+            echo "channel=${channel}"
+            echo "publish=true"
+          } >> "$GITHUB_OUTPUT"
+
   image:
+    needs: plan
+    if: needs.plan.outputs.publish == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,17 +87,38 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/onefrog
+          flavor: latest=false
           tags: |
-            type=ref,event=tag
-            type=raw,value=latest
+            type=raw,value=${{ needs.plan.outputs.version }}
+            type=raw,value=latest,enable=${{ needs.plan.outputs.channel == 'stable' }}
+            type=raw,value=beta
       - uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
-            VERSION=${{ github.ref_name }}
+            VERSION=${{ needs.plan.outputs.version }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  release:
+    needs: [plan, image]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          CHANNEL: ${{ needs.plan.outputs.channel }}
+        run: |
+          set -euo pipefail
+          notes="docs/releases/${VERSION}.md"
+          heading=$(grep -m1 '^# ' "$notes" | sed 's/^# //')
+          title="${VERSION}${heading:+ · ${heading}}"
+          awk 'found || !/^# / {print} /^# / && !found {found=1}' "$notes" > /tmp/notes.md
+          flags=()
+          if [ "$CHANNEL" = "beta" ]; then flags+=(--prerelease); else flags+=(--latest); fi
+          gh release create "$VERSION" --target "$GITHUB_SHA" --title "$title" --notes-file /tmp/notes.md "${flags[@]}"

@@ -11,19 +11,21 @@ const SandboxCSP = "sandbox allow-scripts; default-src 'none'; script-src 'unsaf
 const bootstrapHead = `<meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-:root{color-scheme:dark;--bg:#141517;--s1:#18191c;--s2:#202126;--fg:#eeeef0;--fg2:#b4b4bc;--fg3:#92929c;--fg4:#73737e;--line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.15);--ok:#9cceac;--warn:#dbb77a;--danger:#e69b9b}
+:root{color-scheme:light;--bg:#faf9f5;--s1:#ffffff;--s2:#f3f1ea;--s3:#e9e6dc;--field:#ffffff;--fg:#1a1915;--fg2:#3d3c37;--fg3:#69675f;--fg4:#8c8a81;--ink:#1f1e1a;--accent:#2f7d52;--accent-hover:#256843;--on-accent:#ffffff;--ok:#2f7d52;--warn:#9a6410;--danger:#b4433a;--line:color-mix(in srgb,var(--ink) 10%,transparent);--line2:color-mix(in srgb,var(--ink) 16%,transparent)}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){color-scheme:dark;--bg:#262624;--s1:#2b2a27;--s2:#30302d;--s3:#3a3935;--field:#21201e;--fg:#f5f4ef;--fg2:#c4c2b9;--fg3:#9e9c94;--fg4:#7e7c75;--ink:#faf9f5;--accent:#62b486;--accent-hover:#77c497;--on-accent:#0f1a13;--ok:#7fcc9d;--warn:#deb36d;--danger:#e9918a}}
+:root[data-theme=dark]{color-scheme:dark;--bg:#262624;--s1:#2b2a27;--s2:#30302d;--s3:#3a3935;--field:#21201e;--fg:#f5f4ef;--fg2:#c4c2b9;--fg3:#9e9c94;--fg4:#7e7c75;--ink:#faf9f5;--accent:#62b486;--accent-hover:#77c497;--on-accent:#0f1a13;--ok:#7fcc9d;--warn:#deb36d;--danger:#e9918a}
 *{box-sizing:border-box}
 html,body{margin:0;padding:0;background:transparent;color:var(--fg);font-family:Inter,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;font-size:13px;line-height:1.55;-webkit-font-smoothing:antialiased}
 h1,h2,h3,h4,p{margin:0}
 button,input,select,textarea{font:inherit;color:inherit}
-input,select,textarea{background:#111214;border:1px solid var(--line2);border-radius:9px;padding:8px 11px;color:var(--fg);outline:none;width:100%;min-width:0}
-input:focus,select:focus,textarea:focus{border-color:rgba(255,255,255,.38)}
-button,.of-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:34px;padding:0 14px;border-radius:999px;border:1px solid var(--line2);background:var(--s2);color:var(--fg);font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap;transition:background .15s,border-color .15s}
-button:hover:not(:disabled),.of-btn:hover:not(:disabled){background:#2b2c32;border-color:rgba(255,255,255,.26)}
+input,select,textarea{background:var(--field);border:1px solid var(--line2);border-radius:9px;padding:8px 11px;color:var(--fg);outline:none;width:100%;min-width:0}
+input:focus,select:focus,textarea:focus{border-color:color-mix(in srgb,var(--accent) 55%,var(--line2))}
+button,.of-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:34px;padding:0 14px;border-radius:10px;border:1px solid var(--line2);background:var(--s2);color:var(--fg);font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap;transition:background .15s,border-color .15s}
+button:hover:not(:disabled),.of-btn:hover:not(:disabled){background:var(--s3);border-color:var(--line2)}
 button:disabled,.of-btn:disabled{opacity:.48;cursor:default}
-button.primary,.of-btn.primary{background:#efeff1;color:#141416;border-color:#efeff1}
-button.primary:hover:not(:disabled),.of-btn.primary:hover:not(:disabled){background:#d7d7de}
-button.danger,.of-btn.danger{color:var(--danger);border-color:rgba(230,155,155,.28)}
+button.primary,.of-btn.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
+button.primary:hover:not(:disabled),.of-btn.primary:hover:not(:disabled){background:var(--accent-hover);border-color:var(--accent-hover)}
+button.danger,.of-btn.danger{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 30%,transparent)}
 table{width:100%;border-collapse:collapse;font-size:12px}
 th,td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:left}
 th{color:var(--fg3);font-weight:400;font-size:11px}
@@ -33,7 +35,7 @@ th{color:var(--fg3);font-weight:400;font-size:11px}
 .of-between{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .of-col{display:flex;flex-direction:column;gap:8px}
 .of-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
-.of-stat{border:1px solid var(--line);border-radius:10px;padding:11px 13px;background:rgba(255,255,255,.02)}
+.of-stat{border:1px solid var(--line);border-radius:10px;padding:11px 13px;background:color-mix(in srgb,var(--ink) 2%,transparent)}
 .of-stat span{display:block;font-size:11px;color:var(--fg3)}
 .of-stat strong{display:block;margin-top:4px;font-size:20px;font-weight:500;font-variant-numeric:tabular-nums}
 .of-badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:6px;border:1px solid var(--line2);font-size:11px;color:var(--fg2)}
@@ -42,7 +44,7 @@ th{color:var(--fg3);font-weight:400;font-size:11px}
 .of-item:last-child{border-bottom:0}
 .of-muted{color:var(--fg3);font-size:12px}
 .of-empty{padding:18px 12px;text-align:center;color:var(--fg4);font-size:12px;border:1px dashed var(--line2);border-radius:10px}
-#__of_err{display:none;margin:10px 18px;padding:9px 12px;border-radius:9px;border:1px solid rgba(230,155,155,.32);background:rgba(230,155,155,.08);color:var(--danger);font-size:12px;white-space:pre-wrap}
+#__of_err{display:none;margin:10px 18px;padding:9px 12px;border-radius:9px;border:1px solid color-mix(in srgb,var(--danger) 32%,transparent);background:color-mix(in srgb,var(--danger) 8%,transparent);color:var(--danger);font-size:12px;white-space:pre-wrap}
 </style>
 <script>
 (function(){
@@ -121,6 +123,10 @@ th{color:var(--fg3);font-weight:400;font-size:11px}
   window.addEventListener("message", function(ev){
     var d = ev && ev.data;
     if (!d || typeof d !== "object") return;
+    if (d.__onefrog_theme || d.__onefrog_init) {
+      if (ev.source === window.parent && (d.theme === "light" || d.theme === "dark")) document.documentElement.setAttribute("data-theme", d.theme);
+      if (d.__onefrog_theme) return;
+    }
     if (d.__onefrog_init) {
       token = String(d.token || "");
       cache.compact = Boolean(d.compact);
@@ -207,7 +213,7 @@ th{color:var(--fg3);font-weight:400;font-size:11px}
 </script>`
 
 // RenderFrameHTML wraps a custom module's HTML snippet or document with the
-// OneFrog dark theme stylesheet and window.onefrog persistence bridge.
+// OneFrog light/dark theme stylesheet (follows the panel's theme) and window.onefrog persistence bridge.
 func RenderFrameHTML(item CustomModule) string {
 	raw := strings.TrimSpace(item.HTML)
 	lower := strings.ToLower(raw)

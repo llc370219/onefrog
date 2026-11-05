@@ -96,8 +96,13 @@ func main() {
 	if err := devmodule.SyncStore(ctx, db, devModules); err != nil {
 		log.Fatal(err)
 	}
+	channel, ok := update.NormalizeChannel(cfg.Channel)
+	if !ok {
+		log.Fatalf("OF_CHANNEL must be stable or beta, got %q", cfg.Channel)
+	}
 	updates := &update.Checker{
 		Repo:             cfg.UpdateRepo,
+		Channel:          channel,
 		Current:          version.Version,
 		EnvDisabled:      !cfg.UpdateCheck,
 		SettingsDisabled: func() bool { return settings.Snapshot().UpdateCheckDisabled },

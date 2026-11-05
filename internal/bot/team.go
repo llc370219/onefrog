@@ -568,7 +568,7 @@ func (a *Agent) workerPrompt(ctx context.Context, bot model.Bot, serverID string
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, promptWorker, bot.Name, strings.TrimSpace(bot.Description))
-	b.WriteString(promptPriorityReply)
+	// promptPriorityReply is for bots that may delegate; a worker must not.
 	a.writeOperations(&b, ctx)
 	b.WriteString(promptConnect)
 	b.WriteString(promptNoPanelSource)
@@ -737,28 +737,30 @@ func toolDefs(delegate, manage bool) []map[string]any {
 			"parameters": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"action":      map[string]any{"type": "string", "enum": []string{"list", "create", "update", "delete"}},
-					"id":          map[string]string{"type": "string"},
-					"name":        map[string]string{"type": "string"},
-					"server_id":   map[string]string{"type": "string"},
-					"provider":    map[string]string{"type": "string", "description": "服务器提供商"},
-					"region":      map[string]string{"type": "string"},
-					"plan":        map[string]string{"type": "string"},
-					"cycle":       map[string]any{"type": "string", "enum": []string{"monthly", "quarterly", "yearly", "once"}},
-					"currency":    map[string]string{"type": "string"},
-					"amount_yuan": map[string]string{"type": "number"},
-					"paid_at":     map[string]string{"type": "string"},
-					"starts_at":   map[string]string{"type": "string"},
-					"expires_at":  map[string]string{"type": "string"},
-					"auto_renew":  map[string]string{"type": "boolean"},
-					"status":      map[string]any{"type": "string", "enum": []string{"active", "cancelled"}},
-					"ip":          map[string]string{"type": "string"},
-					"specs":       map[string]string{"type": "string", "description": "CPU、内存、磁盘、流量等"},
-					"order_no":    map[string]string{"type": "string"},
-					"account":     map[string]string{"type": "string", "description": "提供商账号备注，不要填密码"},
-					"contact":     map[string]string{"type": "string"},
-					"tags":        map[string]string{"type": "string"},
-					"notes":       map[string]string{"type": "string"},
+					"action":       map[string]any{"type": "string", "enum": []string{"list", "create", "update", "delete"}},
+					"id":           map[string]string{"type": "string"},
+					"name":         map[string]string{"type": "string"},
+					"server_id":    map[string]string{"type": "string"},
+					"provider":     map[string]string{"type": "string", "description": "订阅服务商或服务器提供商；支持软件会员、域名等，不要求关联服务器"},
+					"region":       map[string]string{"type": "string"},
+					"plan":         map[string]string{"type": "string"},
+					"cycle":        map[string]any{"type": "string", "enum": []string{"monthly", "quarterly", "yearly", "once"}},
+					"currency":     map[string]string{"type": "string", "description": "原币种，如 USD、CNY、CAD。新订阅未指定时默认 USD；修改时保留原币种"},
+					"amount_yuan":  map[string]string{"type": "number", "description": "按 currency 填写本期金额，不限人民币"},
+					"paid_at":      map[string]string{"type": "string"},
+					"starts_at":    map[string]string{"type": "string"},
+					"expires_at":   map[string]string{"type": "string"},
+					"auto_renew":   map[string]string{"type": "boolean"},
+					"status":       map[string]any{"type": "string", "enum": []string{"active", "cancelled"}},
+					"ip":           map[string]string{"type": "string"},
+					"specs":        map[string]string{"type": "string", "description": "CPU、内存、磁盘等"},
+					"traffic_gb":   map[string]string{"type": "number", "description": "每月流量额度，单位 GB；不限量填 0"},
+					"traffic_mode": map[string]any{"type": "string", "enum": []string{"both", "out", "in", "max"}, "description": "流量计费方式：both 双向合计，out 只算出站，in 只算入站，max 取入站和出站中较大者"},
+					"order_no":     map[string]string{"type": "string"},
+					"account":      map[string]string{"type": "string", "description": "提供商账号备注，不要填密码"},
+					"contact":      map[string]string{"type": "string"},
+					"tags":         map[string]string{"type": "string"},
+					"notes":        map[string]string{"type": "string"},
 				},
 			},
 		},

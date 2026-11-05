@@ -24,22 +24,26 @@ const (
 )
 
 type Record struct {
-	ID          string    `json:"id"`
-	ServerID    string    `json:"server_id,omitempty"`
-	Name        string    `json:"name"`
-	Provider    string    `json:"provider"`
-	Region      string    `json:"region"`
-	Plan        string    `json:"plan"`
-	Cycle       string    `json:"cycle"`
-	Currency    string    `json:"currency"`
-	AmountCents int64     `json:"amount_cents"`
-	PaidAt      string    `json:"paid_at"`
-	StartsAt    string    `json:"starts_at"`
-	ExpiresAt   string    `json:"expires_at"`
-	AutoRenew   bool      `json:"auto_renew"`
-	Status      string    `json:"status"`
-	IP          string    `json:"ip"`
-	Specs       string    `json:"specs"`
+	ID          string `json:"id"`
+	ServerID    string `json:"server_id,omitempty"`
+	Name        string `json:"name"`
+	Provider    string `json:"provider"`
+	Region      string `json:"region"`
+	Plan        string `json:"plan"`
+	Cycle       string `json:"cycle"`
+	Currency    string `json:"currency"`
+	AmountCents int64  `json:"amount_cents"`
+	PaidAt      string `json:"paid_at"`
+	StartsAt    string `json:"starts_at"`
+	ExpiresAt   string `json:"expires_at"`
+	AutoRenew   bool   `json:"auto_renew"`
+	Status      string `json:"status"`
+	IP          string `json:"ip"`
+	Specs       string `json:"specs"`
+	// TrafficGB is the plan's monthly traffic allowance in GB (0 = not set);
+	// TrafficMode says how the provider counts it: both, out, in or max.
+	TrafficGB   float64   `json:"traffic_gb,omitempty"`
+	TrafficMode string    `json:"traffic_mode,omitempty"`
 	OrderNo     string    `json:"order_no"`
 	Account     string    `json:"account"`
 	InvoiceURL  string    `json:"invoice_url"`
@@ -52,6 +56,7 @@ type Record struct {
 
 type View struct {
 	Record
+	Historical    bool    `json:"historical"`
 	DaysTotal     int     `json:"days_total"`
 	DaysLeft      int     `json:"days_left"`
 	ElapsedRatio  float64 `json:"elapsed_ratio"`
@@ -61,6 +66,8 @@ type View struct {
 }
 
 type Summary struct {
+	Subscriptions int              `json:"subscriptions"`
+	Historical    int              `json:"historical"`
 	Count         int              `json:"count"`
 	Active        int              `json:"active"`
 	Expiring      int              `json:"expiring"`
@@ -88,6 +95,8 @@ type Input struct {
 	Status      string   `json:"status"`
 	IP          string   `json:"ip"`
 	Specs       string   `json:"specs"`
+	TrafficGB   float64  `json:"traffic_gb"`
+	TrafficMode string   `json:"traffic_mode"`
 	OrderNo     string   `json:"order_no"`
 	Account     string   `json:"account"`
 	InvoiceURL  string   `json:"invoice_url"`
@@ -156,6 +165,11 @@ func (l *Ledger) Summary() Summary {
 	rows := l.List()
 	sum := Summary{Count: len(rows), MonthlyCents: map[string]int64{}, ResidualCents: map[string]int64{}}
 	for _, row := range rows {
+		if row.Historical {
+			sum.Historical++
+		} else {
+			sum.Subscriptions++
+		}
 		switch row.DerivedStatus {
 		case StatusActive:
 			sum.Active++
@@ -172,7 +186,9 @@ func (l *Ledger) Summary() Summary {
 		if cur == "" {
 			cur = "CNY"
 		}
-		sum.MonthlyCents[cur] += monthly(row.AmountCents, row.Cycle)
+		if !row.Historical {
+			sum.MonthlyCents[cur] += monthly(row.AmountCents, row.Cycle)
+		}
 		if row.DerivedStatus != StatusCancelled && row.DerivedStatus != StatusExpired {
 			sum.ResidualCents[cur] += row.ResidualCents
 		}
@@ -345,7 +361,7 @@ func build(old Record, in Input) (Record, error) {
 	}
 	currency := strings.ToUpper(clip(in.Currency, 8))
 	if currency == "" {
-		currency = "CNY"
+		currency = "USD"
 	}
 	if len(currency) < 3 || len(currency) > 8 {
 		return Record{}, errors.New("币种需要 3 到 8 位字母")
@@ -371,6 +387,16 @@ func build(old Record, in Input) (Record, error) {
 	}
 	if status != StatusActive && status != StatusCancelled {
 		return Record{}, errors.New("状态只能是 active 或 cancelled")
+	}
+	if math.IsNaN(in.TrafficGB) || in.TrafficGB < 0 || in.TrafficGB > 1_000_000 {
+		return Record{}, errors.New("月流量额度超出范围")
+	}
+	mode := clip(in.TrafficMode, 8)
+	if mode == "" {
+		mode = "both"
+	}
+	if mode != "both" && mode != "out" && mode != "in" && mode != "max" {
+		return Record{}, errors.New("流量计费方式只能是 both、out、in、max")
 	}
 	paid, err := day(in.PaidAt, false)
 	if err != nil {
@@ -417,6 +443,11 @@ func build(old Record, in Input) (Record, error) {
 	row.Status = status
 	row.IP = clip(in.IP, 80)
 	row.Specs = clip(in.Specs, 160)
+	row.TrafficGB = math.Round(in.TrafficGB*100) / 100
+	row.TrafficMode = ""
+	if row.TrafficGB > 0 {
+		row.TrafficMode = mode
+	}
 	row.OrderNo = clip(in.OrderNo, 80)
 	row.Account = clip(in.Account, 120)
 	row.InvoiceURL = clip(in.InvoiceURL, 300)
@@ -464,11 +495,12 @@ func present(row Record, now time.Time) View {
 	case endOK && today.After(end):
 		view.DerivedStatus = StatusExpired
 		view.ResidualCents = 0
-	case endOK && view.DaysLeft > 0 && view.DaysLeft <= 14:
+	case endOK && !end.Before(today) && !end.After(today.AddDate(0, 0, 7)):
 		view.DerivedStatus = StatusExpiring
 	default:
 		view.DerivedStatus = StatusActive
 	}
+	view.Historical = view.DerivedStatus == StatusCancelled || (view.DerivedStatus == StatusExpired && !row.AutoRenew)
 	return view
 }
 

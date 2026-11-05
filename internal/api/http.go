@@ -33,21 +33,22 @@ import (
 )
 
 type Server struct {
-	Services   *services.Scanner
-	OAuth      *providerlogin.Manager
-	Onboarding *onboarding.Manager
-	PublicURL  string
-	Files      *attachment.Manager
-	Usage      *usage.Manager
-	Store      store.Store
-	Box        *secret.Box
-	Agent      *bot.Agent
-	Secure     bool
-	WebDir     string
-	Settings   *preferences.Manager
-	Monitor    *monitor.Manager
-	Assets     *asset.Ledger
-	DevModules *devmodule.Book
+	Services      *services.Scanner
+	OAuth         *providerlogin.Manager
+	Onboarding    *onboarding.Manager
+	PublicURL     string
+	Files         *attachment.Manager
+	Usage         *usage.Manager
+	Store         store.Store
+	Box           *secret.Box
+	Agent         *bot.Agent
+	Secure        bool
+	WebDir        string
+	Settings      *preferences.Manager
+	Monitor       *monitor.Manager
+	Assets        *asset.Ledger
+	AssetExchange *asset.Exchange
+	DevModules    *devmodule.Book
 	// Updates checks GitHub for newer releases; nil reports a dev build.
 	Updates *update.Checker
 	// TrustedProxies is OF_TRUSTED_PROXIES (comma separated CIDRs/IPs, or "none").
@@ -56,6 +57,9 @@ type Server struct {
 }
 
 func (s *Server) Handler() http.Handler {
+	if s.AssetExchange == nil {
+		s.AssetExchange = asset.NewExchange()
+	}
 	if s.Settings == nil {
 		s.Settings, _ = preferences.New("", s.Box)
 	}
@@ -132,6 +136,7 @@ func (s *Server) Handler() http.Handler {
 	authed.GET("/services", s.serviceViews)
 	authed.POST("/servers/:id/services/scan", s.scanServices)
 	authed.POST("/servers/:id/probe/token", s.probeToken)
+	authed.POST("/servers/:id/probe/province", s.probeProvince)
 	authed.GET("/servers", s.listServers)
 	authed.GET("/servers/onboarding/defaults", s.onboardingDefaults)
 	authed.POST("/servers/onboarding", s.startOnboarding)
@@ -178,6 +183,7 @@ func (s *Server) Handler() http.Handler {
 	authed.POST("/modules/install", s.installModule)
 	authed.POST("/modules/:id/enable", s.enableModule)
 	authed.GET("/assets", s.listAssets)
+	authed.GET("/assets/rates", s.assetRates)
 	authed.POST("/assets", s.createAsset)
 	authed.PUT("/assets/:id", s.updateAsset)
 	authed.DELETE("/assets/:id", s.deleteAsset)
@@ -258,18 +264,18 @@ func (s *Server) login(c *gin.Context) {
 		return
 	}
 	ip := c.ClientIP()
-	if wait := s.limiter.blocked(ip, req.Username); wait > 0 {
+	if wait := s.limiter.blocked(ip); wait > 0 {
 		c.Header("Retry-After", retryAfter(wait))
 		fail(c, http.StatusTooManyRequests, "登录失败次数过多，请稍后再试")
 		return
 	}
 	user, hash, err := s.Store.UserByName(c.Request.Context(), strings.TrimSpace(req.Username))
 	if err != nil || bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) != nil {
-		s.limiter.fail(ip, req.Username)
+		s.limiter.fail(ip)
 		fail(c, http.StatusUnauthorized, "账号或密码不对")
 		return
 	}
-	s.limiter.succeed(ip, req.Username)
+	s.limiter.succeed(ip)
 	token := id.New() + id.New()
 	if err := s.Store.CreateSession(c.Request.Context(), user.ID, hashToken(token), time.Now().UTC().Add(7*24*time.Hour)); err != nil {
 		fail(c, http.StatusInternalServerError, "会话创建失败")

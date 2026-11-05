@@ -2,11 +2,16 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
 
 permissions:
   contents: read
+
+# A newer push to the same branch or PR supersedes the running check.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   go:
@@ -23,6 +28,8 @@ jobs:
       - run: go test ./...
       - name: Service inventory collector
         run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s internal/services -p '*_test.py'
+      - name: Probe agent
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s internal/monitor -p '*_test.py'
       - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
   web:
@@ -39,13 +46,14 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
       - run: npm audit --audit-level=moderate
+      - run: npm test
       - run: npm run build
 
   installer:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: shellcheck install.sh deploy/docker-entrypoint.sh
+      - run: shellcheck install.sh deploy/docker-entrypoint.sh scripts/dev.sh
       - name: Validate development Compose
         run: docker compose -p onefrog -f compose.dev.yml config --quiet
 

@@ -1,5 +1,7 @@
 // Package update checks GitHub for a newer OneFrog release and can ask the
-// host to upgrade. The check only reads the public "latest release" endpoint.
+// host to upgrade. The stable channel only reads the public "latest release"
+// endpoint (which never returns pre-releases); the beta channel reads the
+// release list and also considers vX.Y.Z-beta.N pre-releases.
 // Apply does not download an image and does not talk to Docker: it writes the
 // cached release tag into a directory the installer mounted. A root helper on
 // the host reads that tag and runs docker compose. The container never sees
@@ -38,7 +40,27 @@ const (
 )
 
 var repoPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
-var releaseTagPattern = regexp.MustCompile("^v[0-9]{1,8}(\\.[0-9]{1,8}){2}$")
+var releaseTagPattern = regexp.MustCompile("^v[0-9]{1,8}(\\.[0-9]{1,8}){2}(-beta\\.[0-9]{1,8})?$")
+
+// Release channels. Stable installs follow vX.Y.Z releases (image tag
+// "latest"); beta installs also follow vX.Y.Z-beta.N pre-releases (image tag
+// "beta"), which are cut from the dev branch for testing.
+const (
+	ChannelStable = "stable"
+	ChannelBeta   = "beta"
+)
+
+// NormalizeChannel maps OF_CHANNEL values to a channel; ok is false for
+// anything it does not recognise.
+func NormalizeChannel(v string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "", "stable", "latest", "release":
+		return ChannelStable, true
+	case "beta", "test", "testing":
+		return ChannelBeta, true
+	}
+	return "", false
+}
 
 // ErrTooSoon is returned by CheckNow when the previous attempt was too recent.
 var ErrTooSoon = errors.New("刚刚检查过，请稍后再试")
@@ -70,11 +92,13 @@ type Status struct {
 	Available   bool       `json:"available"`
 	// Enabled is false when checking is off; DisabledBy then says why:
 	// "env" (OF_UPDATE_CHECK=0), "settings", "dev" (unversioned build) or "repo".
-	Enabled    bool       `json:"enabled"`
-	DisabledBy string     `json:"disabled_by,omitempty"`
-	Repo       string     `json:"repo"`
-	CheckedAt  *time.Time `json:"checked_at,omitempty"`
-	Error      string     `json:"error,omitempty"`
+	Enabled    bool   `json:"enabled"`
+	DisabledBy string `json:"disabled_by,omitempty"`
+	Repo       string `json:"repo"`
+	// Channel is "stable" or "beta" (OF_CHANNEL).
+	Channel   string     `json:"channel"`
+	CheckedAt *time.Time `json:"checked_at,omitempty"`
+	Error     string     `json:"error,omitempty"`
 	// InstallDir and Project describe the install.sh deployment (set by the
 	// installer in docker-compose.yml) so the panel can show exact upgrade commands.
 	InstallDir string `json:"install_dir,omitempty"`
@@ -116,7 +140,7 @@ func upgradeDir() string {
 }
 
 // safeReleaseTag is the only text Apply will put in the trigger file.
-// Prerelease and build suffixes are rejected; the host script checks the same shape.
+// Only vX.Y.Z and vX.Y.Z-beta.N are accepted; the host script checks the same shape.
 func safeReleaseTag(tag string) bool {
 	return len(tag) <= maxReleaseTag && releaseTagPattern.MatchString(tag)
 }
@@ -180,6 +204,7 @@ type release struct {
 type Checker struct {
 	Repo    string // owner/name, default DefaultRepo
 	Current string // running version, e.g. v0.1.1 or dev
+	Channel string // ChannelStable (default) or ChannelBeta
 	API     string // GitHub API base URL, default https://api.github.com
 	HTTP    *http.Client
 	// EnvDisabled is set from OF_UPDATE_CHECK=0 and cannot be overridden in the UI.
@@ -201,6 +226,13 @@ func (c *Checker) repo() string {
 		return DefaultRepo
 	}
 	return c.Repo
+}
+
+func (c *Checker) channel() string {
+	if c.Channel == ChannelBeta {
+		return ChannelBeta
+	}
+	return ChannelStable
 }
 
 func (c *Checker) now() time.Time {
@@ -231,7 +263,7 @@ func (c *Checker) Status() Status {
 	canApply := upgradeDirWritable(upgradeDir())
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	s := Status{Current: c.Current, Repo: c.repo(), Error: c.lastErr}
+	s := Status{Current: c.Current, Repo: c.repo(), Channel: c.channel(), Error: c.lastErr}
 	s.InstallDir, s.Project = deployment()
 	if s.Current == "" {
 		s.Current = "dev"
@@ -317,7 +349,11 @@ func (c *Checker) fetch(ctx context.Context) (*release, error) {
 	repo := c.repo()
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, api+"/repos/"+repo+"/releases/latest", nil)
+	path := "/releases/latest"
+	if c.channel() == ChannelBeta {
+		path = "/releases?per_page=30"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, api+"/repos/"+repo+path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -340,14 +376,26 @@ func (c *Checker) fetch(ctx context.Context) (*release, error) {
 		return nil, fmt.Errorf("检查更新失败：GitHub 返回 %d", resp.StatusCode)
 	}
 	var rel release
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&rel); err != nil {
-		return nil, fmt.Errorf("检查更新失败：无法解析响应：%w", err)
-	}
-	if rel.Draft || rel.Prerelease {
-		return nil, errors.New("检查更新失败：最新发布不是正式版本")
-	}
-	if _, ok := parseSemver(rel.Tag); !ok {
-		return nil, fmt.Errorf("检查更新失败：版本号 %q 无效", rel.Tag)
+	if c.channel() == ChannelBeta {
+		var list []release
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&list); err != nil {
+			return nil, fmt.Errorf("检查更新失败：无法解析响应：%w", err)
+		}
+		best, ok := newestRelease(list)
+		if !ok {
+			return nil, errors.New("检查更新失败：仓库还没有发布版本")
+		}
+		rel = best
+	} else {
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&rel); err != nil {
+			return nil, fmt.Errorf("检查更新失败：无法解析响应：%w", err)
+		}
+		if rel.Draft || rel.Prerelease {
+			return nil, errors.New("检查更新失败：最新发布不是正式版本")
+		}
+		if _, ok := parseSemver(rel.Tag); !ok {
+			return nil, fmt.Errorf("检查更新失败：版本号 %q 无效", rel.Tag)
+		}
 	}
 	// Only link to the release page of the checked repository.
 	if !strings.HasPrefix(rel.URL, "https://github.com/"+repo+"/releases/") {
@@ -361,6 +409,27 @@ func (c *Checker) fetch(ctx context.Context) (*release, error) {
 		rel.Body = rel.Body[:cut] + "\n…"
 	}
 	return &rel, nil
+}
+
+// newestRelease picks the highest version among published releases whose tag
+// is a stable or beta release tag. Drafts and other tags are ignored.
+func newestRelease(list []release) (release, bool) {
+	var best release
+	var bestV semver
+	found := false
+	for _, r := range list {
+		if r.Draft || !safeReleaseTag(r.Tag) {
+			continue
+		}
+		v, ok := parseSemver(r.Tag)
+		if !ok {
+			continue
+		}
+		if !found || compareSemver(v, bestV) > 0 {
+			best, bestV, found = r, v, true
+		}
+	}
+	return best, found
 }
 
 // Run checks shortly after startup and then every Interval until ctx ends.

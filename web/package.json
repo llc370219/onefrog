@@ -3,8 +3,11 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "dev": "vite",
-    "build": "tsc --noEmit && vite build"
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.2.5",

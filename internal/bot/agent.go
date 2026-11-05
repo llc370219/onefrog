@@ -531,6 +531,25 @@ func (a *Agent) apiKey(ctx context.Context, secretID string) (string, error) {
 	return a.Box.Decrypt(rec.EncryptedValue)
 }
 
+// isModelKey reports whether a vault secret is some Bot's model API key. Those keys
+// are only for model calls; letting the model splice one into a remote command
+// would let a single prompt injection send it off the box.
+func (a *Agent) isModelKey(ctx context.Context, secretID, name string) bool {
+	if name == "model-key" {
+		return true
+	}
+	bots, err := a.Store.ListBots(ctx)
+	if err != nil {
+		return true
+	}
+	for _, b := range bots {
+		if b.APIKeySecretID != "" && b.APIKeySecretID == secretID {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *Agent) expand(ctx context.Context, command string) (string, error) {
 	var b strings.Builder
 	rest := command
@@ -549,6 +568,9 @@ func (a *Agent) expand(ctx context.Context, command string) (string, error) {
 		rec, err := a.Store.SecretByName(ctx, rest[:j])
 		if err != nil {
 			return "", fmt.Errorf("找不到密钥 %s", rest[:j])
+		}
+		if a.isModelKey(ctx, rec.ID, rec.Name) {
+			return "", fmt.Errorf("密钥 %s 是模型接口密钥，不能写进服务器命令", rest[:j])
 		}
 		plain, err := a.Box.Decrypt(rec.EncryptedValue)
 		if err != nil {

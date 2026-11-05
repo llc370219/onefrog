@@ -7,3 +7,8 @@ web/dist
 docs
 *.md
 !DISCLAIMER.md
+.github
+.dev
+**/*_test.go
+**/*_test.py
+**/__pycache__

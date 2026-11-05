@@ -72,7 +72,7 @@ func TestSecurityHeadersAndCSRF(t *testing.T) {
 func TestLoginRateLimit(t *testing.T) {
 	client, srv, _ := testClient(t)
 	defer srv.Close()
-	for i := 0; i < userFailThreshold; i++ {
+	for i := 0; i < ipFailThreshold; i++ {
 		res := postRaw(t, client, srv.URL+"/api/auth/login", map[string]string{"username": "admin", "password": "wrong"})
 		res.Body.Close()
 	}
@@ -87,23 +87,31 @@ func TestLoginLimiterBackoff(t *testing.T) {
 	l := newLoginLimiter()
 	now := time.Unix(1000, 0)
 	l.now = func() time.Time { return now }
-	for i := 0; i < userFailThreshold; i++ {
-		l.fail("198.51.100.1", "Bob")
+	for i := 0; i < ipFailThreshold; i++ {
+		l.fail("198.51.100.1")
 	}
-	if l.blocked("198.51.100.2", "bob") < 59*time.Second {
-		t.Fatal("username lockout should apply from any IP")
+	if l.blocked("198.51.100.1") < 59*time.Second {
+		t.Fatal("ip should be locked")
+	}
+	if l.blocked("198.51.100.2") != 0 {
+		t.Fatal("other IPs must not be locked out")
+	}
+	l.succeed("198.51.100.1")
+	if l.blocked("198.51.100.1") == 0 {
+		t.Fatal("success must not lift an active lock")
 	}
 	now = now.Add(2 * time.Minute)
-	if l.blocked("198.51.100.2", "bob") != 0 {
+	if l.blocked("198.51.100.1") != 0 {
 		t.Fatal("lock should expire")
 	}
-	l.fail("198.51.100.1", "bob")
-	if l.blocked("198.51.100.1", "bob") < 119*time.Second {
+	l.fail("198.51.100.1")
+	if l.blocked("198.51.100.1") < 119*time.Second {
 		t.Fatal("backoff should grow")
 	}
-	l.succeed("198.51.100.1", "bob")
-	if l.blocked("198.51.100.3", "bob") != 0 {
-		t.Fatal("success clears username lock")
+	now = now.Add(3 * time.Minute)
+	l.succeed("198.51.100.1")
+	if l.blocked("198.51.100.1") != 0 || l.failures["198.51.100.1"] != nil {
+		t.Fatal("success after the lock clears the record")
 	}
 }
 

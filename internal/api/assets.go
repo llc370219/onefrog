@@ -8,6 +8,15 @@ import (
 	"onefrog/internal/asset"
 )
 
+func (s *Server) assetRates(c *gin.Context) {
+	rates, err := s.AssetExchange.Rates(c.Request.Context())
+	if err != nil {
+		fail(c, http.StatusServiceUnavailable, "参考汇率暂不可用，请稍后重试")
+		return
+	}
+	c.JSON(http.StatusOK, rates)
+}
+
 func (s *Server) listAssets(c *gin.Context) {
 	if s.Assets == nil {
 		fail(c, http.StatusServiceUnavailable, "资产模块未就绪")

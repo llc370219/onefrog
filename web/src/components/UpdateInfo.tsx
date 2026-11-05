@@ -7,11 +7,13 @@ const DISMISS_KEY = 'onefrog.update.dismissed';
 const errorText = (e: unknown) => e instanceof Error ? e.message : '请求失败';
 
 /** Commands that upgrade an install made with install.sh; data and settings are kept. */
-export function upgradeCommands(repo: string, installDir = '', project = '') {
+export function upgradeCommands(repo: string, installDir = '', project = '', channel = 'stable') {
   const dir = installDir || '/opt/onefrog', name = project || 'onefrog';
-  const env = dir === '/opt/onefrog' ? '' : ` OF_INSTALL_DIR=${dir}`;
+  const beta = channel === 'beta';
+  // Test installs use the installer from the dev branch and stay on the beta channel.
+  const env = (dir === '/opt/onefrog' ? '' : ` OF_INSTALL_DIR=${dir}`) + (beta ? ' OF_CHANNEL=beta' : '');
   return [
-    { label: '重新运行安装命令（推荐）', cmd: `curl -fsSL https://raw.githubusercontent.com/${repo}/main/install.sh | sudo${env} bash` },
+    { label: '重新运行安装命令（推荐）', cmd: `curl -fsSL https://raw.githubusercontent.com/${repo}/${beta ? 'dev' : 'main'}/install.sh | sudo${env} bash` },
     { label: '或者只更新镜像', cmd: `cd ${dir} && sudo docker compose -p ${name} pull && sudo docker compose -p ${name} up -d` },
   ];
 }
@@ -33,7 +35,7 @@ function CommandLine({ label, cmd }: { label: string; cmd: string }) {
 }
 
 function UpgradeHelp({ status }: { status: UpdateStatus }) {
-  return <div className="update-help">{upgradeCommands(status.repo, status.install_dir, status.project).map(c => <CommandLine key={c.cmd} {...c}/>)}<p>在安装 OneFrog 的服务器上以 root 执行。{!status.install_dir && '如果安装时改过 OF_INSTALL_DIR，请换成你的安装目录。'}账号、设置、对话和数据卷都会保留；升级会重启容器，进行中的回复会中断，登录状态不受影响。</p></div>;
+  return <div className="update-help">{upgradeCommands(status.repo, status.install_dir, status.project, status.channel).map(c => <CommandLine key={c.cmd} {...c}/>)}<p>在安装 OneFrog 的服务器上以 root 执行。{!status.install_dir && '如果安装时改过 OF_INSTALL_DIR，请换成你的安装目录。'}账号、设置、对话和数据卷都会保留；升级会重启容器，进行中的回复会中断，登录状态不受影响。</p></div>;
 }
 
 function interrupted(msg: string) {
@@ -94,8 +96,8 @@ export function AboutSection({ onStatus }: { onStatus?: (s: UpdateStatus) => voi
   const checked = status.checked_at ? new Date(status.checked_at).toLocaleString() : '尚未检查';
   return <div className="about-section">
     <div className="about-grid">
-      <div><small>当前版本</small><strong>{status.current}</strong></div>
-      <div><small>最新正式版</small><strong>{status.latest || '—'}</strong>{status.url && <a href={status.url} target="_blank" rel="noreferrer noopener">更新说明<ExternalLink size={12}/></a>}</div>
+      <div><small>当前版本</small><strong>{status.current}{status.channel === 'beta' && <span className="tag channel-tag">测试版</span>}</strong></div>
+      <div><small>{status.channel === 'beta' ? '最新版本（含测试版）' : '最新正式版'}</small><strong>{status.latest || '—'}</strong>{status.url && <a href={status.url} target="_blank" rel="noreferrer noopener">更新说明<ExternalLink size={12}/></a>}</div>
       <div><small>上次检查</small><strong>{checked}</strong></div>
     </div>
     {error && <Notice error>{error}</Notice>}

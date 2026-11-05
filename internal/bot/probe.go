@@ -62,6 +62,7 @@ func (a *Agent) installProbe(ctx context.Context, botID string, call toolCall) T
 		ReportBase  string   `json:"report_base"`
 		Interval    flexInt  `json:"interval"`
 		Targets     []string `json:"targets"`
+		Province    string   `json:"province"`
 	}
 	if json.Unmarshal([]byte(call.Function.Arguments), &args) != nil {
 		ev.Output = "参数无效"
@@ -175,6 +176,7 @@ func (a *Agent) installProbe(ctx context.Context, botID string, call toolCall) T
 		ReportBase: report,
 		Interval:   int(args.Interval),
 		Targets:    args.Targets,
+		Province:   strings.TrimSpace(args.Province),
 	})
 	if err != nil {
 		ev.Output = err.Error()
@@ -270,7 +272,8 @@ var installProbeTool = map[string]any{
 				"fingerprint": map[string]string{"type": "string", "description": "用户确认的主机指纹，必须与展示的一致"},
 				"report_base": map[string]string{"type": "string", "description": "节点能访问的面板地址；省略时用面板公网地址"},
 				"interval":    map[string]string{"type": "integer", "description": "采集间隔，10 到 300 秒"},
-				"targets":     map[string]any{"type": "array", "items": map[string]string{"type": "string"}, "description": "线路检测目标，最多 8 个"},
+				"province":    map[string]string{"type": "string", "description": "三网测速所在省份，例如 广东、北京、四川；会自动加入该省电信、联通、移动三个检测点。首次安装且用户没说时，先用 ask_user 问用户"},
+				"targets":     map[string]any{"type": "array", "items": map[string]string{"type": "string"}, "description": "额外的自定义检测目标（IP 或域名），与三网合计最多 8 个"},
 			},
 		},
 	},

@@ -8,7 +8,11 @@
 # (Rocky, AlmaLinux, CentOS Stream), Fedora; x86_64 and arm64.
 #
 # Options (environment variables, pass them after sudo):
-#   OF_VERSION=latest        image tag to install, e.g. v0.1.1
+#   OF_CHANNEL=stable        release channel: stable (vX.Y.Z, image tag "latest") or
+#                            beta (test builds vX.Y.Z-beta.N from the dev branch, image
+#                            tag "beta"). Saved on first install; re-runs keep it.
+#   OF_VERSION=              image tag to install, e.g. v0.1.1. Defaults to the
+#                            channel's tag ("latest" or "beta").
 #   OF_PUBLISH_PORT=8080     host port
 #   OF_BIND_ADDR=0.0.0.0     host address to bind; use 127.0.0.1 behind a reverse proxy
 #   OF_PUBLIC_URL=           link printed at the end, e.g. https://ops.example.com
@@ -40,7 +44,7 @@ set -euo pipefail
 main() {
   local install_dir="${OF_INSTALL_DIR:-/opt/onefrog}"
   local image="${OF_IMAGE:-ghcr.io/llc370219/onefrog}"
-  local version="${OF_VERSION:-latest}"
+  local version="${OF_VERSION:-}"
   local repo="${OF_REPO:-https://github.com/llc370219/onefrog.git}"
   local build="${OF_BUILD_FROM_SOURCE:-0}"
   local env_file="${install_dir}/.install.env"
@@ -183,6 +187,17 @@ main() {
     *) die "OF_UPDATE_CHECK 只能是 0 或 1。" ;;
   esac
 
+  # ---- release channel (saved, so a plain re-run stays on it) ----
+  local channel="${OF_CHANNEL:-$(saved OF_CHANNEL)}"
+  case "$channel" in
+    ""|stable|latest) channel=stable ;;
+    beta|test) channel=beta ;;
+    *) die "OF_CHANNEL 只能是 stable（正式版）或 beta（测试版）。" ;;
+  esac
+  if [ -z "$version" ]; then
+    if [ "$channel" = "beta" ]; then version=beta; else version=latest; fi
+  fi
+
   # ---- credentials (reused on re-run) ----
   local fresh=0
   if [ ! -f "$env_file" ]; then
@@ -247,6 +262,12 @@ ENV
 
   if [ "$save_project" = "1" ]; then
     printf 'OF_PROJECT=%s\n' "$project" >> "$env_file"
+  fi
+  if [ "$(read_env OF_CHANNEL)" != "$channel" ]; then
+    grep -v '^OF_CHANNEL=' "$env_file" > "${env_file}.tmp" || true
+    printf 'OF_CHANNEL=%s\n' "$channel" >> "${env_file}.tmp"
+    chmod 600 "${env_file}.tmp"
+    mv "${env_file}.tmp" "$env_file"
   fi
 
   local pub_port bind_addr public admin_user pass
@@ -313,7 +334,7 @@ fi
 [ -f "\$trigger" ] || exit 0
 tag=\$(head -n 1 "\$trigger" | tr -d '\r\n ')
 rm -f "\$trigger"
-printf '%s' "\$tag" | grep -Eq '^v[0-9]{1,8}(\.[0-9]{1,8}){2}\$' || exit 0
+printf '%s' "\$tag" | grep -Eq '^v[0-9]{1,8}(\.[0-9]{1,8}){2}(-beta\.[0-9]{1,8})?\$' || exit 0
 [ "\${#tag}" -le 40 ] || exit 0
 docker compose --project-directory "\$dir" -f "\$dir/docker-compose.yml" -p "\$project" pull
 docker compose --project-directory "\$dir" -f "\$dir/docker-compose.yml" -p "\$project" up -d --remove-orphans
@@ -394,11 +415,13 @@ YAML
   local installed
   installed=$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$ref" 2>/dev/null || true)
   [ -n "$installed" ] && [ "$installed" != "<no value>" ] || installed="$ref"
+  local shown="$installed"
+  if [ "$channel" = "beta" ]; then shown="${installed} · 测试版"; fi
 
   say ""
   say "========================================"
   if [ "$fresh" = "1" ]; then
-    say "OneFrog 已安装（${installed}）"
+    say "OneFrog 已安装（${shown}）"
     say "链接: ${public}"
     say "用户名: ${admin_user}"
     say "初始密码: ${pass}"
@@ -407,11 +430,11 @@ YAML
     say "初始密码也保存在 ${env_file}（仅 root 可读）。"
   else
     if [ -n "$previous" ] && [ "$previous" = "$installed" ]; then
-      say "OneFrog 已是最新版本（${installed}）"
+      say "OneFrog 已是最新版本（${shown}）"
     elif [ -n "$previous" ]; then
-      say "OneFrog 已从 ${previous} 升级到 ${installed}"
+      say "OneFrog 已从 ${previous} 升级到 ${shown}"
     else
-      say "OneFrog 已更新到 ${installed}"
+      say "OneFrog 已更新到 ${shown}"
     fi
     say "链接: ${public}"
     say "========================================"

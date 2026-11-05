@@ -59,6 +59,9 @@ func (a *Agent) recallCall(ctx context.Context, speaker model.Bot, call toolCall
 			if isWorker(ctx) {
 				return "协作 Bot 只能读取自己的记忆。需要别人的结论时，写进交给主控的结论。"
 			}
+			if isDirect(ctx) {
+				return "独立对话只能读取自己的记忆。需要别人的结论时，用 ask_agent 问它。"
+			}
 			if !a.allowedBot(ctx, found.ID) {
 				return "该 Bot 已停用或被排除"
 			}

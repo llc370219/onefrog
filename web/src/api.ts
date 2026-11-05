@@ -97,7 +97,9 @@ export type ChatLine = {
 export type TokenUsage={requests:number;reported_calls:number;failed_calls:number;input_tokens:number;output_tokens:number;total_tokens:number};
 export type UsageRow=TokenUsage&{bot_id:string;purpose:string;provider_id:string;model:string;updated_at:string};
 export type Attachment={id:string;name:string;mime:string;size:number};
-export type ChatOptions={approval_route?:ModelRoute;model_route?:ModelRoute;excluded_bot_ids?:string[];approval_mode?:string;attachment_ids?:string[]};
+/** direct: one-to-one chat with a single bot and its own memory. team (default): the lead bot pulls other bots in. */
+export type ChatMode='direct'|'team';
+export type ChatOptions={approval_route?:ModelRoute;model_route?:ModelRoute;excluded_bot_ids?:string[];approval_mode?:string;attachment_ids?:string[];mode?:ChatMode};
 export type ChatRequest=ChatOptions&{content:string;server_id?:string;bot_id?:string;session_id?:string;choice_answer?:ChoiceReply;secret_answer?:SecretReply};
 export type ChatResult={session_id:string;text:string;message_id?:string;choice?:Choice;secret_request?:SecretRequest;timeline?:TurnItem[];answered?:boolean};
 export type BotRow = { id:string;name:string;description:string;system_prompt?:string;enabled:boolean;model_route:ModelRoute;effective_route:ModelRoute;usage:TokenUsage;memory_count?:number };

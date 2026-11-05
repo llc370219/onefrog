@@ -17,6 +17,7 @@ import (
 	"onefrog/internal/providerlogin"
 	"onefrog/internal/remote"
 	"onefrog/internal/secret"
+	"onefrog/internal/services"
 	"onefrog/internal/store"
 	"onefrog/internal/update"
 	"onefrog/internal/usage"
@@ -114,21 +115,26 @@ func main() {
 	go updates.Run(ctx)
 	log.Printf("OneFrog %s", version.Version)
 	files := attachment.New(filepath.Join(cfg.DataDir, "uploads"), box)
+	watch, err := services.NewWatch(filepath.Join(cfg.DataDir, "servicewatch.enc"), box, db)
+	if err != nil {
+		log.Fatal(err)
+	}
 	app := &api.Server{
-		Updates:    updates,
-		OAuth:      oauth,
-		Onboarding: onboard,
-		Assets:     ledger,
-		DevModules: devModules,
-		PublicURL:  cfg.PublicURL,
-		Files:      files,
-		Usage:      usageLog,
-		Monitor:    probe,
-		Store:      db,
-		Settings:   settings,
-		Box:        box,
-		Secure:     cfg.CookieSecure,
-		WebDir:     cfg.WebDir,
+		ServiceWatch: watch,
+		Updates:      updates,
+		OAuth:        oauth,
+		Onboarding:   onboard,
+		Assets:       ledger,
+		DevModules:   devModules,
+		PublicURL:    cfg.PublicURL,
+		Files:        files,
+		Usage:        usageLog,
+		Monitor:      probe,
+		Store:        db,
+		Settings:     settings,
+		Box:          box,
+		Secure:       cfg.CookieSecure,
+		WebDir:       cfg.WebDir,
 		// OF_TRUSTED_PROXIES: reverse proxies whose X-Forwarded-For is trusted for login rate limiting.
 		TrustedProxies: os.Getenv("OF_TRUSTED_PROXIES"),
 		Agent: &bot.Agent{
@@ -151,9 +157,12 @@ func main() {
 		},
 	}
 	log.Printf("listening on %s", cfg.Addr)
+	// Handler attaches the shared inventory scanner before polling starts.
+	handler := app.Handler()
+	go watch.Run(ctx)
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           app.Handler(),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		// No ReadTimeout/WriteTimeout: chat requests and WebSocket sessions may legitimately
 		// run for minutes; request bodies are bounded with MaxBytesReader instead.

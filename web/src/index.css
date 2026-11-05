@@ -364,6 +364,23 @@
 .service-source-status {padding:12px 20px}
 .service-node .notice {margin:10px 20px}
 .service-node .data-table td:last-child .text-btn {white-space:nowrap}
+.service-watch {margin-bottom:20px}
+.service-watch .card-heading {flex-wrap:wrap;gap:16px;align-items:center}
+.service-watch h2 {display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:6px}
+.service-watch-actions {display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.service-watch-actions label {display:flex;align-items:center;gap:8px;font-size:13px;color:var(--fg3);white-space:nowrap}
+.service-watch-actions select {background:var(--s1);color:var(--fg);border:1px solid var(--line2);border-radius:9px;padding:8px}
+.service-watch .notice {margin:0 20px 12px}
+.service-watch-time {white-space:nowrap;font-size:12px}
+.service-watch-check {width:44px}
+.service-watch-check input {accent-color:var(--accent);width:14px;height:14px}
+.service-watched td {background:color-mix(in srgb,var(--accent) 4%,transparent)}
+.service-watch-table {min-width:880px}
+.service-watch-table td {white-space:nowrap}
+.service-watch-table td.service-details {white-space:normal;min-width:220px}
+.tag.danger {color:var(--danger);border-color:color-mix(in srgb,var(--danger) 35%,transparent)}
+.tag.warn {color:var(--warn);border-color:color-mix(in srgb,var(--warn) 35%,transparent)}
+@media(max-width:700px) {.service-watch-actions {width:100%}.service-watch-actions select {flex:1}}
 
 /* Theme toggle and Claude-style refinements: warm neutrals, serif display type,
    softer corners, green accent for focus/selection. */

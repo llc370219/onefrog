@@ -165,6 +165,9 @@ func (s *Server) deleteServer(c *gin.Context) {
 	if s.Monitor != nil {
 		_ = s.Monitor.Remove(rec.ID)
 	}
+	if s.ServiceWatch != nil {
+		_ = s.ServiceWatch.Remove(rec.ID)
+	}
 	s.recordHostKey(c, rec, "server_deleted", "已删除服务器 "+rec.Name+"；探针："+probe.Detail)
 	c.JSON(http.StatusOK, gin.H{"deleted": true, "probe": probe})
 }

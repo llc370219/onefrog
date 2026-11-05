@@ -5,6 +5,7 @@ import ChatControls, { type ChatControlState } from '../components/ChatControls'
 import Attachments from '../components/Attachments';
 import TurnStream from '../components/TurnStream';
 import { Button, IconButton, Status } from '../components/ui';
+import { BotAvatar } from '../components/BotAvatar';
 
 export default function Chat({
   onAddServer,
@@ -135,7 +136,7 @@ export default function Chat({
         <div className="chat-scroll">
           {!lines.length ? (
             <div className="chat-welcome">
-              <div className="welcome-icon"><Bot size={30} strokeWidth={1.3}/></div>
+              {mode === 'direct' && activeBot ? <BotAvatar bots={bots} id={activeBot.id} className="welcome-icon"/> : <div className="welcome-icon"><Bot size={30} strokeWidth={1.3}/></div>}
               
               <h2>{welcomeTitle}</h2>
               <p>{welcomeNote}</p>
@@ -162,7 +163,7 @@ export default function Chat({
                   ) : (
                     <div className="bot-turn">
                       <div className="speaker">
-                        <Bot size={15}/>
+                        {activeBot ? <BotAvatar bots={bots} id={activeBot.id} className="speaker-avatar"/> : <Bot size={15}/>}
                         <strong>{activeBot?.name || '主控'}</strong>
                       </div>
                       <TurnStream
@@ -292,7 +293,7 @@ export default function Chat({
             {activeBot ? (
               <div className="direct-bot">
                 <div className="team-member">
-                  <span className="small-avatar"><Bot size={16}/></span>
+                  <BotAvatar bots={bots} id={activeBot.id} className="small-avatar"/>
                   <div>
                     <strong>{activeBot.name}<span>独立对话</span></strong>
                     <p>{activeBot.description || '还没有填写分工说明'}</p>
@@ -316,7 +317,7 @@ export default function Chat({
               const out = !lead && controls.excluded.includes(b.id);
               return (
                 <div className={`team-member ${out ? 'excluded' : ''}`} key={b.id}>
-                  <span className="small-avatar"><Bot size={16}/></span>
+                  <BotAvatar bots={bots} id={b.id} className="small-avatar"/>
                   <div>
                     <strong>{b.name}<span>{lead ? '主控' : out ? '已剔除' : '协作'}</span></strong>
                     <p>{b.description || '按主控分派完成任务'}</p>

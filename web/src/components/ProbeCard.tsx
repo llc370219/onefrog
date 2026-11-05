@@ -76,10 +76,10 @@ function History({ values, tone }: { values: (PingMetric | undefined)[]; tone: (
 function IspRow({ name, history }: { name: string; history: (PingMetric | undefined)[] }) {
   const last = history[history.length - 1];
   const lat = last?.latency_ms, loss = last?.loss_percent;
-  return <div className="pc-isp" title={last ? `${last.target} · 每轮 ${last.samples} 次连接尝试${last.measured_at?' · 检测于 '+new Date(last.measured_at).toLocaleTimeString():''}${last.next_check_at?' · 下次检测不早于 '+new Date(last.next_check_at).toLocaleTimeString():''} · 连接失败率不等于网络丢包率` : undefined}>
+  return <div className="pc-isp" title={last ? `${last.target} · 每轮 ${last.samples} 次连接尝试${last.measured_at?' · 检测于 '+new Date(last.measured_at).toLocaleTimeString():''}${last.next_check_at?' · 下次检测不早于 '+new Date(last.next_check_at).toLocaleTimeString():''} · 此处丢包率按 TCP 连接失败次数估算，不等同于 ICMP 丢包率` : undefined}>
     <div><span>{name}</span><strong className={latTone(lat)}>{lat === undefined ? '—' : lat === null ? (last?.samples?'未连通':'未测得') : Math.round(lat)}{typeof lat === 'number' && <small>ms</small>}</strong></div>
     <History values={history} tone={p => p ? latTone(p.latency_ms) : ''}/>
-    <div><span>连接失败率</span><strong className={lossTone(loss)}>{loss === undefined || loss === null ? '—' : +loss.toFixed(1)}{typeof loss === 'number' && <small>%</small>}</strong></div>
+    <div><span>丢包率</span><strong className={lossTone(loss)}>{loss === undefined || loss === null ? '—' : +loss.toFixed(1)}{typeof loss === 'number' && <small>%</small>}</strong></div>
     <History values={history} tone={p => p ? lossTone(p.loss_percent) : ''}/>
   </div>;
 }
@@ -166,7 +166,7 @@ export default function ProbeCard({ highlight, host, node, asset, services, onDe
         <span><Database size={13}/>流量{editQuota ? <button type="button" className="text-btn muted" onClick={editQuota} title="修改月流量额度">{modeLabel[mode]}</button> : <small> {modeLabel[mode]}</small>}<strong>{used === undefined ? '—' : bytes(used)}<small> / {bytes(quota)}</small></strong></span>
         <Blocks value={usedPct} tone={level(usedPct, 80, 95) || 'quota'}/>
       </div> : <TrafficBreakdown out={tr?.tx} incoming={tr?.rx} action={editQuota && <button type="button" className="text-btn" onClick={editQuota} title={asset ? '设置月流量额度' : '先登记资产，再设置月流量额度'}>设置额度</button>}/>}
-      {carriers.length ? <div className="pc-isps" aria-label="三网 TCP 延迟与连接失败率">
+      {carriers.length ? <div className="pc-isps" aria-label="三网 TCP 延迟与丢包率">
         <div className="pc-isps-head"><Radio size={12}/>三网延迟<small>{node?.province?.name || ''}</small>{onConnect&&<button type="button" className="text-btn" onClick={onConnect}>更换省份</button>}</div>
         {carriers.map(n => <IspRow key={n} name={n} history={ispHistory(n)}/>)}
       </div> : <div className="pc-isps none"><Radio size={12}/>{node?.province?`${node.province.name} · 等待测速上报`:'未设置三网测速'}{onConnect && <button type="button" className="text-btn" onClick={onConnect}>{node?.province?'更换省份':'选择省份'}</button>}</div>}

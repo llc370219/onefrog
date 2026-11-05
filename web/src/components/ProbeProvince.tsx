@@ -11,7 +11,7 @@ export default function ProbeProvince({host,province:current,pingIntervalSeconds
  useEffect(()=>{void load();},[]);
  async function apply(){if(!province||busy)return;setBusy(true);setError('');setMessage('');try{const result=await api.probeProvince(host.id,province==='none'?'':province,interval);setMessage(result.message);onApplied();}catch(e){setError(e instanceof Error?e.message:'测速配置应用失败');}finally{setBusy(false);}}
  return <Modal title={`三网测速 · ${host.name}`} note="选择省份后保存，面板会通过 SSH 更新节点探针配置并重启采集服务。" onClose={onClose} onSubmit={message?onClose:apply} confirm={message?'完成':busy?'正在应用':'保存并应用'} cancel="关闭" busy={busy} submitDisabled={!message&&(loading||!province)} error={error}>
-  <Field label="三网延迟测哪个省份" hint="检测所选省份电信、联通、移动的 TCP 延迟与连接失败率。首次结果通常在一分钟内出现，后续按独立间隔检测。">
+  <Field label="三网延迟测哪个省份" hint="检测所选省份电信、联通、移动的 TCP 延迟与丢包率。首次结果通常在一分钟内出现，后续按独立间隔检测。">
    <select value={province} disabled={loading||busy} onChange={e=>{setProvince(e.target.value);setMessage('');}}>
     <option value="" disabled>{loading?'正在加载省份…':'请选择省份'}</option><option value="none">不测三网</option>
     {provinces.map(p=><option key={p.code} value={p.code}>{p.name}</option>)}

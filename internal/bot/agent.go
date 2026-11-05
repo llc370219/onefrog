@@ -146,6 +146,19 @@ func (a *Agent) replyTurn(ctx context.Context, botID, serverID, sessionID, conte
 	if sess.BotID != bot.ID {
 		return Result{}, errors.New("切换主 Bot 时请新建对话")
 	}
+	if len(sess.Options) > 0 {
+		// The chat mode is fixed when the session starts; later turns
+		// (including card answers) keep it even if a client omits it.
+		var saved Options
+		if json.Unmarshal(sess.Options, &saved) == nil && saved.Mode != options(ctx).Mode {
+			opt := options(ctx)
+			opt.Mode = saved.Mode
+			if opt.Mode == "direct" {
+				opt.ExcludedBotIDs = nil
+			}
+			ctx = context.WithValue(ctx, optionsKey{}, opt)
+		}
+	}
 	if reply != nil {
 		text, done, err := a.answerChoice(ctx, sess.ID, *reply)
 		if err != nil {

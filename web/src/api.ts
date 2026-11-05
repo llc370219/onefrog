@@ -97,7 +97,9 @@ export type ChatLine = {
 export type TokenUsage={requests:number;reported_calls:number;failed_calls:number;input_tokens:number;output_tokens:number;total_tokens:number};
 export type UsageRow=TokenUsage&{bot_id:string;purpose:string;provider_id:string;model:string;updated_at:string};
 export type Attachment={id:string;name:string;mime:string;size:number};
-export type ChatOptions={approval_route?:ModelRoute;model_route?:ModelRoute;excluded_bot_ids?:string[];approval_mode?:string;attachment_ids?:string[]};
+/** direct: one-to-one chat with a single bot and its own memory. team (default): the lead bot pulls other bots in. */
+export type ChatMode='direct'|'team';
+export type ChatOptions={approval_route?:ModelRoute;model_route?:ModelRoute;excluded_bot_ids?:string[];approval_mode?:string;attachment_ids?:string[];mode?:ChatMode};
 export type ChatRequest=ChatOptions&{content:string;server_id?:string;bot_id?:string;session_id?:string;choice_answer?:ChoiceReply;secret_answer?:SecretReply};
 export type ChatResult={session_id:string;text:string;message_id?:string;choice?:Choice;secret_request?:SecretRequest;timeline?:TurnItem[];answered?:boolean};
 export type BotRow = { id:string;name:string;description:string;system_prompt?:string;enabled:boolean;model_route:ModelRoute;effective_route:ModelRoute;usage:TokenUsage;memory_count?:number };
@@ -183,9 +185,15 @@ function mapServer(item: ServerJSON): Host {
 export type ServiceItem = {kind: 'systemd' | 'docker' | 'ports'; name: string; state: string; detail: string; image?: string; ports?: string};
 export type ServiceSource = {status: 'ok' | 'error' | 'unavailable'; detail: string; truncated: boolean};
 export type ServiceView = {server_id: string; status: 'pending' | 'ok' | 'partial' | 'failed'; collected_at?: string; attempted_at?: string; error?: string; items: ServiceItem[]; sources: Record<string, ServiceSource>};
+export type WatchTarget = {kind: ServiceItem['kind']; name: string};
+export type WatchState = 'pending' | 'ok' | 'fault' | 'missing' | 'unknown';
+export type WatchStatus = WatchTarget & {server_id: string; state: WatchState; detail: string; checked_at?: string; changed_at?: string};
+export type ServiceWatch = {interval_seconds: number; servers: Record<string, WatchTarget[]>; status: WatchStatus[]};
 
 export const api = {
  async services():Promise<{nodes:ServiceView[]}>{return call('/api/services');},
+ async serviceWatch():Promise<ServiceWatch>{return call('/api/services/watch');},
+ async saveServiceWatch(body:{interval_seconds:number;servers:Record<string,WatchTarget[]>}):Promise<ServiceWatch>{return call('/api/services/watch',{method:'PUT',body:JSON.stringify(body)});},
  async scanServices(id:string):Promise<ServiceView>{return call('/api/servers/'+encodeURIComponent(id)+'/services/scan',{method:'POST',body:'{}'});},
  async oauth():Promise<OAuthView>{return call('/api/oauth');},
  async oauthStart(kind:string,consent_version:string,risk_acknowledged:boolean):Promise<OAuthLogin>{return call('/api/oauth/start',{method:'POST',body:JSON.stringify({kind,consent_version,risk_acknowledged})});},

@@ -1,6 +1,6 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ArrowUp, Blocks, Bot, Code2, HardDrive, History, KeyRound, LoaderCircle, LockKeyhole, Plus, Server, ShieldCheck, Sparkles, Paperclip, Send, Wallet } from 'lucide-react';
-import type { ApprovalDecision, BotRow, ChatLine, Host, Attachment, SecretRow, SettingsState } from '../api';
+import { api, type ApprovalDecision, type BotMemory, type BotRow, type ChatLine, type ChatMode, type Host, type Attachment, type SecretRow, type SettingsState } from '../api';
 import ChatControls, { type ChatControlState } from '../components/ChatControls';
 import Attachments from '../components/Attachments';
 import TurnStream from '../components/TurnStream';
@@ -11,7 +11,7 @@ export default function Chat({
   controls,
   onControls,
   settings,
-  onBot,
+  mode,
   attachments,
   onFiles,
   onRemoveFile,
@@ -40,7 +40,7 @@ export default function Chat({
   controls: ChatControlState;
   onControls: (s: ChatControlState) => void;
   settings: SettingsState | null;
-  onBot: (id: string) => void;
+  mode: ChatMode;
   attachments: Attachment[];
   onFiles: (files: File[]) => void;
   onRemoveFile: (id: string) => void;
@@ -71,6 +71,16 @@ export default function Chat({
     end.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
   }, [lines]);
 
+  const [memoryState, setMemoryState] = useState<{ bot: string; rows: BotMemory[] } | null>(null);
+  const memoryBot = mode === 'direct' ? activeBot?.id || '' : '';
+  useEffect(() => {
+    if (!memoryBot) return;
+    let live = true;
+    api.memories(memoryBot).then(rows => { if (live) setMemoryState({ bot: memoryBot, rows }); }).catch(() => { if (live) setMemoryState({ bot: memoryBot, rows: [] }); });
+    return () => { live = false; };
+  }, [memoryBot, lines.length]);
+  const memories = memoryState && memoryState.bot === memoryBot ? memoryState.rows : null;
+
   const current = hosts.find(h => h.id === selected);
   const isDevelop = activeBot?.id === 'develop' || activeBot?.name === '自定义模块' || activeBot?.name === '二次开发';
   const isModMgr = activeBot?.id === 'module-builder' || activeBot?.name === '模块管理' || activeBot?.name === '模块构建';
@@ -79,7 +89,9 @@ export default function Chat({
     ? '描述你想要的交互卡片或小工具，自定义模块 Bot 会一步步编写界面并挂载到面板与模块目录。'
     : isModMgr
     ? '查看或开关面板模块、维护资产与订阅台账，或管理自定义模块里的数据记录。'
-    : '直接把地址、账号或任务发给 Bot。遇到选项、加密凭据或高危操作时，会在对话中直接弹出交互卡片逐步确认。';
+    : mode === 'direct'
+    ? `只和「${activeBot?.name || 'Bot'}」一对一对话。它带着自己的记忆独立干活，能操作服务器和面板；别的 Bot 更熟悉时，它会自己找对方协助。`
+    : '主控会按任务自动拉其他 Bot 一起处理，你可以在右侧或下方选项里剔除、拉入 Bot。遇到选项、加密凭据或高危操作时，会在对话中弹出卡片逐步确认。';
 
   const suggestions = isDevelop
     ? [
@@ -114,7 +126,9 @@ export default function Chat({
         <header className="conversation-heading">
           <div>
             
-            <h1>AI 助理 <span className="tag">{activeBot?.name || '主控'}</span></h1>
+            {mode === 'direct'
+              ? <h1>{activeBot?.name || 'Bot'} <span className="tag">独立对话</span></h1>
+              : <h1>主控对话 <span className="tag">{activeBot?.name || '主控'} 自动协调</span></h1>}
           </div>
           <Button onClick={onNew} disabled={sending}><Plus size={15}/>新对话</Button>
         </header>
@@ -183,7 +197,7 @@ export default function Chat({
             selected={selected}
             onServer={onSelect}
             botID={activeBot?.id || ''}
-            onBot={onBot}
+            mode={mode}
             state={controls}
             onChange={onControls}
             settings={settings}
@@ -272,18 +286,57 @@ export default function Chat({
             <p className="muted">未指定目标，可直接提问。</p>
           )}
         </div>
-        <div className="context-section">
-          <h3>参与 Bot <span className="tag">{bots.filter(b => b.enabled && !controls.excluded.includes(b.id)).length}</span></h3>
-          {bots.filter(b => b.enabled && !controls.excluded.includes(b.id)).map(b => (
-            <button type="button" className="team-member team-member-btn" key={b.id} onClick={() => onBot(b.id)} disabled={sending} title={`切换到 ${b.name}`}>
-              <span className="small-avatar"><Bot size={16}/></span>
-              <div>
-                <strong>{b.name}<span>{b.id === activeBot?.id ? '主控' : '协作'}</span></strong>
-                <p>{b.description || '按主控分派完成任务'}</p>
+        {mode === 'direct' ? (
+          <div className="context-section">
+            <h3>关于这个 Bot</h3>
+            {activeBot ? (
+              <div className="direct-bot">
+                <div className="team-member">
+                  <span className="small-avatar"><Bot size={16}/></span>
+                  <div>
+                    <strong>{activeBot.name}<span>独立对话</span></strong>
+                    <p>{activeBot.description || '还没有填写分工说明'}</p>
+                  </div>
+                </div>
+                <div className="direct-memory">
+                  <span className="eyebrow">自己的记忆 · {memories === null ? '…' : memories.length} 条</span>
+                  {memories?.slice(0, 4).map(m => <small key={m.id} title={m.body}>{m.title}</small>)}
+                  {memories?.length === 0 && <small className="muted wrap">还没有记忆，聊天中学到的事会记在这里。</small>}
+                </div>
+                <p className="muted">它独立完成任务，只读取自己的记忆。需要时会自己找其他 Bot 协助，过程显示在对话里。</p>
               </div>
-            </button>
-          ))}
-        </div>
+            ) : <p className="muted">未选择 Bot。</p>}
+          </div>
+        ) : (
+          <div className="context-section">
+            <h3>协作 Bot <span className="tag">{bots.filter(b => b.enabled && !controls.excluded.includes(b.id)).length}</span></h3>
+            <p className="muted">主控按需分派任务，可随时剔除或拉入 Bot。</p>
+            {bots.filter(b => b.enabled).sort((a, b) => Number(b.id === activeBot?.id) - Number(a.id === activeBot?.id)).map(b => {
+              const lead = b.id === activeBot?.id;
+              const out = !lead && controls.excluded.includes(b.id);
+              return (
+                <div className={`team-member ${out ? 'excluded' : ''}`} key={b.id}>
+                  <span className="small-avatar"><Bot size={16}/></span>
+                  <div>
+                    <strong>{b.name}<span>{lead ? '主控' : out ? '已剔除' : '协作'}</span></strong>
+                    <p>{b.description || '按主控分派完成任务'}</p>
+                  </div>
+                  {!lead && (
+                    <button
+                      type="button"
+                      className="member-toggle"
+                      disabled={sending}
+                      aria-label={(out ? '拉入 ' : '剔除 ') + b.name}
+                      onClick={() => onControls({ ...controls, excluded: out ? controls.excluded.filter(id => id !== b.id) : [...controls.excluded, b.id] })}
+                    >
+                      {out ? '拉入' : '剔除'}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
         {secrets.length > 0 && (
           <div className="context-section">
             <h3>可用密钥引用 <span className="tag">{secrets.length}</span></h3>

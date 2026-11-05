@@ -26,8 +26,12 @@ func (a *Agent) developPrompt(ctx context.Context, bot model.Bot) string {
 	a.writeOperationsModeOnly(&b, ctx)
 	if !isWorker(ctx) {
 		b.WriteString(promptAskUser)
-		a.writePeers(&b, ctx, bot.ID)
-		a.writePeerMemory(&b, ctx, bot.ID)
+		if isDirect(ctx) {
+			a.writeHelpers(&b, ctx, bot.ID)
+		} else {
+			a.writePeers(&b, ctx, bot.ID)
+			a.writePeerMemory(&b, ctx, bot.ID)
+		}
 	}
 	writeExtra(&b, bot)
 	b.WriteString(promptMemory)

@@ -149,7 +149,7 @@ func TestPanelOperatesTheConsole(t *testing.T) {
 	}
 
 	worker := usageContext(ctx, "check", "worker", "")
-	if out := agent.execCall(worker, model.Bot{ID: "check", Name: "巡检"}, credentials{}, "", callPanel(`{"action":"overview"}`), false, nil); !strings.Contains(out, "只有主控") {
+	if out := agent.execCall(worker, model.Bot{ID: "check", Name: "巡检"}, credentials{}, "", callPanel(`{"action":"overview"}`), false, nil); !strings.Contains(out, "协作任务里不能直接改管理面板") {
 		t.Fatal(out)
 	}
 }

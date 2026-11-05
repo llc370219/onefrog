@@ -75,6 +75,8 @@ func (a *Agent) lead(ctx context.Context, leader model.Bot, serverID, sessionID 
 		// A background inbox turn works like a worker: no user to ask, no
 		// delegation, only an optional reply via message_agent.
 		system, canDelegate = a.workerPrompt(ctx, leader, serverID), false
+	} else if isDirect(ctx) {
+		system = a.directPrompt(ctx, leader, serverID)
 	}
 	messages, err := a.sessionMessages(ctx, sessionID, system)
 	if err != nil {
@@ -138,7 +140,11 @@ func (a *Agent) converse(ctx context.Context, speaker model.Bot, creds credentia
 			}
 		}
 		if !a.managesAssets(speaker) && !isWorker(ctx) {
-			spec = append(spec, askUserTool, requestSecretTool, panelTool, installProbeTool, developModuleTool)
+			spec = append(spec, askUserTool, requestSecretTool)
+			if a.commandsPanel(ctx, speaker) {
+				spec = append(spec, panelTool, installProbeTool)
+			}
+			spec = append(spec, developModuleTool)
 			spec = append(spec, toolDefs(false, true)...)
 		}
 	}
@@ -333,8 +339,8 @@ func (a *Agent) execCall(ctx context.Context, speaker model.Bot, creds credentia
 	case "recall":
 		return a.recallCall(ctx, speaker, call)
 	case "panel":
-		if isWorker(ctx) || a.managesAssets(speaker) {
-			return "只有主控可以直接改管理面板"
+		if !a.commandsPanel(ctx, speaker) {
+			return "协作任务里不能直接改管理面板，把需要改的内容写进汇报，由对话里的 Bot 来改"
 		}
 		ev := a.panelAct(ctx, speaker, call)
 		if tr != nil {
@@ -342,8 +348,8 @@ func (a *Agent) execCall(ctx context.Context, speaker model.Bot, creds credentia
 		}
 		return ev.Output
 	case "install_probe":
-		if isWorker(ctx) || a.managesAssets(speaker) {
-			return "只有主控可以安装探针"
+		if !a.commandsPanel(ctx, speaker) {
+			return "协作任务里不能安装探针，把需要安装的服务器写进汇报，由对话里的 Bot 来装"
 		}
 		ev := a.installProbe(ctx, speaker.ID, call)
 		if tr != nil {
@@ -599,14 +605,48 @@ func (a *Agent) workerPrompt(ctx context.Context, bot model.Bot, serverID string
 	return b.String()
 }
 
+// directPrompt is used when the user opened one bot and talks only to it.
+// The bot works from its own memory and may ask peers for help on its own.
+func (a *Agent) directPrompt(ctx context.Context, bot model.Bot, serverID string) string {
+	if a.managesAssets(bot) {
+		return a.assetPrompt(ctx, bot)
+	}
+	if a.developsModules(bot) {
+		return a.developPrompt(ctx, bot)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, promptDirect, bot.Name, strings.TrimSpace(bot.Description))
+	a.writeOperations(&b, ctx)
+	b.WriteString(promptAskUser)
+	b.WriteString(promptRequestSecret)
+	b.WriteString(promptConnect)
+	b.WriteString(promptPanel)
+	b.WriteString(promptDevelopLeader)
+	b.WriteString(promptProbe)
+	writeExtra(&b, bot)
+	a.writeHelpers(&b, ctx, bot.ID)
+	a.writeMailbox(&b, ctx, bot, false)
+	b.WriteString(promptDirectMemory)
+	a.writeOwnMemory(&b, ctx, bot)
+	a.writeSecrets(&b, ctx)
+	a.writeServers(&b, ctx, serverID)
+	a.writeAssets(&b, bot)
+	a.writeDevModules(&b)
+	return b.String()
+}
+
 func (a *Agent) assetPrompt(ctx context.Context, bot model.Bot) string {
 	var b strings.Builder
 	b.WriteString(promptAsset)
 	b.WriteString(promptPriorityReply)
 	if !isWorker(ctx) {
 		b.WriteString(promptAskUser)
-		a.writePeers(&b, ctx, bot.ID)
-		a.writePeerMemory(&b, ctx, bot.ID)
+		if isDirect(ctx) {
+			a.writeHelpers(&b, ctx, bot.ID)
+		} else {
+			a.writePeers(&b, ctx, bot.ID)
+			a.writePeerMemory(&b, ctx, bot.ID)
+		}
 	}
 	writeExtra(&b, bot)
 	a.writeMailbox(&b, ctx, bot, isWorker(ctx))
@@ -650,6 +690,29 @@ func (a *Agent) writePeers(b *strings.Builder, ctx context.Context, self string)
 	}
 	if n == 0 {
 		b.WriteString("目前没有其他 Bot，需要时自己执行命令。\n")
+	}
+}
+
+// writeHelpers lists bots a direct-chat bot may ask for help. Unlike
+// writePeers it does not expose their memory titles.
+func (a *Agent) writeHelpers(b *strings.Builder, ctx context.Context, self string) {
+	bots, err := a.Store.ListBots(ctx)
+	if err != nil {
+		return
+	}
+	n := 0
+	for _, item := range bots {
+		if item.ID == self || !a.allowedBot(ctx, item.ID) {
+			continue
+		}
+		if n == 0 {
+			b.WriteString("需要时可以请这些 Bot 协助（ask_agent 当场协助，message_agent 异步通知）：\n")
+		}
+		n++
+		fmt.Fprintf(b, "- id=%s name=%s %s\n", item.ID, item.Name, strings.TrimSpace(item.Description))
+	}
+	if n == 0 {
+		b.WriteString("目前没有其他可协助的 Bot，需要时自己执行命令。\n")
 	}
 }
 

@@ -91,7 +91,7 @@ func (a *Agent) inspectServices(ctx context.Context, speaker model.Bot, fallback
 
 var inspectServicesTool = map[string]any{
 	"type": "function", "function": map[string]any{
-		"name": "inspect_services", "description": "查询官方服务管理模块的检测快照或只读检测指定服务器上的 systemd 服务、Docker 容器、监听端口。不会读命令参数、环境变量、配置或密码。实时检测结果同步到面板。",
+		"name": "inspect_services", "description": "查询官方服务监控模块的检测快照或只读检测指定服务器上的 systemd 服务、Docker 容器、监听端口。不会读命令参数、环境变量、配置或密码。实时检测结果同步到面板。",
 		"parameters": map[string]any{"type": "object", "properties": map[string]any{
 			"action":    map[string]any{"type": "string", "enum": []string{"list", "scan"}},
 			"server_id": map[string]string{"type": "string", "description": "服务器 ID 或名称；scan 省略时使用当前选中服务器"},

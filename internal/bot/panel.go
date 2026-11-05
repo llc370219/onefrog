@@ -333,7 +333,10 @@ func (a *Agent) panelSetBot(ctx context.Context, speaker model.Bot, id string, e
 		return "没有这个 Bot", false
 	}
 	if target.ID == speaker.ID && !*enabled {
-		return "不能停用当前正在使用的主控", false
+		return "不能停用你自己", false
+	}
+	if target.ID == "main" && !*enabled {
+		return "主控负责协调新对话，只能由用户在设置里停用", false
 	}
 	writer := a.settingsWriter()
 	if writer == nil {
@@ -926,7 +929,10 @@ func (a *Agent) panelDeleteBot(ctx context.Context, speaker model.Bot, id string
 		return "没有这个 Bot", false
 	}
 	if target.ID == speaker.ID {
-		return "不能删除当前正在使用的主控", false
+		return "不能删除你自己", false
+	}
+	if target.ID == "main" {
+		return "主控负责协调新对话，只能由用户在设置里删除", false
 	}
 	what := fmt.Sprintf("删除 Bot %s（id=%s）。它的记忆会一起去掉，已有对话还在。不会读取密钥。", target.Name, target.ID)
 	allow, why := a.approveHighRisk(ctx, speaker.ID, store.ServerRec{Server: model.Server{ID: "panel", Name: "面板"}}, what, []string{"会删掉这个 Bot 和它的记忆"})

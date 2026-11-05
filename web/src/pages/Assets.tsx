@@ -55,6 +55,7 @@ export default function Assets({ hosts, focusServer, onConsumedFocus, onOpenServ
   const [error, setError] = useState('');
   const [draft, setDraft] = useState<Draft | null>(null);
   const [editID, setEditID] = useState('');
+  const [showTraffic, setShowTraffic] = useState(false);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState('');
   const [confirmID, setConfirmID] = useState('');
@@ -69,11 +70,13 @@ export default function Assets({ hosts, focusServer, onConsumedFocus, onOpenServ
     if (linked) {
       setFilter('all');
       setQuery(linked.name);
+      edit(linked);
     } else {
       setEditID('');
       setFormError('');
       setDraft({ ...empty, name: focusServer.name, server_id: focusServer.id, ip: focusServer.host });
     }
+    setShowTraffic(true);
     onConsumedFocus?.();
   }, [focusServer, loaded, rows, onConsumedFocus]);
   const visible = useMemo(() => rows.filter(row => {
@@ -88,6 +91,7 @@ export default function Assets({ hosts, focusServer, onConsumedFocus, onOpenServ
     return true;
   }), [rows, query, filter]);
   function edit(row?: AssetRecord) {
+    setShowTraffic(false);
     setConfirmID(''); setFormError(''); setEditID(row?.id || '');
     setDraft(row ? { ...empty, ...row, amount: fromCents(row.amount_cents), traffic: row.traffic_gb ? String(row.traffic_gb) : '', traffic_mode: row.traffic_mode || 'both', tags: (row.tags || []).join('，'), auto_renew: !!row.auto_renew, status: row.status || 'active' } : { ...empty });
   }
@@ -133,7 +137,7 @@ export default function Assets({ hosts, focusServer, onConsumedFocus, onOpenServ
 <Field label="订单号"><input value={draft.order_no} onChange={e => setDraft({ ...draft, order_no: e.target.value })}/></Field>
 <Field label="联系方式"><input value={draft.contact} onChange={e => setDraft({ ...draft, contact: e.target.value })}/></Field>
 </div>
-<details className="server-advanced"><summary>服务器关联与流量（可选）</summary><div className="form-grid asset-form">
+<details className="server-advanced" open={showTraffic} onToggle={e => setShowTraffic(e.currentTarget.open)}><summary>服务器关联与流量（可选）</summary><div className="form-grid asset-form">
 <Field label="关联服务器"><select value={draft.server_id} onChange={e => { const sid = e.target.value; const srv = hosts.find(h => h.id === sid); setDraft({ ...draft, server_id: sid, name: draft.name || srv?.name || '', ip: draft.ip || srv?.host || '' }); }}><option value="">不关联</option>{hosts.map(h => <option key={h.id} value={h.id}>{h.name}（{h.host}）</option>)}</select></Field>
 <Field label="地区"><input value={draft.region} placeholder="例如 洛杉矶 CN2" onChange={e => setDraft({ ...draft, region: e.target.value })}/></Field>
 <Field label="配置"><input value={draft.specs} placeholder="2C / 2G / 40G" onChange={e => setDraft({ ...draft, specs: e.target.value })}/></Field>

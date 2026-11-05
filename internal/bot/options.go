@@ -16,8 +16,11 @@ type Options struct {
 	ApprovalRoute  *preferences.Route `json:"approval_route,omitempty"`
 	ModelRoute     *preferences.Route `json:"model_route,omitempty"`
 	ExcludedBotIDs []string           `json:"excluded_bot_ids,omitempty"`
-	ApprovalMode   string             `json:"approval_mode,omitempty"`
-	AttachmentIDs  []string           `json:"attachment_ids,omitempty"`
+	// Mode is "direct" (one-to-one chat with a single bot and its own memory)
+	// or "team" (the default: the lead bot pulls other bots in as needed).
+	Mode          string   `json:"mode,omitempty"`
+	ApprovalMode  string   `json:"approval_mode,omitempty"`
+	AttachmentIDs []string `json:"attachment_ids,omitempty"`
 	// ChoiceAnswer answers an ask_user card in this session; it replaces Content.
 	ChoiceAnswer *ChoiceReply `json:"choice_answer,omitempty"`
 	// SecretAnswer saves a password card. Value is encrypted and then dropped;
@@ -60,6 +63,18 @@ type usageKey struct{}
 type usageActor struct{ BotID, Purpose, ProviderID string }
 
 func options(ctx context.Context) Options { v, _ := ctx.Value(optionsKey{}).(Options); return v }
+
+// isDirect reports a user-facing one-to-one chat. Delegated and inbox turns
+// are never direct; they keep the worker behaviour.
+func isDirect(ctx context.Context) bool { return options(ctx).Mode == "direct" && !isWorker(ctx) }
+
+// commandsPanel reports whether speaker may change the panel or install probes.
+func (a *Agent) commandsPanel(ctx context.Context, speaker model.Bot) bool {
+	if isWorker(ctx) || a.managesAssets(speaker) {
+		return false
+	}
+	return !isDirect(ctx) || speaker.ID == "main"
+}
 func usageContext(ctx context.Context, id, purpose, provider string) context.Context {
 	return context.WithValue(ctx, usageKey{}, usageActor{id, purpose, provider})
 }
@@ -120,6 +135,15 @@ func (a *Agent) ReplyWithOptions(ctx context.Context, botID, serverID, sessionID
 		if _, err := a.Store.GetBot(ctx, id); err != nil {
 			return Result{}, errors.New("排除的 Bot 不存在，请刷新")
 		}
+	}
+	switch opt.Mode {
+	case "", "team":
+		opt.Mode = ""
+	case "direct":
+		// A direct chat is with one bot; scope controls do not apply.
+		opt.ExcludedBotIDs = nil
+	default:
+		return Result{}, errors.New("对话模式无效")
 	}
 	if len(opt.AttachmentIDs) > attachment.MaxFiles {
 		return Result{}, errors.New("每轮最多 4 个附件")

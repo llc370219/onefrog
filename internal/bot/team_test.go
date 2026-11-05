@@ -137,6 +137,23 @@ func TestTeamHidesSecretWhileDelegating(t *testing.T) {
 	if !strings.Contains(result.Text, "可以连接") {
 		t.Fatal("leader did not receive the worker conclusion")
 	}
+	var workerSaid bool
+	for _, item := range result.Timeline {
+		if item.Kind == "say" && item.Bot == "巡检" && item.Text == "可以连接" {
+			workerSaid = true
+		}
+	}
+	if !workerSaid {
+		t.Fatalf("worker reply missing from the group timeline: %+v", result.Timeline)
+	}
+	mu.Unlock()
+	if _, err := agent.Reply(ctx, "", "web-01", result.SessionID, "继续"); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	if last := bodies[len(bodies)-1]; !strings.Contains(last, "[巡检] 可以连接") {
+		t.Fatal("history did not tag the worker's words with its name")
+	}
 }
 
 func toolJSON(id, name, args string) string {

@@ -1,11 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowUp, Blocks, Bot, Code2, HardDrive, History, KeyRound, LoaderCircle, LockKeyhole, Plus, Server, ShieldCheck, Sparkles, Paperclip, Send, Wallet } from 'lucide-react';
-import { api, type ApprovalDecision, type BotMemory, type BotRow, type ChatLine, type ChatMode, type Host, type Attachment, type SecretRow, type SettingsState } from '../api';
+import { ArrowUp, Blocks, Code2, HardDrive, History, Inbox, KeyRound, LoaderCircle, LockKeyhole, Plus, Server, ShieldCheck, Sparkles, Paperclip, Send, Trash2, Users, Wallet } from 'lucide-react';
+import { api, type ApprovalDecision, type BotMemory, type BotRow, type ChatLine, type ChatMode, type ChatSession, type Host, type Attachment, type SecretRow, type SettingsState } from '../api';
 import ChatControls, { type ChatControlState } from '../components/ChatControls';
 import Attachments from '../components/Attachments';
 import TurnStream from '../components/TurnStream';
 import { Button, IconButton, Status } from '../components/ui';
 import { BotAvatar } from '../components/BotAvatar';
+import { AvatarStack } from '../components/SecondaryNav';
+import { groupMembers, groupSessions } from '../lib/chatGroups';
+
+function when(value: string) {
+  const d = new Date(value);
+  return d.toDateString() === new Date().toDateString()
+    ? d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
+}
 
 export default function Chat({
   onAddServer,
@@ -29,6 +38,11 @@ export default function Chat({
   onSend,
   sending,
   onNew,
+  onNewTopic,
+  sessions = [],
+  session = '',
+  onSession,
+  onDeleteSession,
   onNotice,
   onAnswer,
   onProvide,
@@ -58,6 +72,11 @@ export default function Chat({
   onSend: () => void;
   sending: boolean;
   onNew: () => void;
+  onNewTopic?: () => void;
+  sessions?: ChatSession[];
+  session?: string;
+  onSession?: (s: ChatSession) => void;
+  onDeleteSession?: (s: ChatSession) => void;
   onNotice: (s: string) => void;
   onAnswer: (line: ChatLine, values: string[], custom: string) => void;
   onProvide: (line: ChatLine, value: string) => void;
@@ -83,6 +102,8 @@ export default function Chat({
   const memories = memoryState && memoryState.bot === memoryBot ? memoryState.rows : null;
 
   const current = hosts.find(h => h.id === selected);
+  const members = mode === 'team' ? groupMembers(bots, activeBot?.id || '', controls.excluded) : [];
+  const topics = mode === 'direct' && activeBot ? groupSessions(sessions).byBot[activeBot.id] || [] : [];
   const isDevelop = activeBot?.id === 'develop' || activeBot?.name === '自定义模块' || activeBot?.name === '二次开发';
   const isModMgr = activeBot?.id === 'module-builder' || activeBot?.name === '模块管理' || activeBot?.name === '模块构建';
   const welcomeTitle = isDevelop ? '想创建什么自定义模块？' : isModMgr ? '管理模块与资产台账' : '今天，先处理什么？';
@@ -92,7 +113,7 @@ export default function Chat({
     ? '查看或开关面板模块、维护资产与订阅台账，或管理自定义模块里的数据记录。'
     : mode === 'direct'
     ? `只和「${activeBot?.name || 'Bot'}」一对一对话。它带着自己的记忆独立干活，能操作服务器和面板；别的 Bot 更熟悉时，它会自己找对方协助。`
-    : '主控会按任务自动拉其他 Bot 一起处理，你可以在右侧或下方选项里剔除、拉入 Bot。遇到选项、加密凭据或高危操作时，会在对话中弹出卡片逐步确认。';
+    : `这是一个 ${members.length} 个 Bot 的群聊。主控「${activeBot?.name || '主控'}」按任务分派给群里的 Bot，每条回复都标出是谁说的；你可以在右侧随时剔除或拉入 Bot。`;
 
   const suggestions = isDevelop
     ? [
@@ -128,15 +149,17 @@ export default function Chat({
           <div>
             
             {mode === 'direct'
-              ? <h1>{activeBot?.name || 'Bot'} <span className="tag">独立对话</span></h1>
-              : <h1>主控对话 <span className="tag">{activeBot?.name || '主控'} 自动协调</span></h1>}
+              ? <h1>{activeBot && <BotAvatar bots={bots} id={activeBot.id} className="heading-avatar"/>}{activeBot?.name || 'Bot'} <span className="tag">单聊</span></h1>
+              : <h1><AvatarStack bots={bots} members={members}/>群聊 <span className="tag">{members.length} 个 Bot</span></h1>}
           </div>
-          <Button onClick={onNew} disabled={sending}><Plus size={15}/>新对话</Button>
+          {mode === 'direct'
+            ? <Button onClick={onNewTopic || onNew} disabled={sending}><Plus size={15}/>新话题</Button>
+            : <Button onClick={onNew} disabled={sending}><Users size={15}/>新建群聊</Button>}
         </header>
         <div className="chat-scroll">
           {!lines.length ? (
             <div className="chat-welcome">
-              {mode === 'direct' && activeBot ? <BotAvatar bots={bots} id={activeBot.id} className="welcome-icon"/> : <div className="welcome-icon"><Bot size={30} strokeWidth={1.3}/></div>}
+              {mode === 'direct' && activeBot ? <BotAvatar bots={bots} id={activeBot.id} className="welcome-icon"/> : <div className="welcome-icon welcome-group"><AvatarStack bots={bots} members={members} max={5}/></div>}
               
               <h2>{welcomeTitle}</h2>
               <p>{welcomeNote}</p>
@@ -162,13 +185,18 @@ export default function Chat({
                     </div>
                   ) : (
                     <div className="bot-turn">
-                      <div className="speaker">
-                        {activeBot ? <BotAvatar bots={bots} id={activeBot.id} className="speaker-avatar"/> : <Bot size={15}/>}
-                        <strong>{activeBot?.name || '主控'}</strong>
-                      </div>
+                      {mode === 'direct' && (
+                        <div className="speaker">
+                          {activeBot && <BotAvatar bots={bots} id={activeBot.id} className="speaker-avatar"/>}
+                          <strong>{activeBot?.name || 'Bot'}</strong>
+                        </div>
+                      )}
                       <TurnStream
                         timeline={line.timeline || []}
                         text={line.text}
+                        bots={bots}
+                        group={mode === 'team'}
+                        lead={activeBot}
                         pending={line.pending}
                         activeStatus={line.activeStatus}
                         hosts={hosts}
@@ -288,6 +316,7 @@ export default function Chat({
           )}
         </div>
         {mode === 'direct' ? (
+          <>
           <div className="context-section">
             <h3>关于这个 Bot</h3>
             {activeBot ? (
@@ -308,10 +337,27 @@ export default function Chat({
               </div>
             ) : <p className="muted">未选择 Bot。</p>}
           </div>
+          <div className="context-section">
+            <h3>历史话题 <span className="tag">{topics.length}</span></h3>
+            {topics.length ? (
+              <div className="topic-list">
+                {topics.map(s => (
+                  <div className={`topic-row ${session === s.id ? 'selected' : ''}`} key={s.id}>
+                    <button type="button" onClick={() => onSession?.(s)} disabled={sending || session === s.id} aria-current={session === s.id ? 'true' : undefined}>
+                      <strong>{s.id.startsWith('inbox-') && <Inbox size={11}/>}{s.title}</strong>
+                      <time>{when(s.updated_at)}</time>
+                    </button>
+                    {onDeleteSession && <IconButton label={`删除话题 ${s.title}`} disabled={sending} onClick={() => onDeleteSession(s)}><Trash2 size={12}/></IconButton>}
+                  </div>
+                ))}
+              </div>
+            ) : <p className="muted">还没有历史，发出第一条消息后会保存在这里。</p>}
+          </div>
+          </>
         ) : (
           <div className="context-section">
-            <h3>协作 Bot <span className="tag">{bots.filter(b => b.enabled && !controls.excluded.includes(b.id)).length}</span></h3>
-            <p className="muted">主控按需分派任务，可随时剔除或拉入 Bot。</p>
+            <h3>群成员 <span className="tag">{members.length}</span></h3>
+            <p className="muted">主控按需分派任务给群里的 Bot，可随时剔除或拉入。</p>
             {bots.filter(b => b.enabled).sort((a, b) => Number(b.id === activeBot?.id) - Number(a.id === activeBot?.id)).map(b => {
               const lead = b.id === activeBot?.id;
               const out = !lead && controls.excluded.includes(b.id);

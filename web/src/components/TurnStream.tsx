@@ -1,6 +1,8 @@
 import { Check, CircleCheck, Copy, GitBranch, LoaderCircle, Send, Terminal, XCircle } from 'lucide-react';
-import type { ApprovalDecision, Choice, Host, SecretRequest, TurnItem } from '../api';
+import type { ApprovalDecision, BotRow, Choice, Host, SecretRequest, TurnItem } from '../api';
+import { speakerOf } from '../lib/chatGroups';
 import ApprovalCard from './ApprovalCard';
+import { BotAvatar } from './BotAvatar';
 import ChoiceCard from './ChoiceCard';
 import Markdown from './Markdown';
 import SecretCard from './SecretCard';
@@ -50,6 +52,9 @@ export default function TurnStream({
   onAnswerChoice,
   onProvideSecret,
   onCopy,
+  bots = [],
+  group,
+  lead,
 }: {
   timeline?: TurnItem[];
   text?: string;
@@ -65,10 +70,30 @@ export default function TurnStream({
   onAnswerChoice?: (values: string[], custom: string) => void;
   onProvideSecret?: (value: string) => void;
   onCopy?: (text: string) => void;
+  bots?: BotRow[];
+  group?: boolean;
+  lead?: BotRow;
 }) {
   const waitingApproval = timeline.some(item => item.kind === 'approval_pending');
-  const lastSay = [...timeline].reverse().find(item => item.kind === 'say')?.text?.trim() || '';
+  const isLead = (name?: string) => !name || name === lead?.name || name === lead?.id;
+  const lastSay = [...timeline].reverse().find(item => item.kind === 'say' && isLead(item.bot))?.text?.trim() || '';
   const finalBubbles = splitChatBubbles(text).filter((b, idx) => !(idx === 0 && lastSay && b === lastSay));
+
+  // In a group chat each reply carries the speaking bot's avatar and name, shown once per run of messages.
+  let current = '';
+  const speakerHead = (name: string | undefined, key: string) => {
+    if (!group) return null;
+    const bot = isLead(name) ? lead : speakerOf(bots, name);
+    const who = bot?.id || name || lead?.id || '';
+    if (who === current) return null;
+    current = who;
+    return (
+      <div className="group-speaker" key={key}>
+        <BotAvatar bots={bots} id={bot?.id || who} className="speaker-avatar"/>
+        <strong>{bot?.name || name || lead?.name || '主控'}</strong>
+      </div>
+    );
+  };
 
   const waitingChoice = Boolean(choice && !choice.answer && !stale);
   const waitingSecret = Boolean(secret && !secret.provided_at && !stale);
@@ -81,11 +106,13 @@ export default function TurnStream({
     <div className="turn-stream">
       {timeline.map((item, idx) => {
         if (item.kind === 'say' && item.text) {
-          return (
+          const head = speakerHead(item.bot, 'who-' + idx);
+          const bubble = (
             <div className="bot-bubble" key={'say-' + idx}>
               <div className="assistant-text markdown"><Markdown text={item.text}/></div>
             </div>
           );
+          return head ? [head, bubble] : bubble;
         }
         if (item.kind === 'approval_pending' && item.pending_req) {
           const req = item.pending_req;
@@ -142,6 +169,7 @@ export default function TurnStream({
         return null;
       })}
 
+      {finalBubbles.length > 0 && speakerHead(undefined, 'who-final')}
       {finalBubbles.map((bubble, idx) => (
         <div
           className={`bot-bubble${animateFinal ? ' staggered' : ''}`}

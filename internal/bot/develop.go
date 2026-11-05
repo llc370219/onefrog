@@ -31,6 +31,7 @@ func (a *Agent) developPrompt(ctx context.Context, bot model.Bot) string {
 	}
 	writeExtra(&b, bot)
 	b.WriteString(promptMemory)
+	a.writeMailbox(&b, ctx, bot, isWorker(ctx))
 	a.writeOwnMemory(&b, ctx, bot)
 	a.writeServers(&b, ctx, "")
 	a.writeAssets(&b, bot)

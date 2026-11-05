@@ -152,7 +152,7 @@ type ApprovalCard struct {
 
 // TurnItem is one chronological item in a multi-step conversational assistant turn.
 type TurnItem struct {
-	Kind     string        `json:"kind"` // "say" | "step" | "delegate" | "approval"
+	Kind     string        `json:"kind"` // "say" | "step" | "delegate" | "message" | "approval"
 	Bot      string        `json:"bot,omitempty"`
 	Text     string        `json:"text,omitempty"`
 	Target   string        `json:"target,omitempty"`
@@ -174,5 +174,6 @@ type Message struct {
 	SessionID     string         `json:"session_id"`
 	Role          string         `json:"role"`
 	Content       string         `json:"content"`
+	FromBot       string         `json:"from_bot,omitempty"`
 	CreatedAt     time.Time      `json:"created_at"`
 }

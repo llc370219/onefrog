@@ -54,6 +54,9 @@ type Agent struct {
 	// frozen snapshot for one turn; panel changes must hit the live store.
 	SettingsLive *preferences.Manager
 	Updates      PanelUpdates
+	// Mail runs background inbox turns for message_agent. Nil delivers the
+	// message without waking the target bot.
+	Mail *Mailbox
 }
 
 // ProbeIndex forgets a server's probe after its panel record is deleted.

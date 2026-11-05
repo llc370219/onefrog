@@ -620,6 +620,8 @@ func stepEvent(step bot.Step) gin.H {
 		return gin.H{"type": "approval_resolved", "approval": step.Approval}
 	case "delegate":
 		return gin.H{"type": "delegate", "bot": step.Bot, "target": step.Target, "task": step.Task}
+	case "message":
+		return gin.H{"type": "message", "bot": step.Bot, "target": step.Target, "task": step.Task}
 	default:
 		return gin.H{"type": "tool", "bot": step.Bot, "name": step.Name, "command": step.Command, "server_id": step.ServerID, "ok": step.OK, "output": step.Output}
 	}

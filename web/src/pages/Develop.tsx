@@ -295,6 +295,9 @@ export default function Develop({
         if (step.kind === 'delegate') {
           localItems.push({ kind: 'delegate', bot: step.bot, target: step.target, task: step.task });
           setActiveStatus('已派给「' + (step.target || '协作 Bot') + '」处理…');
+        } else if (step.kind === 'message') {
+          localItems.push({ kind: 'message', bot: step.bot, target: step.target, task: step.task });
+          setActiveStatus('已给「' + (step.target || 'Bot') + '」发消息，正在继续…');
         } else {
           localItems.push({ kind: 'step', bot: step.bot, command: step.command, server_id: step.server, ok: step.ok, output: step.output });
           setActiveStatus('已完成：' + (step.command || '模块构建') + '，正在收尾…');

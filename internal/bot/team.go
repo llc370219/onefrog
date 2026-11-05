@@ -42,6 +42,8 @@ type trace struct {
 	// secret is set when the leader asked for a vault secret. The plaintext is
 	// not part of this trace.
 	secret *model.SecretRequest
+	// sent counts message_agent calls in this turn.
+	sent int
 }
 
 type traceKey struct{}
@@ -68,11 +70,17 @@ func (a *Agent) lead(ctx context.Context, leader model.Bot, serverID, sessionID 
 	tr := &trace{agent: a, ctx: ctx, sink: sink}
 	ctx = context.WithValue(ctx, traceKey{}, tr)
 	tr.ctx = ctx
-	messages, err := a.sessionMessages(ctx, sessionID, a.leaderPrompt(ctx, leader, serverID))
+	system, canDelegate := a.leaderPrompt(ctx, leader, serverID), a.hasPeers(ctx, leader.ID)
+	if isInbox(ctx) {
+		// A background inbox turn works like a worker: no user to ask, no
+		// delegation, only an optional reply via message_agent.
+		system, canDelegate = a.workerPrompt(ctx, leader, serverID), false
+	}
+	messages, err := a.sessionMessages(ctx, sessionID, system)
 	if err != nil {
 		return Result{}, err
 	}
-	text, err := a.converse(ctx, leader, creds, serverID, messages, a.hasPeers(ctx, leader.ID), tr)
+	text, err := a.converse(ctx, leader, creds, serverID, messages, canDelegate, tr)
 	if err != nil {
 		return Result{}, err
 	}
@@ -133,6 +141,9 @@ func (a *Agent) converse(ctx context.Context, speaker model.Bot, creds credentia
 			spec = append(spec, askUserTool, requestSecretTool, panelTool, installProbeTool, developModuleTool)
 			spec = append(spec, toolDefs(false, true)...)
 		}
+	}
+	if a.canMessage(ctx, speaker) {
+		spec = append(spec, messageAgentTool())
 	}
 	mediaNote := ""
 	for i := 0; i < limit; i++ {
@@ -247,10 +258,10 @@ func toolLabel(call toolCall) string {
 }
 
 func (a *Agent) execCall(ctx context.Context, speaker model.Bot, creds credentials, serverID string, call toolCall, canDelegate bool, tr *trace) string {
-	if a.managesAssets(speaker) && call.Function.Name != "manage_module_record" && call.Function.Name != "manage_modules" && call.Function.Name != "ask_agent" && call.Function.Name != "ask_user" {
+	if a.managesAssets(speaker) && call.Function.Name != "manage_module_record" && call.Function.Name != "manage_modules" && call.Function.Name != "ask_agent" && call.Function.Name != "ask_user" && call.Function.Name != "message_agent" {
 		return "模块管理 Bot 只负责开关面板模块与维护模块数据，不能执行命令；需要服务器操作或新建自定义模块时请用 ask_agent 协同对应 Bot。"
 	}
-	if a.developsModules(speaker) && call.Function.Name != "develop_module" && call.Function.Name != "remember" && call.Function.Name != "recall" && call.Function.Name != "ask_user" && call.Function.Name != "ask_agent" {
+	if a.developsModules(speaker) && call.Function.Name != "develop_module" && call.Function.Name != "remember" && call.Function.Name != "recall" && call.Function.Name != "ask_user" && call.Function.Name != "ask_agent" && call.Function.Name != "message_agent" {
 		return "自定义模块 Bot 只负责开发和维护自定义模块，不能执行服务器命令；需要服务器或资产操作时请用 ask_agent 协同对应 Bot。"
 	}
 	switch call.Function.Name {
@@ -300,6 +311,8 @@ func (a *Agent) execCall(ctx context.Context, speaker model.Bot, creds credentia
 			return "这个 Bot 不能再派给别人。"
 		}
 		return a.handOff(ctx, speaker, creds, serverID, call, tr)
+	case "message_agent":
+		return a.sendMessage(ctx, speaker, serverID, call, tr)
 	case "ask_user":
 		if isWorker(ctx) || tr == nil {
 			return "协作 Bot 不能直接向用户提问。把需要用户决定的问题写进结论，由主控来问。"
@@ -448,6 +461,9 @@ func (t *trace) emit(step Step) {
 	case "delegate":
 		t.steps = append(t.steps, step)
 		t.timeline = append(t.timeline, model.TurnItem{Kind: "delegate", Bot: step.Bot, Target: step.Target, Task: step.Task})
+	case "message":
+		t.steps = append(t.steps, step)
+		t.timeline = append(t.timeline, model.TurnItem{Kind: "message", Bot: step.Bot, Target: step.Target, Task: step.Task})
 	default:
 		t.steps = append(t.steps, step)
 		t.timeline = append(t.timeline, model.TurnItem{
@@ -549,6 +565,7 @@ func (a *Agent) leaderPrompt(ctx context.Context, bot model.Bot, serverID string
 	b.WriteString(promptProbe)
 	writeExtra(&b, bot)
 	a.writePeers(&b, ctx, bot.ID)
+	a.writeMailbox(&b, ctx, bot, false)
 	b.WriteString(promptMemory)
 	a.writeOwnMemory(&b, ctx, bot)
 	a.writePeerMemory(&b, ctx, bot.ID)
@@ -573,6 +590,7 @@ func (a *Agent) workerPrompt(ctx context.Context, bot model.Bot, serverID string
 	b.WriteString(promptConnect)
 	b.WriteString(promptNoPanelSource)
 	b.WriteString(promptMemory)
+	a.writeMailbox(&b, ctx, bot, true)
 	a.writeOwnMemory(&b, ctx, bot)
 	writeExtra(&b, bot)
 	a.writeSecrets(&b, ctx)
@@ -591,6 +609,7 @@ func (a *Agent) assetPrompt(ctx context.Context, bot model.Bot) string {
 		a.writePeerMemory(&b, ctx, bot.ID)
 	}
 	writeExtra(&b, bot)
+	a.writeMailbox(&b, ctx, bot, isWorker(ctx))
 	a.writeAllModulesSummary(&b, ctx)
 	a.writeServers(&b, ctx, "")
 	a.writeAssets(&b, bot)

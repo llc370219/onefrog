@@ -33,6 +33,14 @@ const message = (err: unknown) => err instanceof Error ? err.message : '操作�
 /** The chat opens on the lead bot (主控) by default, never on specialist module bots. */
 const defaultBot=(list:BotRow[])=>(list.find(x=>x.id==='main'&&x.enabled)||list.find(x=>x.enabled&&x.id!=='module-builder'&&x.id!=='develop')||list.find(x=>x.enabled))?.id||'';
 
+type MessageRow = Awaited<ReturnType<typeof api.messages>>[number];
+/** Turns stored messages into chat lines, hiding the automatic follow-ups sent after a choice or secret card. */
+function chatLines(rows:MessageRow[]):ChatLine[]{
+  const visible=rows.filter((r,idx)=>{if(r.role!=='user'&&r.role!=='assistant')return false;if(r.role==='user'&&idx>0){const prev=rows[idx-1];const autoChoice=Boolean(prev.role==='assistant'&&prev.choice?.answer&&r.content.startsWith('我的选择：'));const autoSecret=Boolean(prev.role==='assistant'&&prev.secret_request?.provided_at&&r.content.startsWith('已把密钥「')&&r.content.endsWith('模型看不到明文。'));if(autoChoice||autoSecret)return false;}return true;});
+  // Inbox messages carry a "[来自 X（id=…）] " prefix for the model; the UI shows a label instead.
+  return visible.map(r=>({who:r.role==='user'?'user':'bot',text:r.from_bot?r.content.replace(/^\[来自 [^\]\n]*\] /,''):r.content,attachments:r.attachments,id:r.id,fromBot:r.from_bot||undefined,choice:r.choice||undefined,secret:r.secret_request||undefined,timeline:r.timeline||undefined}));
+}
+
 export default function App() {
   const [authed,setAuthed] = useState<boolean | null>(null);
   const [user,setUser] = useState('admin'); const [password,setPassword] = useState('');
@@ -75,6 +83,27 @@ export default function App() {
   const [updateStatus,setUpdateStatus]=useState<UpdateStatus|null>(null);
   useEffect(()=>{if(!authed||profile.must_change_credentials)return;let active=true;const get=()=>api.updateStatus().then(s=>{if(active)setUpdateStatus(s);}).catch(()=>{});get();const timer=window.setInterval(get,60*60*1000);return()=>{active=false;window.clearInterval(timer);};},[authed,profile.must_change_credentials]);
   useEffect(() => {if(!notice) return; const timer = window.setTimeout(() => setNotice(''),4500); return () => clearTimeout(timer);},[notice]);
+  // Bots write into each other's inboxes in the background. While the chat view
+  // is idle, refresh the list so new inbox chats appear, and reload an open
+  // inbox chat when it changes.
+  const inboxSeen=useRef('');
+  useEffect(()=>{
+    if(!authed||view!=='chat'||sending||loading||uploading)return;
+    let active=true;
+    const tick=async()=>{
+      try{
+        const list=await api.sessions();if(!active||sendingRef.current||uploadRef.current)return;setSessions(list);
+        const cur=session.startsWith('inbox-')?list.find(s=>s.id===session):undefined;
+        const mark=cur?cur.id+'|'+cur.updated_at:'';
+        if(!cur||inboxSeen.current===mark)return;
+        const first=!inboxSeen.current.startsWith(cur.id+'|');inboxSeen.current=mark;if(first)return;
+        const request=chatLoad.current;const rows=await api.messages(cur.id);
+        if(active&&request===chatLoad.current&&!sendingRef.current)setLines(chatLines(rows));
+      }catch{/* the next tick retries */}
+    };
+    const timer=window.setInterval(tick,10000);
+    return()=>{active=false;window.clearInterval(timer);};
+  },[authed,view,session,sending,loading,uploading]);
   useEffect(() => {const media = window.matchMedia('(max-width:760px)'); const changed = () => {setCompact(media.matches); if(!media.matches) setMobileNav(false);}; media.addEventListener('change',changed); return () => media.removeEventListener('change',changed);},[]);
   useEffect(() => {function key(e: KeyboardEvent) {if(e.key === 'Escape') setMobileNav(false);} document.addEventListener('keydown',key); return () => document.removeEventListener('keydown',key);},[]);
   useEffect(() => {
@@ -121,7 +150,7 @@ export default function App() {
   function openChat(text?: string) {go('chat');setMobileNav(false);if(text) setDraft(text);}
   function newChat(botID=bots.find(b=>b.id===activeBot&&b.enabled)?.id||defaultBot(bots)){if(sendingRef.current||uploadRef.current)return;chatLoad.current++;chatAllowRules.current.clear();setActiveBot(botID);setSession('');setLines([]);setDraft('');setSelected('');setAttachments([]);setControls({model:{provider_id:'',model:''},excluded:[],approval:'default'});setMobileNav(false);}
   async function removeChat(item:ChatSession){if(sendingRef.current||uploadRef.current)return;if(!window.confirm('删除对话「'+item.title+'」？这条记录和里面的消息都会去掉，不能恢复。'))return;try{await api.deleteSession(item.id);setSessions(cur=>cur.filter(s=>s.id!==item.id));if(session===item.id){chatLoad.current++;chatAllowRules.current.clear();setSession('');setLines([]);setDraft('');setAttachments([]);setSelected('');}setNotice('已删除对话');}catch(err){setPageError(message(err));}}
-  async function restoreChat(item:ChatSession){if(sendingRef.current||uploadRef.current)return;const request=++chatLoad.current;setLoading(true);try{const rows=await api.messages(item.id);if(request!==chatLoad.current)return;chatAllowRules.current.clear();setActiveBot(item.bot_id);setSelected('');setSession(item.id);const visible=rows.filter((r,idx)=>{if(r.role!=='user'&&r.role!=='assistant')return false;if(r.role==='user'&&idx>0){const prev=rows[idx-1];const autoChoice=Boolean(prev.role==='assistant'&&prev.choice?.answer&&r.content.startsWith('我的选择：'));const autoSecret=Boolean(prev.role==='assistant'&&prev.secret_request?.provided_at&&r.content.startsWith('已把密钥「')&&r.content.endsWith('模型看不到明文。'));if(autoChoice||autoSecret)return false;}return true;});setLines(visible.map(r=>({who:r.role==='user'?'user':'bot',text:r.content,attachments:r.attachments,id:r.id,choice:r.choice||undefined,secret:r.secret_request||undefined,timeline:r.timeline||undefined})));setDraft('');setAttachments([]);setControls({model:item.options?.model_route||{provider_id:'',model:''},excluded:(item.options?.excluded_bot_ids||[]).filter(id=>bots.some(b=>b.id===id)),approval:item.options?.approval_mode==='rules'?'off':item.options?.approval_mode||'default',review:item.options?.approval_route});setMobileNav(false);}catch(e){setPageError(message(e));}finally{if(request===chatLoad.current)setLoading(false);}}
+  async function restoreChat(item:ChatSession){if(sendingRef.current||uploadRef.current)return;const request=++chatLoad.current;setLoading(true);try{const rows=await api.messages(item.id);if(request!==chatLoad.current)return;chatAllowRules.current.clear();setActiveBot(item.bot_id);setSelected('');setSession(item.id);setLines(chatLines(rows));setDraft('');setAttachments([]);setControls({model:item.options?.model_route||{provider_id:'',model:''},excluded:(item.options?.excluded_bot_ids||[]).filter(id=>bots.some(b=>b.id===id)),approval:item.options?.approval_mode==='rules'?'off':item.options?.approval_mode||'default',review:item.options?.approval_route});setMobileNav(false);}catch(e){setPageError(message(e));}finally{if(request===chatLoad.current)setLoading(false);}}
   function chooseBot(id:string){if(sendingRef.current||uploadRef.current)return;chatLoad.current++;chatAllowRules.current.clear();setActiveBot(id);setSession('');setLines([]);setControls(cur=>({...cur,model:{provider_id:'',model:''},excluded:cur.excluded.filter(x=>x!==id)}));}
   async function uploadFiles(files:File[]){if(!files.length||uploadRef.current||sendingRef.current)return;if(files.some(f=>f.size>5*1024*1024)){setPageError('每个文件不能超过 5 MB');return;}if(files.length+attachments.length>4){setPageError('每轮最多上传 4 个附件');return;}if(files.reduce((n,f)=>n+f.size,0)+attachments.reduce((n,f)=>n+f.size,0)>12*1024*1024){setPageError('附件合计不能超过 12 MB');return;}uploadRef.current=true;setUploading(true);setPageError('');try{for(const file of files){const ref=await api.upload(file);setAttachments(cur=>[...cur,ref]);}}catch(e){setPageError(message(e));}finally{uploadRef.current=false;setUploading(false);}}
 
@@ -196,6 +225,9 @@ export default function App() {
         if (step.kind === 'delegate') {
           timelineOut.push({ kind: 'delegate', bot: step.bot, target: step.target, task: step.task });
           syncUI('已交由「' + (step.target || '协作 Bot') + '」处理…');
+        } else if (step.kind === 'message') {
+          timelineOut.push({ kind: 'message', bot: step.bot, target: step.target, task: step.task });
+          syncUI('已给「' + (step.target || 'Bot') + '」发消息，正在继续…');
         } else {
           timelineOut.push({ kind: 'step', bot: step.bot, command: step.command, server_id: step.server, ok: step.ok, output: step.output });
           const shortCmd = (step.command || '操作').slice(0, 32);

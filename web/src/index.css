@@ -186,6 +186,11 @@
 .inline-step.fail svg{color:var(--danger)}
 .inline-step span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .inline-step strong{font-weight:500;color:var(--fg2)}
+.inline-step.message svg{color:var(--fg3)}
+.inline-step.message{border-style:dashed}
+.from-bot-label{display:flex;align-items:center;justify-content:flex-end;gap:5px;margin-bottom:6px;font-size:11px;color:var(--fg4)}
+.user-message-content.from-bot .user-text{background:color-mix(in srgb,var(--ink) 2.5%,transparent);border-style:dashed;color:var(--fg2)}
+.inbox-tag{display:inline-flex;align-items:center;gap:3px;margin-right:6px;padding:1px 6px;border-radius:999px;border:1px solid var(--line2);font-size:10px;font-weight:400;color:var(--fg3);vertical-align:1px}
 
 .inline-step-details{width:min(100%,580px);border:1px solid var(--line);border-radius:12px;background:var(--inset);overflow:hidden;animation:bubbleIn .18s ease-out both}
 .inline-step-details summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;padding:8px 13px;font-size:12.5px;color:var(--fg2)}
@@ -352,13 +357,6 @@
 .service-node .notice {margin:10px 20px}
 .service-node .data-table td:last-child .text-btn {white-space:nowrap}
 
-/* Fill the desktop sidebar with the asset overview beside the first modules. */
-@media(min-width:1021px) {
- .dashboard-grid {grid-auto-flow:row dense}
- .dashboard-grid>.module-assets {grid-column:2}
- .module-assets .asset-glance {grid-template-columns:repeat(2,minmax(0,1fr));row-gap:20px}
-}
-
 /* Theme toggle and Claude-style refinements: warm neutrals, serif display type,
    softer corners, green accent for focus/selection. */
 .theme-toggle svg{transition:transform .25s ease}.theme-toggle:hover svg{transform:rotate(-12deg)}
@@ -386,17 +384,34 @@ input:focus,select:focus,textarea:focus{border-color:color-mix(in srgb,var(--acc
 .probe-empty .probe-empty-body p{font-size:12px;line-height:1.7;color:var(--fg3);max-width:44ch}
 .probe-empty .probe-empty-body .probe-asset-chip{margin-top:4px}
 
-/* Dashboard layout: server probes span the full width on top, every other
-   module sits in an even, responsive grid below. */
-.dashboard .dashboard-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,360px),1fr));gap:16px;align-items:start}
-.dashboard .dashboard-grid>.card{grid-column:auto;grid-row:auto;align-self:start}
+/* Dashboard layout: server probes and wide modules span the full width,
+   the remaining modules share an even grid whose cards in a row match height. */
+.dashboard .dashboard-grid{display:flex;flex-wrap:wrap;gap:16px;align-items:stretch}
+.dashboard .dashboard-grid>.card{flex:1 1 340px;min-width:0;display:flex;flex-direction:column}
+.dashboard .dashboard-grid>.card>.card-heading{flex-shrink:0}
+.dashboard .dashboard-grid>.module-probe,.dashboard .dashboard-grid>.module-develop,.dashboard .dashboard-grid>.module-custom{flex-basis:100%}
+.dashboard .module-alerts .alert-list{flex:1}
+.dashboard .module-alerts .empty{flex:1;justify-content:center}
+.dashboard .module-alerts .alert-foot{margin-top:auto}
+.dashboard .service-glance{flex:1;display:flex;flex-direction:column}
+.dashboard .service-glance-list{flex:1}
+.dashboard .module-assets .asset-glance{flex:1;grid-template-columns:repeat(2,minmax(0,1fr));row-gap:20px;align-content:start}
+.dashboard .module-assets .asset-glance>p{align-self:end}
+.dashboard .module-assets{container-type:inline-size}
+@container (min-width:640px){.dashboard .module-assets .asset-glance{grid-template-columns:repeat(4,minmax(0,1fr))}.dashboard .module-assets .asset-glance>p{grid-column:1/-1}}
 .dashboard .metric{padding:14px 16px 12px}
 .dashboard .metric-value{font-size:26px;margin-top:12px}
 .dashboard .metric p{margin-top:8px}
 .dashboard .module-alerts .empty{padding-top:22px;padding-bottom:22px}
-.dashboard .dashboard-grid>.module-probe{grid-column:1/-1}
 .dashboard .module-alerts .alert-list{grid-template-columns:1fr}
-.probe-card-grid,.dashboard-probes{grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));gap:12px}
+.probe-card-grid{grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));gap:12px}
+.dashboard .dashboard-probes{grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:12px}
+.dashboard .dashboard-probes>.pc{container-type:inline-size}
+/* Four hosts read better as 2×2 than as 3 + 1 at medium widths. */
+.dashboard .module-probe{container:probes/inline-size}
+@container probes (max-width:1075px){.dashboard .dashboard-probes:has(>.pc:nth-child(4):last-child){grid-template-columns:repeat(2,minmax(0,1fr))}}
+@container probes (max-width:540px){.dashboard .dashboard-probes:has(>.pc:nth-child(4):last-child){grid-template-columns:1fr}}
+@container (max-width:300px){.dashboard .pc-net{grid-template-columns:1fr}.dashboard .pc-net>div+div{border-left:0;border-top:1px solid var(--line)}}
 
 /* Compact probe card */
 .pc{display:flex;flex-direction:column;gap:12px;padding:14px 16px 12px;border-radius:14px}

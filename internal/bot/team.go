@@ -340,10 +340,7 @@ func (a *Agent) execCall(ctx context.Context, speaker model.Bot, creds credentia
 		return a.recallCall(ctx, speaker, call)
 	case "panel":
 		if !a.commandsPanel(ctx, speaker) {
-			if isDirect(ctx) {
-				return "独立对话里只有主控可以直接改管理面板，请用 ask_agent 请 main 协助"
-			}
-			return "只有主控可以直接改管理面板"
+			return "协作任务里不能直接改管理面板，把需要改的内容写进汇报，由对话里的 Bot 来改"
 		}
 		ev := a.panelAct(ctx, speaker, call)
 		if tr != nil {
@@ -352,10 +349,7 @@ func (a *Agent) execCall(ctx context.Context, speaker model.Bot, creds credentia
 		return ev.Output
 	case "install_probe":
 		if !a.commandsPanel(ctx, speaker) {
-			if isDirect(ctx) {
-				return "独立对话里只有主控可以安装探针，请用 ask_agent 请 main 协助"
-			}
-			return "只有主控可以安装探针"
+			return "协作任务里不能安装探针，把需要安装的服务器写进汇报，由对话里的 Bot 来装"
 		}
 		ev := a.installProbe(ctx, speaker.ID, call)
 		if tr != nil {
@@ -626,13 +620,9 @@ func (a *Agent) directPrompt(ctx context.Context, bot model.Bot, serverID string
 	b.WriteString(promptAskUser)
 	b.WriteString(promptRequestSecret)
 	b.WriteString(promptConnect)
-	if a.commandsPanel(ctx, bot) {
-		b.WriteString(promptPanel)
-		b.WriteString(promptDevelopLeader)
-		b.WriteString(promptProbe)
-	} else {
-		b.WriteString(promptNoPanelSource)
-	}
+	b.WriteString(promptPanel)
+	b.WriteString(promptDevelopLeader)
+	b.WriteString(promptProbe)
 	writeExtra(&b, bot)
 	a.writeHelpers(&b, ctx, bot.ID)
 	a.writeMailbox(&b, ctx, bot, false)
@@ -641,9 +631,7 @@ func (a *Agent) directPrompt(ctx context.Context, bot model.Bot, serverID string
 	a.writeSecrets(&b, ctx)
 	a.writeServers(&b, ctx, serverID)
 	a.writeAssets(&b, bot)
-	if a.commandsPanel(ctx, bot) {
-		a.writeDevModules(&b)
-	}
+	a.writeDevModules(&b)
 	return b.String()
 }
 

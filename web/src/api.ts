@@ -183,9 +183,15 @@ function mapServer(item: ServerJSON): Host {
 export type ServiceItem = {kind: 'systemd' | 'docker' | 'ports'; name: string; state: string; detail: string; image?: string; ports?: string};
 export type ServiceSource = {status: 'ok' | 'error' | 'unavailable'; detail: string; truncated: boolean};
 export type ServiceView = {server_id: string; status: 'pending' | 'ok' | 'partial' | 'failed'; collected_at?: string; attempted_at?: string; error?: string; items: ServiceItem[]; sources: Record<string, ServiceSource>};
+export type WatchTarget = {kind: ServiceItem['kind']; name: string};
+export type WatchState = 'pending' | 'ok' | 'fault' | 'missing' | 'unknown';
+export type WatchStatus = WatchTarget & {server_id: string; state: WatchState; detail: string; checked_at?: string; changed_at?: string};
+export type ServiceWatch = {interval_seconds: number; servers: Record<string, WatchTarget[]>; status: WatchStatus[]};
 
 export const api = {
  async services():Promise<{nodes:ServiceView[]}>{return call('/api/services');},
+ async serviceWatch():Promise<ServiceWatch>{return call('/api/services/watch');},
+ async saveServiceWatch(body:{interval_seconds:number;servers:Record<string,WatchTarget[]>}):Promise<ServiceWatch>{return call('/api/services/watch',{method:'PUT',body:JSON.stringify(body)});},
  async scanServices(id:string):Promise<ServiceView>{return call('/api/servers/'+encodeURIComponent(id)+'/services/scan',{method:'POST',body:'{}'});},
  async oauth():Promise<OAuthView>{return call('/api/oauth');},
  async oauthStart(kind:string,consent_version:string,risk_acknowledged:boolean):Promise<OAuthLogin>{return call('/api/oauth/start',{method:'POST',body:JSON.stringify({kind,consent_version,risk_acknowledged})});},

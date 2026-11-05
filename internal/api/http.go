@@ -34,6 +34,7 @@ import (
 
 type Server struct {
 	Services      *services.Scanner
+	ServiceWatch  *services.Watch
 	OAuth         *providerlogin.Manager
 	Onboarding    *onboarding.Manager
 	PublicURL     string
@@ -110,6 +111,10 @@ func (s *Server) Handler() http.Handler {
 		}
 		s.Services = services.New(s.Store, s.Box, executor, sanitize)
 	}
+	if s.ServiceWatch == nil {
+		s.ServiceWatch, _ = services.NewWatch("", s.Box, s.Store)
+	}
+	s.ServiceWatch.Attach(s.Services)
 	if s.Agent != nil {
 		s.Agent.Services = s.Services
 	}
@@ -134,6 +139,8 @@ func (s *Server) Handler() http.Handler {
 	authed.PUT("/auth/profile", s.updateProfile)
 	authed.GET("/monitor", s.monitorView)
 	authed.GET("/services", s.serviceViews)
+	authed.GET("/services/watch", s.serviceWatch)
+	authed.PUT("/services/watch", s.saveServiceWatch)
 	authed.POST("/servers/:id/services/scan", s.scanServices)
 	authed.POST("/servers/:id/probe/token", s.probeToken)
 	authed.POST("/servers/:id/probe/province", s.probeProvince)

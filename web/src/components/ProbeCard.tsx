@@ -84,7 +84,7 @@ function IspRow({ name, history }: { name: string; history: (PingMetric | undefi
   </div>;
 }
 
-/** Running services from the 服务管理 snapshot: containers first, then systemd units. */
+/** Running services from the 服务监控 snapshot: containers first, then systemd units. */
 function serviceNames(view?: ServiceView) {
   if (!view || view.status === 'pending') return null;
   const items = view.items.filter(i => i.kind !== 'ports' && /^(running|active|up)/i.test(i.state || 'running'));

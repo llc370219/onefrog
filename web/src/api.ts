@@ -139,6 +139,8 @@ export type UpdateStatus = {
   install_dir?: string;
   project?: string;
   can_apply?: boolean;
+  /** True when the host helper cannot switch a stable install onto a beta image. */
+  helper_stale?: boolean;
 };
 
 async function call(path: string, init?: RequestInit) {

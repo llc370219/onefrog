@@ -195,7 +195,7 @@ func (s *Server) freshTarget(ctx context.Context) error {
 		return err
 	}
 	for _, b := range bots {
-		if b.ID != modulebuilder.BotID && b.ID != devmodule.BotID {
+		if b.ID != modulebuilder.BotID && b.ID != devmodule.BotID && b.ID != "main" {
 			return errors.New("目标已有 Bot，请使用全新实例")
 		}
 		mem, err := s.Store.ListBotMemories(ctx, b.ID)

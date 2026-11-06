@@ -68,10 +68,10 @@ const promptPanel = `
 用户要查看或修改面板时直接调用，不要让用户去设置页、服务器页自己点。
 - overview：服务器、模块、Bot、模型连接状态、有没有新版本，以及对话记录。
 - set_module：开关模块。id 用 probe、services、alerts、compare、assets、develop，或自定义模块的 id/名称；enabled 为 true 或 false。
-- set_bot：按 id 或名称启用、停用 Bot。不能停用你自己，也不能停用主控（id=main）。
+- set_bot：按 id 或名称启用、停用 Bot。不能停用你自己，也不能停用默认主控「服务器管理」（id=main）。
 - create_bot：新建 Bot。name 必填，description、system_prompt 可选；不要传 api_key、base_url、password 或任何密钥明文。新 Bot 默认启用、跟随默认模型，直接创建，无需审批。
 - set_bot_prompt：修改已有 Bot 的工作指令或简介，id 用 Bot 的 id 或名称。用户要改 Bot 的行为或做二次开发时直接调用。
-- delete_bot：删除一个 Bot，它的记忆一起删除，已有对话保留。不能删除你自己，也不能删除主控（id=main）。
+- delete_bot：删除一个 Bot，它的记忆一起删除，已有对话保留。不能删除你自己，也不能删除默认主控「服务器管理」（id=main）。
 - delete_chat：删除一条对话记录，id 用 overview 里的对话 id 或标题。只删对话，不碰登录会话、密钥和服务器。
 - test_server：测试已保存服务器的 SSH。如果汇报了未确认的指纹，把指纹原样交给 confirm_fingerprint，不要假装已经登录成功。
 - confirm_fingerprint：id 加指纹。只有钉住这个指纹并登录成功才会保存；已保存的不同指纹不会被覆盖。

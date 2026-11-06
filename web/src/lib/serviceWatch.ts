@@ -45,6 +45,28 @@ export function counts(status: Status[], server?: string) {
   };
 }
 
+export type GlanceRow = { server_id: string; kind: Kind; name: string; state: string; detail?: string; checked_at?: string };
+
+const glanceRank = (state: string) => state === 'fault' || state === 'missing' ? 0 : state === 'unknown' ? 1 : state === 'pending' ? 2 : 3;
+
+// Dashboard rows are the saved selection only. Servers with nothing selected,
+// and services that were detected but not ticked, stay off the card.
+export function glanceItems(selection: Selection, status: GlanceRow[], hostIds: string[]): GlanceRow[] {
+  const known = new Set(hostIds);
+  const found = new Map(status.map(s => [s.server_id + '\0' + watchKey(s), s]));
+  const rows: GlanceRow[] = [];
+  for (const [id, list] of Object.entries(selection)) {
+    if (!known.has(id)) continue;
+    for (const t of list) {
+      const hit = found.get(id + '\0' + watchKey(t));
+      rows.push(hit
+        ? { server_id: id, kind: t.kind, name: t.name, state: hit.state || 'pending', detail: hit.detail, checked_at: hit.checked_at }
+        : { server_id: id, kind: t.kind, name: t.name, state: 'pending' });
+    }
+  }
+  return rows.sort((a, b) => glanceRank(a.state) - glanceRank(b.state) || a.name.localeCompare(b.name, 'zh') || a.server_id.localeCompare(b.server_id));
+}
+
 export function intervalLabel(seconds: number) {
   return seconds < 60 ? seconds + ' 秒' : seconds < 3600 ? seconds / 60 + ' 分钟' : seconds / 3600 + ' 小时';
 }

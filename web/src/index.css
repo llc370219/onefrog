@@ -415,15 +415,27 @@ input:focus,select:focus,textarea:focus{border-color:color-mix(in srgb,var(--acc
 .dashboard .dashboard-grid>.card{flex:1 1 340px;min-width:0;display:flex;flex-direction:column}
 .dashboard .dashboard-grid>.card>.card-heading{flex-shrink:0}
 .dashboard .dashboard-grid>.module-probe,.dashboard .dashboard-grid>.module-develop,.dashboard .dashboard-grid>.module-custom{flex-basis:100%}
+.dashboard .dashboard-grid>.module-services{flex-basis:100%}
 .dashboard .module-alerts .alert-list{flex:1}
 .dashboard .module-alerts .empty{flex:1;justify-content:center}
 .dashboard .module-alerts .alert-foot{margin-top:auto}
 .dashboard .service-glance{flex:1;display:flex;flex-direction:column}
 .dashboard .service-glance-list{flex:1}
+.service-watch-glance{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:0 28px;padding:0 18px 6px}
+.service-watch-item{display:flex;align-items:center;gap:12px;width:100%;min-width:0;padding:13px 4px;text-align:left;background:transparent;border:0;border-top:1px solid var(--line);border-radius:0;color:inherit;cursor:pointer}
+.service-watch-item:hover{background:color-mix(in srgb,var(--ink) 1.4%,transparent)}
+.service-watch-item .status{flex-shrink:0;min-width:64px}
+.service-watch-main{min-width:0;flex:1}
+.service-watch-main strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:500}
+.service-watch-main small{display:block;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--fg4)}
+.dashboard .module-automations{container-type:inline-size}
+.dashboard .module-automations .asset-glance{flex:1;grid-template-columns:repeat(2,minmax(0,1fr));row-gap:20px;align-content:start}
+.dashboard .module-automations .asset-glance>p{align-self:end;grid-column:1/-1}
 .dashboard .module-assets .asset-glance{flex:1;grid-template-columns:repeat(2,minmax(0,1fr));row-gap:20px;align-content:start}
 .dashboard .module-assets .asset-glance>p{align-self:end}
 .dashboard .module-assets{container-type:inline-size}
 @container (min-width:640px){.dashboard .module-assets .asset-glance{grid-template-columns:repeat(4,minmax(0,1fr))}.dashboard .module-assets .asset-glance>p{grid-column:1/-1}}
+@container (min-width:640px){.dashboard .module-automations .asset-glance{grid-template-columns:repeat(4,minmax(0,1fr))}}
 .dashboard .metric{padding:14px 16px 12px}
 .dashboard .metric-value{font-size:26px;margin-top:12px}
 .dashboard .metric p{margin-top:8px}

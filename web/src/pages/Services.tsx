@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Activity, ChevronRight, Clock3, Eye, RefreshCw, Search, Server } from 'lucide-react';
-import { api, type Host, type ServiceItem, type ServiceView, type ServiceWatch, type WatchStatus } from '../api';
+import { Activity, Clock3, Eye, RefreshCw, Search, Server } from 'lucide-react';
+import { api, type Host, type ServiceItem, type ServiceView, type ServiceWatch } from '../api';
 import { Button, Empty, Notice, PageHeading } from '../components/ui';
-import { counts, intervalLabel, intervals, isWatched, sameSelection, stateNames as watchStateNames, stateTone, targetOf, toggle, watchKey, type Selection, type Target } from '../lib/serviceWatch';
+import { counts, glanceItems, intervalLabel, intervals, isWatched, sameSelection, stateNames as watchStateNames, stateTone, targetOf, toggle, watchKey, type Selection, type Target } from '../lib/serviceWatch';
 
 const sourceNames: Record<string, string> = { systemd: '系统服务', docker: 'Docker 容器', ports: '监听端口' };
 const stateNames: Record<string, string> = { active: '运行中', running: '运行中', listening: '监听中', inactive: '未运行', failed: '失败', exited: '已退出', dead: '未运行', paused: '已暂停', restarting: '重启中', created: '已创建', activating: '启动中', deactivating: '停止中', removing: '移除中' };
@@ -14,46 +14,29 @@ const pendingView = (id: string): ServiceView => ({ server_id: id, status: 'pend
 const errText = (e: unknown, fallback: string) => e instanceof Error ? e.message : fallback;
 const shortTime = (time?: string) => time ? new Date(time).toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : '—';
 const maxPerServer = 100;
+const kindNames: Record<string, string> = { systemd: '系统服务', docker: '容器', ports: '端口' };
 
 export function ServiceGlance({ hosts, onOpen }: { hosts: Host[]; onOpen: (id?: string) => void }) {
-  const [nodes, setNodes] = useState<ServiceView[]>([]);
-  const [watch, setWatch] = useState<WatchStatus[]>([]);
+  const [watch, setWatch] = useState<ServiceWatch | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
     let active = true;
-    const load = async () => {
-      const [s, w] = await Promise.allSettled([api.services(), api.serviceWatch()]);
-      if (!active) return;
-      if (s.status === 'fulfilled') { setNodes(s.value.nodes); setError(''); } else setError('服务检测快照暂时不可用');
-      if (w.status === 'fulfilled') setWatch(w.value.status || []);
-    };
+    const load = async () => { try { const w = await api.serviceWatch(); if (!active) return; setWatch(w); setError(''); } catch { if (active) setError('服务监控暂时不可用'); } };
     void load(); const timer = window.setInterval(() => { if (!document.hidden) void load(); }, 15000);
     return () => { active = false; clearInterval(timer); };
   }, []);
-  const inspected = nodes.filter(n => hosts.some(h => h.id === n.server_id) && n.collected_at).length;
-  const watchedAll = counts(watch.filter(s => hosts.some(h => h.id === s.server_id)));
+  const rows = glanceItems(watch?.servers || {}, watch?.status || [], hosts.map(h => h.id));
+  const summary = counts(rows);
+  const hostName = (id: string) => hosts.find(h => h.id === id)?.name || '未知服务器';
   return <div className="service-glance">
     {error && <div className="service-glance-error"><Notice error>{error}</Notice></div>}
-    <div className="service-glance-list">{hosts.map(h => {
-      const v = nodes.find(n => n.server_id === h.id) || pendingView(h.id);
-      const hasData = !!v?.collected_at;
-      const faults = v?.items.filter(issue).length || 0;
-      const watched = counts(watch, h.id);
-      const stale = hasData && Date.now() - Date.parse(v.collected_at!) > 120000;
-      const tone = v?.status === 'failed' || watched.bad ? 'danger' : v?.status === 'partial' || faults || stale || watched.unknown ? 'warn' : hasData || watched.ok ? 'ok' : 'pending';
-      const base = v?.status === 'failed' ? '检测失败' : !hasData ? '待检测' : faults ? `${faults} 项异常` : v?.status === 'partial' ? '部分可用' : stale ? '快照较早' : '检测完成';
-      const status = watched.total ? `${base} · 监控 ${watched.total} 项${watched.bad ? ` · ${watched.bad} 异常` : ''}` : base;
-      const updated = hasData ? new Date(v.collected_at!).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', hour12: false}) : '';
-      const count = (kind: ServiceItem['kind']) => hasData && v.sources[kind]?.status === 'ok'
-        ? v.items.filter(i => i.kind === kind && (kind === 'ports' || running(i))).length : '—';
-      return <button className="service-host-link" key={h.id} onClick={() => onOpen(h.id)} aria-label={`${h.name}，${status}，查看服务`}>
-        <span className="service-glance-identity"><span className="service-glance-icon"><Server size={16}/></span><span className="service-glance-name"><strong title={h.name}>{h.name}</strong><span className={`service-glance-status ${tone}`}><i/>{status}{updated && <time dateTime={v.collected_at} title={when(v.collected_at)}>更新于 {updated}</time>}</span></span></span>
-        <span className="service-glance-counts">{(['systemd', 'docker', 'ports'] as const).map((kind, index) => <span key={kind}><strong className={hasData ? '' : 'muted'}>{count(kind)}</strong><small>{['服务', '容器', '端口'][index]}</small></span>)}</span>
-        <ChevronRight className="service-glance-chevron" size={14}/>
-      </button>;
-    })}</div>
-    {!hosts.length && <Empty title="接入服务器后查看运行服务"/>}
-    {!!hosts.length && <footer className="service-glance-foot"><span>{hosts.length} 台服务器<span className="service-glance-separator">/</span>已检测 {inspected} 台</span><span>{watchedAll.total ? `监控 ${watchedAll.total} 项 · ${watchedAll.bad} 异常` : '只读检测'}</span></footer>}
+    {!watch && !error && <p className="card-foot">正在读取监控项…</p>}
+    {watch && !rows.length && <Empty title="还没有监控项" body="这里只显示你勾选的服务、容器或端口，不会列出全部服务器。" action={<Button onClick={() => onOpen()}>去选择</Button>}/>}
+    {!!rows.length && <div className="service-watch-glance">{rows.map(row => <button className="service-watch-item" key={row.server_id + watchKey(row)} onClick={() => onOpen(row.server_id)} aria-label={row.name + '，' + hostName(row.server_id) + '，' + (watchStateNames[row.state] || row.state)}>
+      <span className={'status ' + stateTone(row.state)}><i/>{watchStateNames[row.state] || row.state}</span>
+      <span className="service-watch-main"><strong title={row.name}>{row.name}</strong><small title={hostName(row.server_id)}>{hostName(row.server_id)} · {kindNames[row.kind] || row.kind}</small></span>
+    </button>)}</div>}
+    {!!rows.length && <footer className="service-glance-foot"><span>监控 {summary.total} 项{summary.bad ? ' · ' + summary.bad + ' 异常' : ''}</span><span>{watch ? '每 ' + intervalLabel(watch.interval_seconds) + '轮询' : ''}</span></footer>}
   </div>;
 }
 

@@ -12,7 +12,7 @@ import { AutomationGlance } from './Automations';
 import { ServiceGlance } from './Services';
 
 const moduleIcons = { probe: Server, services: Activity, alerts: TriangleAlert, compare: HardDrive, assets: Wallet, develop: Code2, automations: CalendarClock };
-const order = ['probe', 'alerts', 'services', 'compare', 'assets', 'automations', 'develop'];
+const order = ['probe', 'alerts', 'automations', 'assets', 'compare', 'services', 'develop'];
 const rank = (id: string) => { const idx = order.indexOf(id); return idx === -1 ? 99 : idx; };
 export default function Dashboard({ hosts, mods, history, bots, job, sending, onSelect, onRun, onAnswer, onProvide, onDecideApproval, onModules, onSettings, onServers, onBots, onHistory, onAssets, onOpenModule }: { hosts: Host[]; mods: Mod[]; history: Hist[]; bots: BotRow[]; job: PanelJob | null; sending: boolean; onSelect: (id: string) => void; onRun: (text: string, serverId?: string) => void; onAnswer: (values: string[], custom: string) => void; onProvide: (value: string) => void; onDecideApproval: (id: string, dec: ApprovalDecision) => void; onModules: () => void; onSettings: () => void; onServers: () => void; onBots: () => void; onHistory: (filter?: string, query?: string) => void; onAssets: () => void; onOpenModule: (id: string, serverId?: string) => void }) {
   const [probeNodes,setProbeNodes]=useState<ProbeNode[]>([]);

@@ -446,12 +446,12 @@ input:focus,select:focus,textarea:focus{border-color:color-mix(in srgb,var(--acc
 .dashboard .module-alerts .empty{padding-top:22px;padding-bottom:22px}
 .dashboard .module-alerts .alert-list{grid-template-columns:1fr}
 .probe-card-grid{grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));gap:12px}
-.dashboard .dashboard-probes{grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:12px}
+.dashboard .dashboard-probes{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 .dashboard .dashboard-probes>.pc{container-type:inline-size}
-/* Four hosts read better as 2×2 than as 3 + 1 at medium widths. */
+/* Dashboard probes: three per row, two when the panel is narrower, one on a phone. */
 .dashboard .module-probe{container:probes/inline-size}
-@container probes (max-width:1075px){.dashboard .dashboard-probes:has(>.pc:nth-child(4):last-child){grid-template-columns:repeat(2,minmax(0,1fr))}}
-@container probes (max-width:540px){.dashboard .dashboard-probes:has(>.pc:nth-child(4):last-child){grid-template-columns:1fr}}
+@container probes (max-width:980px){.dashboard .dashboard-probes{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@container probes (max-width:640px){.dashboard .dashboard-probes{grid-template-columns:1fr}}
 @container (max-width:300px){.dashboard .pc-net{grid-template-columns:1fr}.dashboard .pc-net>div+div{border-left:0;border-top:1px solid var(--line)}}
 
 /* Compact probe card */

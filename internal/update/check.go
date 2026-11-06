@@ -211,8 +211,11 @@ type Checker struct {
 	EnvDisabled bool
 	// SettingsDisabled reports the Settings toggle; nil means enabled.
 	SettingsDisabled func() bool
-	Interval         time.Duration
-	Now              func() time.Time
+	// SettingsChannel reports the channel chosen in Settings. Empty means
+	// follow Channel, which comes from OF_CHANNEL.
+	SettingsChannel func() string
+	Interval        time.Duration
+	Now             func() time.Time
 
 	mu          sync.Mutex
 	latest      *release
@@ -229,10 +232,29 @@ func (c *Checker) repo() string {
 }
 
 func (c *Checker) channel() string {
+	if c.SettingsChannel != nil {
+		switch c.SettingsChannel() {
+		case ChannelBeta:
+			return ChannelBeta
+		case ChannelStable:
+			return ChannelStable
+		}
+	}
 	if c.Channel == ChannelBeta {
 		return ChannelBeta
 	}
 	return ChannelStable
+}
+
+// Forget drops the cached release so the next check is not blocked by the
+// manual cooldown and cannot show a result from the other channel.
+func (c *Checker) Forget() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.latest = nil
+	c.lastErr = ""
+	c.checkedAt = time.Time{}
+	c.lastAttempt = time.Time{}
 }
 
 func (c *Checker) now() time.Time {

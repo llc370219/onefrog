@@ -234,6 +234,7 @@ export const api = {
   async checkUpdate():Promise<UpdateStatus>{return call("/api/update/check",{method:"POST",body:"{}"});},
   async applyUpdate():Promise<{ok:boolean;version:string;message:string}>{return call("/api/update/apply",{method:"POST",body:"{}"});},
   async setUpdateCheck(enabled:boolean):Promise<UpdateStatus>{return call("/api/settings/update",{method:"PUT",body:JSON.stringify({enabled})});},
+  async setUpdateChannel(channel:'stable'|'beta'):Promise<UpdateStatus>{return call("/api/settings/update",{method:"PUT",body:JSON.stringify({channel})});},
   async approvalMode():Promise<{mode:ApprovalMode;effective_mode:ApprovalMode;choice_required:boolean}>{return call("/api/settings/approval");},
   async setApprovalMode(mode:ApprovalMode):Promise<{mode:ApprovalMode}>{return call("/api/settings/approval",{method:"PUT",body:JSON.stringify({mode})});},
   async me():Promise<Profile> {

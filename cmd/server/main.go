@@ -108,6 +108,7 @@ func main() {
 		Current:          version.Version,
 		EnvDisabled:      !cfg.UpdateCheck,
 		SettingsDisabled: func() bool { return settings.Snapshot().UpdateCheckDisabled },
+		SettingsChannel:  func() string { return settings.Snapshot().UpdateChannel },
 		HTTP:             &http.Client{Timeout: 15 * time.Second},
 	}
 	if !update.ValidRepo(updates.Repo) && updates.Repo != "" {

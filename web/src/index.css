@@ -421,13 +421,16 @@ input:focus,select:focus,textarea:focus{border-color:color-mix(in srgb,var(--acc
 .dashboard .module-alerts .alert-foot{margin-top:auto}
 .dashboard .service-glance{flex:1;display:flex;flex-direction:column}
 .dashboard .service-glance-list{flex:1}
-.service-watch-glance{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:0 28px;padding:0 18px 6px}
-.service-watch-item{display:flex;align-items:center;gap:12px;width:100%;min-width:0;padding:13px 4px;text-align:left;background:transparent;border:0;border-top:1px solid var(--line);border-radius:0;color:inherit;cursor:pointer}
+.service-watch-glance{padding:0 8px 8px}
+.service-watch-head,.service-watch-item{display:grid;grid-template-columns:88px minmax(0,1.6fr) minmax(0,1.1fr) 72px;gap:12px;align-items:center;padding:10px 12px}
+.service-watch-head{font-size:11px;color:var(--fg4);border-bottom:1px solid var(--line)}
+.service-watch-item{width:100%;min-width:0;text-align:left;background:transparent;border:0;border-bottom:1px solid var(--line);border-radius:0;color:inherit;cursor:pointer}
 .service-watch-item:hover{background:color-mix(in srgb,var(--ink) 1.4%,transparent)}
-.service-watch-item .status{flex-shrink:0;min-width:64px}
-.service-watch-main{min-width:0;flex:1}
-.service-watch-main strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:500}
-.service-watch-main small{display:block;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--fg4)}
+.service-watch-item strong,.service-watch-host,.service-watch-kind{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.service-watch-item strong{font-size:13px;font-weight:500}
+.service-watch-host{font-size:12px;color:var(--fg2)}
+.service-watch-kind{font-size:11px;color:var(--fg4)}
+@media(max-width:720px){.service-watch-head{display:none}.service-watch-item{grid-template-columns:72px minmax(0,1fr) auto;grid-template-areas:'status name kind' 'status host kind'}.service-watch-item .status{grid-area:status}.service-watch-item strong{grid-area:name}.service-watch-host{grid-area:host}.service-watch-kind{grid-area:kind;align-self:center}}
 .dashboard .module-automations{container-type:inline-size}
 .dashboard .module-automations .asset-glance{flex:1;grid-template-columns:repeat(2,minmax(0,1fr));row-gap:20px;align-content:start}
 .dashboard .module-automations .asset-glance>p{align-self:end;grid-column:1/-1}

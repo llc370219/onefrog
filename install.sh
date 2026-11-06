@@ -303,9 +303,10 @@ ENV
   fi
 
   # Panel "立即升级" writes a release tag into install_dir/run. A root helper
-  # on the host pulls the image already pinned in docker-compose.yml. The tag
-  # is checked and then discarded; it is never executed and never selects a
-  # different image. Paths outside this safe set skip the helper.
+  # checks that tag, then pulls ghcr.io/llc370219/onefrog:latest or :beta.
+  # A beta tag switches the official image to :beta; a stable tag switches it
+  # back to :latest. The tag is never executed. Other images are left alone.
+  # Paths outside this safe set skip the helper.
   local click_upgrade=0 upgrade_env="" upgrade_vol=""
   if printf '%s' "$install_dir" | grep -Eq '^/[A-Za-z0-9._/-]+$' && ! printf '%s' "$install_dir" | grep -q '\.\.'; then
     click_upgrade=1
@@ -320,8 +321,8 @@ ENV
     cat > "${install_dir}/upgrade.sh" <<EOF
 #!/bin/sh
 # Written by the OneFrog installer. The panel writes a release tag to
-# run/upgrade; this script checks that tag and pulls the image already
-# pinned in docker-compose.yml. The tag is never used as a command.
+# run/upgrade. A beta tag switches the official image to :beta, a stable
+# tag switches it to :latest. The tag is never used as a command.
 set -eu
 dir='${install_dir}'
 project='${project}'
@@ -336,6 +337,21 @@ tag=\$(head -n 1 "\$trigger" | tr -d '\r\n ')
 rm -f "\$trigger"
 printf '%s' "\$tag" | grep -Eq '^v[0-9]{1,8}(\.[0-9]{1,8}){2}(-beta\.[0-9]{1,8})?\$' || exit 0
 [ "\${#tag}" -le 40 ] || exit 0
+case "\$tag" in
+  *-beta.*) channel=beta; img_tag=beta ;;
+  *) channel=stable; img_tag=latest ;;
+esac
+compose="\${dir}/docker-compose.yml"
+if [ -f "\$compose" ]; then
+  sed -E "s#^([[:space:]]*image:[[:space:]]*ghcr.io/llc370219/onefrog):[^[:space:]]+#\\\\1:\${img_tag}#" "\$compose" > "\${compose}.tmp" && mv "\${compose}.tmp" "\$compose"
+fi
+envf="\${dir}/.install.env"
+if [ -f "\$envf" ]; then
+  grep -v '^OF_CHANNEL=' "\$envf" > "\${envf}.tmp" || true
+  printf 'OF_CHANNEL=%s\n' "\$channel" >> "\${envf}.tmp"
+  chmod 600 "\${envf}.tmp"
+  mv "\${envf}.tmp" "\$envf"
+fi
 docker compose --project-directory "\$dir" -f "\$dir/docker-compose.yml" -p "\$project" pull
 docker compose --project-directory "\$dir" -f "\$dir/docker-compose.yml" -p "\$project" up -d --remove-orphans
 EOF

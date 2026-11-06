@@ -25,7 +25,11 @@ func TestUpdateStatusAndToggle(t *testing.T) {
 	var hits int
 	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits++
-		_, _ = io.WriteString(w, `{"tag_name":"v0.1.1","html_url":"https://github.com/llc370219/onefrog/releases/tag/v0.1.1","body":"notes"}`)
+		if strings.Contains(r.URL.RawQuery, "per_page") {
+			_, _ = io.WriteString(w, "[{\"tag_name\":\"v0.1.31-beta.1\",\"prerelease\":true,\"html_url\":\"https://github.com/llc370219/onefrog/releases/tag/v0.1.31-beta.1\"}]")
+			return
+		}
+		_, _ = io.WriteString(w, "{\"tag_name\":\"v0.1.1\",\"html_url\":\"https://github.com/llc370219/onefrog/releases/tag/v0.1.1\",\"body\":\"notes\"}")
 	}))
 	defer gh.Close()
 	mem := store.NewMemory()
@@ -38,7 +42,7 @@ func TestUpdateStatusAndToggle(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(web, "index.html"), []byte("<html>index</html>"), 0o600)
 	_ = os.WriteFile(filepath.Join(web, "favicon.ico"), []byte("ICO"), 0o600)
 	_ = os.WriteFile(filepath.Join(web, "manifest.webmanifest"), []byte(`{"name":"OneFrog"}`), 0o600)
-	checker := &update.Checker{Current: "v0.1.1", API: gh.URL, SettingsDisabled: func() bool { return settings.Snapshot().UpdateCheckDisabled }}
+	checker := &update.Checker{Current: "v0.1.1", API: gh.URL, SettingsDisabled: func() bool { return settings.Snapshot().UpdateCheckDisabled }, SettingsChannel: func() string { return settings.Snapshot().UpdateChannel }}
 	app := &Server{Store: mem, Box: box, Settings: settings, Updates: checker, WebDir: web, Agent: &bot.Agent{Store: mem, Box: box, SSH: &fakeSSH{}}}
 	srv := httptest.NewServer(app.Handler())
 	defer srv.Close()
@@ -75,6 +79,16 @@ func TestUpdateStatusAndToggle(t *testing.T) {
 	putJSON(t, client, srv.URL+"/api/settings/update", map[string]bool{"enabled": true}, 200, &s)
 	if !s.Enabled {
 		t.Fatalf("toggle on %+v", s)
+	}
+	putJSON(t, client, srv.URL+"/api/settings/update", map[string]string{"channel": "nope"}, 400, nil)
+	putJSON(t, client, srv.URL+"/api/settings/update", map[string]string{"channel": "beta"}, 200, &s)
+	if s.Channel != "beta" || s.Latest != "v0.1.31-beta.1" || !s.Available || settings.Snapshot().UpdateChannel != "beta" {
+		t.Fatalf("beta channel %+v", s)
+	}
+	getJSON(t, client, srv.URL+"/api/settings", &state)
+	putJSON(t, client, srv.URL+"/api/settings", state, 200, nil)
+	if settings.Snapshot().UpdateChannel != "beta" {
+		t.Fatal("saving settings reset the update channel")
 	}
 
 	for path, want := range map[string]string{"/favicon.ico": "ICO", "/manifest.webmanifest": "OneFrog", "/servers": "index"} {

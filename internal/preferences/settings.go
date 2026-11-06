@@ -84,6 +84,9 @@ type State struct {
 	Execution    Execution        `json:"execution"`
 	// UpdateCheckDisabled turns off the background release check (Settings → 关于).
 	UpdateCheckDisabled bool `json:"update_check_disabled,omitempty"`
+	// UpdateChannel is "stable" or "beta" when chosen in Settings.
+	// Empty follows OF_CHANNEL from the installer.
+	UpdateChannel string `json:"update_channel,omitempty"`
 }
 type Input struct {
 	DisabledBots []string         `json:"disabled_bots"`
@@ -167,7 +170,7 @@ func (m *Manager) Save(in Input) (State, error) {
 	if disabled == nil {
 		disabled = m.data.State.DisabledBots
 	}
-	next := diskState{State: State{DisabledBots: disabled, Default: in.Default, Worker: in.Worker, BotRoutes: in.BotRoutes, Approval: in.Approval, Execution: in.Execution, Providers: []Provider{}, UpdateCheckDisabled: m.data.State.UpdateCheckDisabled}, Keys: map[string]string{}}
+	next := diskState{State: State{DisabledBots: disabled, Default: in.Default, Worker: in.Worker, BotRoutes: in.BotRoutes, Approval: in.Approval, Execution: in.Execution, Providers: []Provider{}, UpdateCheckDisabled: m.data.State.UpdateCheckDisabled, UpdateChannel: m.data.State.UpdateChannel}, Keys: map[string]string{}}
 	seen := map[string]bool{}
 	for _, req := range in.Providers {
 		p := req.Provider
@@ -561,6 +564,22 @@ func (m *Manager) SetUpdateCheck(enabled bool) error {
 	defer m.mu.Unlock()
 	next := diskState{State: clone(m.data.State), Keys: m.data.Keys}
 	next.State.UpdateCheckDisabled = !enabled
+	if err := m.persist(next); err != nil {
+		return err
+	}
+	m.data = next
+	return nil
+}
+
+// SetUpdateChannel remembers whether Settings follows stable or beta releases.
+func (m *Manager) SetUpdateChannel(channel string) error {
+	if channel != "stable" && channel != "beta" {
+		return errors.New("更新渠道只能是 stable 或 beta")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	next := diskState{State: clone(m.data.State), Keys: m.data.Keys}
+	next.State.UpdateChannel = channel
 	if err := m.persist(next); err != nil {
 		return err
 	}

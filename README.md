@@ -2,6 +2,8 @@
 
 <p align="center"><img src="web/public/assets/onefrog-logo-readme.png" width="96" alt="OneFrog logo"></p>
 
+<p align="center"><a href="https://t.me/+pKQYEaxzidU4ZjZh"><img src="https://img.shields.io/badge/Telegram-%E4%BA%A4%E6%B5%81%E7%BE%A4-26A5E4?logo=telegram&logoColor=white" alt="Telegram 交流群"></a></p>
+
 自托管的 AI 运维面板：通过对话管理服务器、Bot、密钥保险箱和自定义模块，执行过程、交互选项与审批结果都留在面板中。
 
 [安装使用](#安装使用) · [文档导航](docs/README.md) · [参与开发](CONTRIBUTING.md) · [正式版](https://github.com/llc370219/onefrog/releases/latest) · [English](docs/README.en.md)
@@ -59,7 +61,8 @@ OneFrog 能在已接入的服务器执行命令。建议使用权限受限的 SS
 
 ## 社区
 
-[LINUX DO](https://linux.do/) — 真诚、友善、团结、专业的技术社区。
+- [Telegram 交流群](https://t.me/+pKQYEaxzidU4ZjZh)：使用交流、问题求助和新版本讨论。
+- [LINUX DO](https://linux.do/)：真诚、友善、团结、专业的技术社区。
 
 ## English
 

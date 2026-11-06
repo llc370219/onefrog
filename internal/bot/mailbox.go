@@ -155,15 +155,20 @@ func NewMailbox() *Mailbox {
 func (m *Mailbox) Wait() { m.wg.Wait() }
 
 func (m *Mailbox) enqueue(job mailJob) {
+	done, err := job.agent.Gate.Enter()
+	if err != nil {
+		return
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.queue[job.botID] = append(m.queue[job.botID], job)
 	if m.running[job.botID] {
+		done()
 		return
 	}
 	m.running[job.botID] = true
 	m.wg.Add(1)
-	go m.drain(job.botID)
+	go func() { defer done(); m.drain(job.botID) }()
 }
 
 func (m *Mailbox) drain(botID string) {

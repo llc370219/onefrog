@@ -6,6 +6,7 @@ import { approvalRuleKey } from './components/ApprovalCard';
 import { Button, Field, IconButton, Modal, Notice } from './components/ui';
 import { RoutePicker } from "./components/ModelPicker";
 import SettingsPanel from "./pages/Settings";
+import BackupMigration, { migrationStatus, type MigrationStatus } from './components/BackupMigration';
 import AccountDialog, { Avatar } from './components/AccountDialog';
 import SetupCredentials from './components/SetupCredentials';
 import ApprovalChoice from './components/ApprovalChoice';
@@ -74,6 +75,8 @@ export default function App() {
   const [botModelsLoading,setBotModelsLoading] = useState(false);
   const [formError,setFormError] = useState(''); const [pageError,setPageError] = useState(''); const [notice,setNotice] = useState('');
   const [loading,setLoading] = useState(false); const [busy,setBusy] = useState(false);
+  const [migration,setMigration] = useState<MigrationStatus|null>(null);
+  const [apiPrompt,setApiPrompt] = useState(false);
   const [switching,setSwitching] = useState(''); const [testing,setTesting] = useState(''); const [rollback,setRollback] = useState('');
   const [draft,setDraft] = useState(''); const [lines,setLines] = useState<ChatLine[]>([]); const [session,setSession] = useState(''); const [sending,setSending] = useState(false); const [groupPick,setGroupPick] = useState<string[]>([]);
   const sendingRef = useRef(false); const [mobileNav,setMobileNav] = useState(false);
@@ -88,13 +91,17 @@ export default function App() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      const migrationState=await migrationStatus();setMigration(migrationState);
+      if(migrationState.paused)return;
       const [h,m,r,s,b,c,settings] = await Promise.all([api.servers(),api.modules(),api.history(),api.secrets(),api.bots(),api.sessions(),api.settings()]);setChatConfig(settings);
+      if(!settings.providers.some(p=>p.enabled)&&localStorage.getItem('onefrog-api-prompt')!=='dismissed')setApiPrompt(true);
       setHosts(h);setMods(m);setHistory(r);setSecrets(s);setBots(b);setSessions(c);setActiveBot(cur=>b.some(x=>x.id===cur)?cur:defaultBot(b));
       setSelected(cur => cur === '' || h.some(item => item.id === cur) ? cur : '');
       setUpdated(new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})); setPageError('');
     } catch(err) {setPageError(message(err));} finally {setLoading(false);}
   },[]);
   useEffect(() => {api.me().then(res => {setUser(res.username);setProfile(res); setAuthed(true); if(!res.must_change_credentials) return load();}).catch(() => setAuthed(false));},[load]);
+  useEffect(()=>{if(!authed||profile.must_change_credentials)return;const timer=setInterval(()=>{migrationStatus().then(s=>setMigration(old=>{if(old?.paused&&!s.paused)window.setTimeout(()=>location.reload(),100);return s;})).catch(()=>{});},3000);return()=>clearInterval(timer);},[authed,profile.must_change_credentials]);
   const [updateStatus,setUpdateStatus]=useState<UpdateStatus|null>(null);
   useEffect(()=>{if(!authed||profile.must_change_credentials)return;let active=true;const get=()=>api.updateStatus().then(s=>{if(active)setUpdateStatus(s);}).catch(()=>{});get();const timer=window.setInterval(get,60*60*1000);return()=>{active=false;window.clearInterval(timer);};},[authed,profile.must_change_credentials]);
   useEffect(() => {if(!notice) return; const timer = window.setTimeout(() => setNotice(''),4500); return () => clearTimeout(timer);},[notice]);
@@ -426,6 +433,7 @@ export default function App() {
   if(authed === null) return <div className="boot-screen"><LoaderCircle className="spin" size={23}/><span>连接工作台…</span></div>;
   if(!authed) return <div className="login-screen"><ThemeToggle className="login-theme"/><div className="login-brand"><span className="brand-icon"><img src="/assets/onefrog-logo.png" alt=""/></span><strong>OneFrog<span>OPERATIONS CONSOLE</span></strong></div><form className="login-card" onSubmit={e => {e.preventDefault();login();}}><h1>进入你的运维工作台</h1><p>服务器、Bot 和密钥，一个地方管理。</p><Field label="账号"><input value={user} autoComplete="username" onChange={e => setUser(e.target.value)} required placeholder="管理员账号"/></Field><Field label="密码"><input type="password" value={password} autoComplete="current-password" onChange={e => setPassword(e.target.value)} required placeholder="输入登录密码"/></Field>{formError && <Notice error>{formError}</Notice>}<Button type="submit" variant="primary" busy={busy}>进入工作台<ArrowRight size={16}/></Button><small><LockKeyhole size={12}/>自托管 · 你的基础设施，由你掌控</small></form><footer>ONEFROG / OPERATIONS, SIMPLIFIED.</footer></div>;
   if(profile.must_change_credentials) return <SetupCredentials profile={profile} initialPassword={password} onDone={async next => {setProfile(next);setUser(next.username);setPassword(''); if(!next.must_change_credentials) await load();}} onLogout={logout}/>;
+  if(migration?.paused&&dialog!=='settings') return <div className="migration-landing"><header><h1>备份与迁移</h1><div className="migration-actions"><ThemeToggle/><Button onClick={logout}>退出登录</Button></div></header><BackupMigration/></div>;
   if(profile.approval_choice_required) return <ApprovalChoice onDone={async mode => {setProfile({...profile,approval_choice_required:false});setChatConfig(c=>c?{...c,approval:{...c.approval,mode}}:c);await load();}} onLogout={logout}/>;
 
   const currentLabel = navigation.find(n => n.id === view)?.label;
@@ -454,6 +462,7 @@ export default function App() {
     <ApprovalDialog/>
     {dialog === 'account' && <AccountDialog profile={profile} onClose={close} onSaved={p=>{setProfile(p);setUser(p.username);setNotice('账号资料已保存');setDialog(null);}}/>}
     {dialog === 'settings' && <SettingsPanel bots={bots} onUpdateStatus={setUpdateStatus} onClose={close} onSaved={() => {setNotice('设置已保存，下一轮任务生效');load();}}/>}
+    {apiPrompt && dialog !== 'settings' && <Modal title="要先配置模型 API 吗？" note="还没有可用的 API 渠道。配好之后，Bot 才能对话和执行任务。之后也可以从左侧「设置」进入。" cancel="稍后再说" confirm="去配置" onClose={()=>{localStorage.setItem('onefrog-api-prompt','dismissed');setApiPrompt(false);}} onSubmit={()=>{localStorage.setItem('onefrog-api-prompt','dismissed');setApiPrompt(false);openSettings();}}/>}
     {dialog === 'modules' && <Modal title="定制面板模块" note="选择你想持续关注的内容，开关即时保存。" onClose={close} confirm="完成"><div className="module-picker">{mods.map(m => <div key={m.id}><span className="host-icon"><Blocks size={16}/></span><div><strong>{m.name}</strong><small>{m.desc}</small></div><button className={`switch ${m.enabled ? 'on' : ''}`} role="switch" aria-checked={m.enabled} aria-label={`显示${m.name}`} disabled={!!switching} onClick={() => toggle(m.id)}><i/></button></div>)}</div></Modal>}
     {dialog === 'server' && <AddServer onClose={close} onChanged={load} onDone={id=>{setSelected(id);setAddedServer(id);setNotice('服务器接入状态已更新');load();}}/>}
     {dialog === 'secret' && <Modal title="添加密钥" note="在这里录入敏感内容，Bot 只能按名称引用。" onClose={close} onSubmit={submit} busy={busy} error={formError}><Field label="密钥名称" hint="命令引用格式：{{secret:名称}}"><input required value={form.name} placeholder="例如 production-db-password" onChange={e => setForm({...form,name:e.target.value})}/></Field><SecretSource form={form} onForm={setForm}/><Field label="用途说明"><input value={form.description} placeholder="例如：生产数据库连接凭据" onChange={e => setForm({...form,description:e.target.value})}/></Field><div className="inline-help"><LockKeyhole size={15}/>关闭窗口会清空未保存的敏感内容。</div></Modal>}{dialog === 'rotate' && <Modal title="轮换密钥" note={'替换「' + form.name + '」的密文。名称不变，明文不会显示。'} onClose={close} onSubmit={submit} busy={busy} error={formError} confirm="保存新内容"><Field label="密钥名称"><input value={form.name} readOnly/></Field><SecretSource form={form} onForm={setForm} rotate/><Field label="用途说明"><input value={form.description} placeholder="可选，留空则清空说明" onChange={e => setForm({...form,description:e.target.value})}/></Field><div className="inline-help"><LockKeyhole size={15}/>提交后输入框会清空。模型仍然只能看到名称。</div></Modal>}

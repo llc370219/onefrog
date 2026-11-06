@@ -89,6 +89,11 @@ func (a *Agent) allowedBot(ctx context.Context, id string) bool {
 	return true
 }
 func (a *Agent) ReplyWithOptions(ctx context.Context, botID, serverID, sessionID, content string, opt Options, sink func(Step)) (Result, error) {
+	done, gateErr := a.Gate.Enter()
+	if gateErr != nil {
+		return Result{}, gateErr
+	}
+	defer done()
 	if a.Settings != nil {
 		copy := *a
 		copy.Settings = a.Settings.Frozen()

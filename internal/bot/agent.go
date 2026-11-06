@@ -16,6 +16,7 @@ import (
 	"onefrog/internal/attachment"
 	"onefrog/internal/audit"
 	"onefrog/internal/devmodule"
+	"onefrog/internal/maintenance"
 	"onefrog/internal/model"
 	"onefrog/internal/modulebuilder"
 	"onefrog/internal/onboarding"
@@ -33,6 +34,7 @@ type Exec interface {
 }
 
 type Agent struct {
+	Gate       *maintenance.Gate
 	Services   *services.Scanner
 	OAuth      *providerlogin.Manager
 	Files      *attachment.Manager

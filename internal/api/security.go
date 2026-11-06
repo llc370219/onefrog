@@ -45,7 +45,7 @@ func stateChanging(method string) bool {
 // a per-node bearer token instead of the browser cookie and are exempt.
 func requireCSRF(c *gin.Context) {
 	r := c.Request
-	if !stateChanging(r.Method) || r.URL.Path == "/api/probe/report" {
+	if !stateChanging(r.Method) || r.URL.Path == "/api/probe/report" || r.URL.Path == "/api/migration/receive" {
 		c.Next()
 		return
 	}
@@ -58,7 +58,7 @@ func requireCSRF(c *gin.Context) {
 		return
 	}
 	mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if mt == "application/json" || (mt == "multipart/form-data" && r.URL.Path == "/api/attachments") {
+	if mt == "application/json" || (mt == "multipart/form-data" && (r.URL.Path == "/api/attachments" || r.URL.Path == "/api/backup/restore")) {
 		c.Next()
 		return
 	}
@@ -188,7 +188,7 @@ func trustedProxies(raw string) []string {
 
 // limitBody caps request bodies for routes that do not set their own limit.
 func limitBody(c *gin.Context) {
-	if c.Request.Body != nil && c.Request.URL.Path != "/api/attachments" {
+	if c.Request.Body != nil && c.Request.URL.Path != "/api/attachments" && c.Request.URL.Path != "/api/backup/restore" && c.Request.URL.Path != "/api/migration/receive" {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4<<20)
 	}
 	c.Next()

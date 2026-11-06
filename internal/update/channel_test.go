@@ -67,6 +67,26 @@ func TestStableChannelIsDefault(t *testing.T) {
 	}
 }
 
+func TestSettingsChannelOverridesInstallChannel(t *testing.T) {
+	var path string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.RequestURI()
+		_, _ = w.Write([]byte("[{\"tag_name\":\"v0.1.31-beta.1\",\"prerelease\":true,\"html_url\":\"https://github.com/llc370219/onefrog/releases/tag/v0.1.31-beta.1\"}]"))
+	}))
+	defer srv.Close()
+	chosen := ChannelBeta
+	c := &Checker{Current: "v0.1.30", Channel: ChannelStable, API: srv.URL, SettingsChannel: func() string { return chosen }}
+	s, err := c.CheckNow(context.Background())
+	if err != nil || s.Channel != ChannelBeta || s.Latest != "v0.1.31-beta.1" || !s.Available || path != "/repos/llc370219/onefrog/releases?per_page=30" {
+		t.Fatalf("status %+v path %s err %v", s, path, err)
+	}
+	chosen = ""
+	c.Forget()
+	if s := c.Status(); s.Channel != ChannelStable || s.Latest != "" || s.CheckedAt != nil {
+		t.Fatalf("forget did not restore the install channel: %+v", s)
+	}
+}
+
 func TestNormalizeChannelAndTags(t *testing.T) {
 	for in, want := range map[string]string{"": ChannelStable, "Stable": ChannelStable, "latest": ChannelStable, "beta": ChannelBeta, "test": ChannelBeta} {
 		if got, ok := NormalizeChannel(in); !ok || got != want {

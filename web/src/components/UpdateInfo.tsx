@@ -109,7 +109,9 @@ export function AboutSection({ onStatus }: { onStatus?: (s: UpdateStatus) => voi
     {status.available && !status.can_apply && <Notice><strong>有新版本 {status.latest}。</strong>这次安装还不能在面板里点升级，请先执行下面的命令。装上之后，以后就可以点按钮。</Notice>}
     {status.available && !status.can_apply && <UpgradeHelp status={status}/>}
     {status.available && status.notes && <details className="update-notes"><summary>本次更新内容</summary><pre>{status.notes}</pre></details>}
-    <div className="settings-subheading"><h3>检查更新</h3><p>开启后，服务端在启动时和每 12 小时向 GitHub 查询一次 {status.repo} 的最新正式版本（只读，不发送你的数据，也不会自动安装）。有新版本时面板顶部会提示。</p></div>
+    <div className="settings-subheading"><h3>检查更新</h3><p>开启后，服务端在启动时和每 12 小时向 GitHub 查询一次 {status.repo}（只读，不发送你的数据，也不会自动安装）。{status.channel === 'beta' ? '当前是测试版，正式版和测试版都会提示。' : '当前是正式版，只提示正式发布，不会提示测试版。'}有新版本时面板顶部会提示。</p></div>
+    <div className="channel-choice" role="group" aria-label="更新渠道"><span>更新渠道</span><div><button type="button" aria-pressed={status.channel !== 'beta'} disabled={busy || !status.enabled} onClick={() => run(() => api.setUpdateChannel('stable'))}>正式版</button><button type="button" aria-pressed={status.channel === 'beta'} disabled={busy || !status.enabled} onClick={() => run(() => api.setUpdateChannel('beta'))}>测试版</button></div></div>
+    <p className="muted">选「测试版」后点「立即升级」。用旧安装脚本装的机器，第一次切换请重新运行安装命令，升级程序才会改镜像标签。</p>
     <div className="about-actions">
       <label className="enable-label"><span>自动检查更新</span><input type="checkbox" checked={status.disabled_by !== 'settings' && status.disabled_by !== 'env'} disabled={busy || status.disabled_by === 'env'} onChange={e => run(() => api.setUpdateCheck(e.target.checked))}/></label>
       <Button onClick={() => run(api.checkUpdate)} busy={busy} disabled={!status.enabled}><RefreshCw size={14}/>立即检查</Button>

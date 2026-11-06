@@ -5,6 +5,7 @@ import (
 	"errors"
 	"mime"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -52,18 +53,37 @@ func (s *Server) updateApply(c *gin.Context) {
 
 func (s *Server) putUpdateSetting(c *gin.Context) {
 	var req struct {
-		Enabled *bool `json:"enabled"`
+		Enabled *bool   `json:"enabled"`
+		Channel *string `json:"channel"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.Enabled == nil {
+	if err := c.ShouldBindJSON(&req); err != nil || (req.Enabled == nil && req.Channel == nil) {
 		fail(c, http.StatusBadRequest, "请求无效")
 		return
 	}
-	if err := s.Settings.SetUpdateCheck(*req.Enabled); err != nil {
-		fail(c, http.StatusInternalServerError, "保存失败")
-		return
+	if req.Channel != nil {
+		ch := strings.TrimSpace(*req.Channel)
+		if ch != update.ChannelStable && ch != update.ChannelBeta {
+			fail(c, http.StatusBadRequest, "更新渠道只能是 stable 或 beta")
+			return
+		}
+		if err := s.Settings.SetUpdateChannel(ch); err != nil {
+			fail(c, http.StatusInternalServerError, "保存失败")
+			return
+		}
+		s.Updates.Forget()
+	}
+	if req.Enabled != nil {
+		if err := s.Settings.SetUpdateCheck(*req.Enabled); err != nil {
+			fail(c, http.StatusInternalServerError, "保存失败")
+			return
+		}
 	}
 	status := s.Updates.Status()
-	if *req.Enabled && status.Enabled && status.CheckedAt == nil {
+	if req.Channel != nil && status.Enabled {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
+		defer cancel()
+		status, _ = s.Updates.CheckNow(ctx)
+	} else if req.Enabled != nil && *req.Enabled && status.Enabled && status.CheckedAt == nil {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()

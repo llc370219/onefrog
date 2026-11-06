@@ -32,10 +32,15 @@ export function ServiceGlance({ hosts, onOpen }: { hosts: Host[]; onOpen: (id?: 
     {error && <div className="service-glance-error"><Notice error>{error}</Notice></div>}
     {!watch && !error && <p className="card-foot">正在读取监控项…</p>}
     {watch && !rows.length && <Empty title="还没有监控项" body="这里只显示你勾选的服务、容器或端口，不会列出全部服务器。" action={<Button onClick={() => onOpen()}>去选择</Button>}/>}
-    {!!rows.length && <div className="service-watch-glance">{rows.map(row => <button className="service-watch-item" key={row.server_id + watchKey(row)} onClick={() => onOpen(row.server_id)} aria-label={row.name + '，' + hostName(row.server_id) + '，' + (watchStateNames[row.state] || row.state)}>
-      <span className={'status ' + stateTone(row.state)}><i/>{watchStateNames[row.state] || row.state}</span>
-      <span className="service-watch-main"><strong title={row.name}>{row.name}</strong><small title={hostName(row.server_id)}>{hostName(row.server_id)} · {kindNames[row.kind] || row.kind}</small></span>
-    </button>)}</div>}
+    {!!rows.length && <div className="service-watch-glance">
+      <div className="service-watch-head"><span>状态</span><span>监控项</span><span>服务器</span><span>类型</span></div>
+      {rows.map(row => <button className="service-watch-item" key={row.server_id + watchKey(row)} onClick={() => onOpen(row.server_id)} aria-label={row.name + '，' + hostName(row.server_id) + '，' + (watchStateNames[row.state] || row.state)}>
+        <span className={'status ' + stateTone(row.state)}><i/>{watchStateNames[row.state] || row.state}</span>
+        <strong title={row.name}>{row.name}</strong>
+        <span className="service-watch-host" title={hostName(row.server_id)}>{hostName(row.server_id)}</span>
+        <span className="service-watch-kind">{kindNames[row.kind] || row.kind}</span>
+      </button>)}
+    </div>}
     {!!rows.length && <footer className="service-glance-foot"><span>监控 {summary.total} 项{summary.bad ? ' · ' + summary.bad + ' 异常' : ''}</span><span>{watch ? '每 ' + intervalLabel(watch.interval_seconds) + '轮询' : ''}</span></footer>}
   </div>;
 }

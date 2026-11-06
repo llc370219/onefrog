@@ -34,6 +34,7 @@ import (
 )
 
 type Server struct {
+	Migration     *Migration
 	Services      *services.Scanner
 	ServiceWatch  *services.Watch
 	OAuth         *providerlogin.Manager
@@ -124,6 +125,15 @@ func (s *Server) Handler() http.Handler {
 	if s.Automations == nil {
 		s.Automations, _ = automation.New("", s.Box, s.Store)
 	}
+	if s.Migration != nil {
+		s.Automations.Gate = s.Migration.Gate
+		s.ServiceWatch.Gate = s.Migration.Gate
+		s.Onboarding.Gate = s.Migration.Gate
+		s.OAuth.Gate = s.Migration.Gate
+		if s.Agent != nil {
+			s.Agent.Gate = s.Migration.Gate
+		}
+	}
 	if s.Agent != nil {
 		agent := s.Agent
 		s.Automations.SetRunner(func(ctx context.Context, it automation.Automation) (string, string, error) {
@@ -144,6 +154,8 @@ func (s *Server) Handler() http.Handler {
 	}
 	api := r.Group("/api")
 	api.Use(limitBody, requireCSRF)
+	api.Use(s.migrationGate)
+	api.POST("/migration/receive", s.transferReceive)
 	api.GET("/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 	api.POST("/probe/report", s.probeReport)
 	api.GET("/probe/agent.py", s.probeScript)
@@ -152,6 +164,14 @@ func (s *Server) Handler() http.Handler {
 	authed := api.Group("")
 	authed.Use(s.requireAuth)
 	authed.Use(s.requireFreshCredentials)
+	authed.GET("/migration/status", s.migrationStatus)
+	authed.POST("/migration/resume", s.migrationResume)
+	authed.POST("/migration/code", s.receiveCode)
+	authed.POST("/migration/send", s.transferSend)
+	authed.POST("/migration/check", s.migrationCheckConnections)
+	authed.POST("/migration/probes", s.migrationUpdateProbes)
+	authed.POST("/backup/export", s.backupExport)
+	authed.POST("/backup/restore", s.backupRestore)
 	authed.GET("/auth/me", s.me)
 	authed.PUT("/auth/profile", s.updateProfile)
 	authed.GET("/monitor", s.monitorView)

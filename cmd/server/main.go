@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"onefrog/internal/api"
@@ -12,6 +14,8 @@ import (
 	"onefrog/internal/bot"
 	"onefrog/internal/config"
 	"onefrog/internal/devmodule"
+	"onefrog/internal/maintenance"
+	"onefrog/internal/migration"
 	"onefrog/internal/monitor"
 	"onefrog/internal/onboarding"
 	"onefrog/internal/preferences"
@@ -25,10 +29,17 @@ import (
 	"onefrog/internal/version"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
 func main() {
+	for {
+		run()
+	}
+}
+
+func run() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal(err)
@@ -37,11 +48,21 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	db, err := openStore(ctx, cfg, box)
 	if err != nil {
 		log.Fatal(err)
 	}
+	if pg, ok := db.(*store.Postgres); ok {
+		defer pg.Close()
+	}
+	gate, err := maintenance.New(cfg.DataDir)
+	if err != nil {
+		log.Fatal(err)
+	}
+	reload := make(chan struct{})
+	var reloadOnce sync.Once
 	if err := boot.Prepare(ctx, db, cfg); err != nil {
 		log.Fatal(err)
 	}
@@ -126,6 +147,7 @@ func main() {
 		log.Fatal(err)
 	}
 	app := &api.Server{
+		Migration:    &api.Migration{Root: cfg.DataRoot, Dir: cfg.DataDir, Key: cfg.MasterKey, Driver: cfg.Driver, PublicURL: cfg.PublicURL, Gate: gate, Restart: func() { reloadOnce.Do(func() { close(reload) }) }},
 		ServiceWatch: watch,
 		Automations:  autos,
 		Updates:      updates,
@@ -177,8 +199,21 @@ func main() {
 		IdleTimeout:    120 * time.Second,
 		MaxHeaderBytes: 64 << 10,
 	}
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatal(err)
+	serverErr := make(chan error, 1)
+	go func() { serverErr <- srv.ListenAndServe() }()
+	select {
+	case err := <-serverErr:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+	case <-reload:
+		cancel()
+		stop, stopCancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer stopCancel()
+		if err := srv.Shutdown(stop); err != nil {
+			log.Fatal(err)
+		}
+		<-serverErr
 	}
 }
 
@@ -206,6 +241,22 @@ func openStore(ctx context.Context, cfg config.Config, box *secret.Box) (store.S
 	if err := pg.Migrate(ctx, store.SchemaSQL); err != nil {
 		pg.Close()
 		return nil, err
+	}
+	if cfg.DataDir != cfg.DataRoot {
+		raw, e := os.ReadFile(filepath.Join(cfg.DataDir, migration.DatabaseName))
+		if e != nil {
+			pg.Close()
+			return nil, e
+		}
+		var dump store.DatabaseBackup
+		if e = json.Unmarshal(raw, &dump); e != nil {
+			pg.Close()
+			return nil, e
+		}
+		if e = pg.ImportDatabaseOnce(ctx, filepath.Base(cfg.DataDir), dump); e != nil {
+			pg.Close()
+			return nil, e
+		}
 	}
 	return pg, nil
 }

@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"onefrog/internal/id"
+	"onefrog/internal/maintenance"
 	"onefrog/internal/secret"
 	"os"
 	"path/filepath"
@@ -134,6 +135,7 @@ type pending struct {
 	cancel                 context.CancelFunc
 }
 type Manager struct {
+	Gate        *maintenance.Gate
 	mu          sync.Mutex
 	path        string
 	box         *secret.Box
@@ -396,6 +398,11 @@ func (m *Manager) Cancel(owner, id string) error {
 	return nil
 }
 func (m *Manager) Complete(owner, id, callback string) error {
+	done, gateErr := m.Gate.Enter()
+	if gateErr != nil {
+		return gateErr
+	}
+	defer done()
 	m.mu.Lock()
 	p := m.pending[id]
 	if p == nil || p.owner != owner || p.Status != "pending" || time.Now().After(p.Expires) {

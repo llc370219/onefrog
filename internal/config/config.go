@@ -3,12 +3,14 @@ package config
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"onefrog/internal/migration"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
 type Config struct {
+	DataRoot             string
 	PublicURL            string
 	Addr                 string
 	DatabaseURL          string
@@ -57,10 +59,27 @@ func Load() (Config, error) {
 		UpdateRepo:           strings.TrimSpace(os.Getenv("OF_UPDATE_REPO")),
 		Channel:              strings.TrimSpace(os.Getenv("OF_CHANNEL")),
 	}
+	root, err := filepath.Abs(cfg.DataDir)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.DataRoot = root
+	cfg.DataDir, err = migration.Resolve(root)
+	if err != nil {
+		return Config{}, err
+	}
 	if cfg.DatabaseURL == "" && cfg.Driver == "postgres" {
 		cfg.DatabaseURL = "postgres://onefrog:onefrog@127.0.0.1:5432/onefrog?sslmode=disable"
 	}
-	key, err := masterKey()
+	var key []byte
+	if cfg.DataDir != cfg.DataRoot {
+		key, err = os.ReadFile(filepath.Join(cfg.DataDir, "master.key"))
+		if err == nil && len(key) != 32 {
+			err = errString("恢复数据主密钥无效")
+		}
+	} else {
+		key, err = masterKey()
+	}
 	if err != nil {
 		return Config{}, err
 	}

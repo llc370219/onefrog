@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"onefrog/internal/id"
+	"onefrog/internal/maintenance"
 	"onefrog/internal/model"
 	"onefrog/internal/secret"
 	"onefrog/internal/store"
@@ -109,6 +110,7 @@ type bookFile struct {
 
 // Book stores automations (encrypted on disk) and runs them when due.
 type Book struct {
+	Gate  *maintenance.Gate
 	path  string
 	box   *secret.Box
 	store store.Store
@@ -293,6 +295,9 @@ func (b *Book) ForgetServer(serverID string) error {
 
 // RunNow starts one run immediately, regardless of the schedule.
 func (b *Book) RunNow(id string) (Automation, error) {
+	if b.Gate.Paused() {
+		return Automation{}, maintenance.ErrPaused
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	it, ok := b.items[id]
@@ -326,6 +331,11 @@ func (b *Book) Run(ctx context.Context) {
 }
 
 func (b *Book) dispatchDue() time.Duration {
+	done, err := b.Gate.Enter()
+	if err != nil {
+		return time.Second
+	}
+	defer done()
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	now := b.now()
@@ -357,6 +367,10 @@ func (b *Book) dispatchDue() time.Duration {
 }
 
 func (b *Book) startLocked(it Automation, scheduled bool) Automation {
+	done, err := b.Gate.Enter()
+	if err != nil {
+		return it
+	}
 	now := b.now()
 	b.running[it.ID] = true
 	it.LastStatus = StatusRunning
@@ -370,7 +384,7 @@ func (b *Book) startLocked(it Automation, scheduled bool) Automation {
 		log.Printf("automation: save: %v", err)
 	}
 	b.wg.Add(1)
-	go b.execute(b.base, it)
+	go func() { defer done(); b.execute(b.base, it) }()
 	return it
 }
 

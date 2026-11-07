@@ -9,10 +9,12 @@ import (
 	"onefrog/internal/audit"
 	"onefrog/internal/model"
 	"onefrog/internal/preferences"
+	"onefrog/internal/workspace"
 	"strings"
 )
 
 type Options struct {
+	Workspace      *workspace.Target  `json:"workspace,omitempty"`
 	ApprovalRoute  *preferences.Route `json:"approval_route,omitempty"`
 	ModelRoute     *preferences.Route `json:"model_route,omitempty"`
 	ExcludedBotIDs []string           `json:"excluded_bot_ids,omitempty"`
@@ -37,6 +39,7 @@ type Options struct {
 // ApprovalRequest is shown to the operator before a command runs.
 type ApprovalRequest struct {
 	ID         string `json:"id"`
+	SingleUse  bool   `json:"single_use,omitempty"`
 	BotID      string `json:"bot_id"`
 	BotName    string `json:"bot_name,omitempty"`
 	ServerID   string `json:"server_id"`

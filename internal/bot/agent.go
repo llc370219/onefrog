@@ -25,6 +25,7 @@ import (
 	"onefrog/internal/services"
 	"onefrog/internal/store"
 	"onefrog/internal/usage"
+	"onefrog/internal/workspace"
 )
 
 type Exec interface {
@@ -32,6 +33,7 @@ type Exec interface {
 }
 
 type Agent struct {
+	Workspace  *workspace.Service
 	Gate       *maintenance.Gate
 	Services   *services.Scanner
 	OAuth      *providerlogin.Manager
@@ -139,6 +141,21 @@ func (a *Agent) replyTurn(ctx context.Context, botID, serverID, sessionID, conte
 			return Result{}, errors.New("问题不存在")
 		}
 	}
+	opt := options(ctx)
+	if opt.Workspace != nil && sessionID == "" {
+		if opt.Mode == "direct" || isAutomation(ctx) || isInbox(ctx) {
+			return Result{}, errors.New("代码任务需要单独的项目会话")
+		}
+		if _, err := a.Workspace.Server(ctx, *opt.Workspace); err != nil {
+			return Result{}, err
+		}
+	}
+	if opt.Workspace != nil && sessionID != "" {
+		// A workspace can only be assigned to a fresh, server-generated session.
+		if _, err := a.Store.GetChatSession(ctx, sessionID); err != nil {
+			return Result{}, errors.New("找不到代码工作区会话")
+		}
+	}
 	title := clip(content, 24)
 	if options(ctx).Mode != "direct" && strings.TrimSpace(options(ctx).ProjectTitle) != "" {
 		title = clip(strings.Join(strings.Fields(a.redact(ctx, options(ctx).ProjectTitle)), " "), 60)
@@ -150,13 +167,16 @@ func (a *Agent) replyTurn(ctx context.Context, botID, serverID, sessionID, conte
 	if sess.BotID != bot.ID {
 		return Result{}, errors.New("切换主 Bot 时请新建对话")
 	}
-	if len(sess.Options) > 0 {
-		// Use the original mode, and keep membership when a client omits it.
+	if len(sess.Options) > 0 || sessionID != "" && opt.Workspace != nil {
+		// Use the original mode and workspace, and keep membership when omitted.
 		var saved Options
-		if json.Unmarshal(sess.Options, &saved) != nil {
+		if len(sess.Options) > 0 && json.Unmarshal(sess.Options, &saved) != nil {
 			return Result{}, errors.New("无法读取对话设置")
 		}
-		opt := options(ctx)
+		if opt.Workspace != nil && (saved.Workspace == nil || *opt.Workspace != *saved.Workspace) {
+			return Result{}, errors.New("不能更改对话绑定的工作区，请新建代码任务")
+		}
+		opt.Workspace = saved.Workspace
 		opt.Mode = saved.Mode
 		if opt.Mode == "direct" {
 			opt.ExcludedBotIDs = nil
@@ -164,6 +184,9 @@ func (a *Agent) replyTurn(ctx context.Context, botID, serverID, sessionID, conte
 			opt.ExcludedBotIDs = saved.ExcludedBotIDs
 		}
 		ctx = context.WithValue(ctx, optionsKey{}, opt)
+	}
+	if opt.Workspace != nil {
+		serverID = opt.Workspace.ServerID
 	}
 	if options(ctx).Mode != "direct" && !isInbox(ctx) && !isAutomation(ctx) && store.ProjectSession(sess) {
 		ctx = context.WithValue(ctx, projectKey{}, sess.ID)

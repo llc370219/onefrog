@@ -247,6 +247,7 @@ func (s *Server) Handler() http.Handler {
 	authed.DELETE("/automations/:id", s.deleteAutomation)
 	authed.POST("/automations/:id/run", s.runAutomation)
 	authed.POST("/history/:id/rollback", s.rollback)
+	authed.POST("/workspace", s.codeWorkspace)
 	authed.POST("/chat", s.chat)
 	authed.GET("/sessions", s.listSessions)
 	authed.DELETE("/sessions/:id", s.deleteChatSession)

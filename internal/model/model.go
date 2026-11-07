@@ -52,6 +52,15 @@ type BotMemory struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// ProjectNote belongs to one group session and is shared by its participating bots.
+type ProjectNote struct {
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	Body      string    `json:"body"`
+	Source    string    `json:"source"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type Secret struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`

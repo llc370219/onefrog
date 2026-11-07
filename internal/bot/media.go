@@ -10,6 +10,9 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"onefrog/internal/preferences"
+	"onefrog/internal/providerlogin"
 )
 
 const (
@@ -33,23 +36,45 @@ func (a *Agent) recoverUnsupportedMedia(ctx context.Context, baseURL, modelName,
 	if err != nil {
 		return nil, "", err
 	}
-	if status >= 300 {
+	if status < 200 || status >= 300 {
 		return nil, "", providerStatusError(status, next)
 	}
 	return next, mediaRetryNote, nil
 }
 
-func (a *Agent) postChat(ctx context.Context, baseURL, modelName, apiKey string, messages []map[string]any, tools []map[string]any) ([]byte, int, error) {
-	body := map[string]any{
-		"model":    modelName,
-		"messages": messages,
+func (a *Agent) inferenceProvider(ctx context.Context) preferences.Provider {
+	if actor, ok := ctx.Value(usageKey{}).(usageActor); ok && a.Settings != nil {
+		p, _ := a.Settings.Provider(actor.ProviderID)
+		return p
 	}
+	return preferences.Provider{}
+}
+
+func (a *Agent) postChat(ctx context.Context, baseURL, modelName, apiKey string, messages []map[string]any, tools []map[string]any) ([]byte, int, error) {
+	p := a.inferenceProvider(ctx)
+	if strings.HasPrefix(p.AuthKind, "oauth-") {
+		if a.OAuth == nil {
+			return nil, 0, errors.New("OAuth 渠道未配置")
+		}
+		payload, err := a.OAuth.CompleteChat(ctx, options(ctx).OwnerID, p.AuthKind, modelName, messages, tools)
+		return payload, http.StatusOK, err
+	}
+	path := "/chat/completions"
+	body := map[string]any{"model": modelName, "messages": messages}
 	if len(tools) > 0 {
 		body["tools"] = tools
 	}
-	raw, _ := json.Marshal(body)
-	url := strings.TrimRight(baseURL, "/") + "/chat/completions"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
+	limit := int64(1 << 20)
+	if p.Protocol == preferences.ProtocolResponses {
+		path = "/responses"
+		body = providerlogin.ResponsesRequest(modelName, messages, tools, false)
+		limit = 8 << 20
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return nil, 0, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+path, bytes.NewReader(raw))
 	if err != nil {
 		return nil, 0, err
 	}
@@ -64,25 +89,18 @@ func (a *Agent) postChat(ctx context.Context, baseURL, modelName, apiKey string,
 	}
 	client.Timeout = time.Duration(a.execution().TimeoutSeconds) * time.Second
 	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
-	var res *http.Response
-	actor, hasActor := ctx.Value(usageKey{}).(usageActor)
-	if hasActor && a.Settings != nil && a.OAuth != nil {
-		if p, e := a.Settings.Provider(actor.ProviderID); e == nil && strings.HasPrefix(p.AuthKind, "oauth-") {
-			payload, e := a.OAuth.CompleteChat(ctx, options(ctx).OwnerID, p.AuthKind, modelName, messages, tools)
-			if e != nil {
-				return nil, 0, e
-			}
-			res = &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(payload))}
-		}
-	}
-	if res == nil {
-		res, err = client.Do(req)
-	}
+	res, err := client.Do(req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("连不上模型接口：%s", clip(err.Error(), 180))
 	}
 	defer res.Body.Close()
-	payload, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	payload, err := io.ReadAll(io.LimitReader(res.Body, limit+1))
+	if err != nil {
+		return nil, 0, errors.New("读取模型响应失败")
+	}
+	if int64(len(payload)) > limit {
+		return nil, 0, errors.New("模型响应过大")
+	}
 	return payload, res.StatusCode, nil
 }
 

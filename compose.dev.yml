@@ -25,6 +25,8 @@ services:
       OF_DATA_DIR: /app/data
     volumes:
       - appdata:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:8080:8080"
 volumes:

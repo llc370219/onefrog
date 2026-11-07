@@ -1,12 +1,10 @@
 package bot
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -141,7 +139,11 @@ func (a *Agent) replyTurn(ctx context.Context, botID, serverID, sessionID, conte
 			return Result{}, errors.New("问题不存在")
 		}
 	}
-	sess, err := a.Store.EnsureSession(ctx, sessionID, bot.ID, clip(content, 24))
+	title := clip(content, 24)
+	if options(ctx).Mode != "direct" && strings.TrimSpace(options(ctx).ProjectTitle) != "" {
+		title = clip(strings.Join(strings.Fields(a.redact(ctx, options(ctx).ProjectTitle)), " "), 60)
+	}
+	sess, err := a.Store.EnsureSession(ctx, sessionID, bot.ID, title)
 	if err != nil {
 		return Result{}, err
 	}
@@ -149,17 +151,22 @@ func (a *Agent) replyTurn(ctx context.Context, botID, serverID, sessionID, conte
 		return Result{}, errors.New("切换主 Bot 时请新建对话")
 	}
 	if len(sess.Options) > 0 {
-		// The chat mode is fixed when the session starts; later turns
-		// (including card answers) keep it even if a client omits it.
+		// Use the original mode, and keep membership when a client omits it.
 		var saved Options
-		if json.Unmarshal(sess.Options, &saved) == nil && saved.Mode != options(ctx).Mode {
-			opt := options(ctx)
-			opt.Mode = saved.Mode
-			if opt.Mode == "direct" {
-				opt.ExcludedBotIDs = nil
-			}
-			ctx = context.WithValue(ctx, optionsKey{}, opt)
+		if json.Unmarshal(sess.Options, &saved) != nil {
+			return Result{}, errors.New("无法读取对话设置")
 		}
+		opt := options(ctx)
+		opt.Mode = saved.Mode
+		if opt.Mode == "direct" {
+			opt.ExcludedBotIDs = nil
+		} else if opt.ExcludedBotIDs == nil {
+			opt.ExcludedBotIDs = saved.ExcludedBotIDs
+		}
+		ctx = context.WithValue(ctx, optionsKey{}, opt)
+	}
+	if options(ctx).Mode != "direct" && !isInbox(ctx) && !isAutomation(ctx) && store.ProjectSession(sess) {
+		ctx = context.WithValue(ctx, projectKey{}, sess.ID)
 	}
 	if reply != nil {
 		text, done, err := a.answerChoice(ctx, sess.ID, *reply)
@@ -185,6 +192,7 @@ func (a *Agent) replyTurn(ctx context.Context, botID, serverID, sessionID, conte
 	ctx = withTaint(ctx)
 	ctx = withGrants(ctx)
 	savedOptions := options(ctx)
+	savedOptions.ProjectTitle = ""
 	savedOptions.AttachmentIDs = nil
 	savedOptions.ChoiceAnswer = nil
 	savedOptions.SecretAnswer = nil
@@ -253,8 +261,9 @@ type toolCall struct {
 }
 
 type assistantMsg struct {
-	Content   string
-	ToolCalls []toolCall
+	Content       string
+	ToolCalls     []toolCall
+	ResponseItems []json.RawMessage
 }
 
 func (a *Agent) chat(ctx context.Context, baseURL, modelName, apiKey string, messages []map[string]any, tools []map[string]any) (answer assistantMsg, resultErr error) {
@@ -268,65 +277,34 @@ func (a *Agent) chat(ctx context.Context, baseURL, modelName, apiKey string, mes
 			}
 		}
 	}()
-	body := map[string]any{
-		"model":    modelName,
-		"messages": messages,
-	}
-	if len(tools) > 0 {
-		body["tools"] = tools
-	}
 	callCtx, cancel := context.WithTimeout(ctx, time.Duration(a.execution().TimeoutSeconds)*time.Second)
 	defer cancel()
-	raw, _ := json.Marshal(body)
-	url := strings.TrimRight(baseURL, "/") + "/chat/completions"
-	req, err := http.NewRequestWithContext(callCtx, http.MethodPost, url, bytes.NewReader(raw))
+	payload, status, err := a.postChat(callCtx, baseURL, modelName, apiKey, messages, tools)
 	if err != nil {
 		return assistantMsg{}, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-	client := &http.Client{}
-	if a.HTTP != nil {
-		copy := *a.HTTP
-		client = &copy
-	}
-	client.Timeout = time.Duration(a.execution().TimeoutSeconds) * time.Second
-	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
-	var res *http.Response
-	actor, hasActor := ctx.Value(usageKey{}).(usageActor)
-	if hasActor && a.Settings != nil && a.OAuth != nil {
-		if p, e := a.Settings.Provider(actor.ProviderID); e == nil && strings.HasPrefix(p.AuthKind, "oauth-") {
-			payload, e := a.OAuth.CompleteChat(callCtx, options(ctx).OwnerID, p.AuthKind, modelName, messages, tools)
-			if e != nil {
-				return assistantMsg{}, e
-			}
-			res = &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(payload))}
-		}
-	}
-	if res == nil {
-		res, err = client.Do(req)
-	}
-	if err != nil {
-		return assistantMsg{}, fmt.Errorf("连不上模型接口：%s", clip(err.Error(), 180))
-	}
-	defer res.Body.Close()
-	payload, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	note := ""
-	if res.StatusCode >= 300 {
+	if status < 200 || status >= 300 {
 		next, mediaNote, err := a.recoverUnsupportedMedia(callCtx, baseURL, modelName, apiKey, messages, tools, payload)
 		if err != nil {
 			return assistantMsg{}, err
 		}
 		if next == nil {
-			return assistantMsg{}, providerStatusError(res.StatusCode, payload)
+			return assistantMsg{}, providerStatusError(status, payload)
 		}
 		payload = next
 		note = mediaNote
 	}
+	p := a.inferenceProvider(ctx)
+	if p.Protocol == preferences.ProtocolResponses && !strings.HasPrefix(p.AuthKind, "oauth-") {
+		payload, err = providerlogin.NormalizeResponses(payload)
+		if err != nil {
+			return assistantMsg{}, err
+		}
+	}
 	var parsed struct {
-		Usage *struct {
+		ResponseItems []json.RawMessage `json:"response_items"`
+		Usage         *struct {
 			Prompt     *int64 `json:"prompt_tokens"`
 			Completion *int64 `json:"completion_tokens"`
 			Input      *int64 `json:"input_tokens"`
@@ -365,6 +343,9 @@ func (a *Agent) chat(ctx context.Context, baseURL, modelName, apiKey string, mes
 		return assistantMsg{}, errors.New("模型没有返回内容")
 	}
 	msg := assistantMsg{Content: parsed.Choices[0].Message.Content}
+	if p.Protocol == preferences.ProtocolResponses || p.AuthKind == "oauth-openai" {
+		msg.ResponseItems = parsed.ResponseItems
+	}
 	for _, raw := range parsed.Choices[0].Message.ToolCalls {
 		call, err := normalizeCall(raw)
 		if err != nil {

@@ -526,6 +526,13 @@ input:focus,select:focus,textarea:focus{border-color:color-mix(in srgb,var(--acc
 @media(max-width:760px){.pc-meters,.pc-isp{column-gap:14px}}
 .bot-avatar{display:block;flex-shrink:0;border-radius:50%;overflow:hidden;box-shadow:0 0 0 1px var(--line)}.bot-avatar img{display:block;width:100%;height:100%;object-fit:cover}.bot-symbol.bot-avatar,.small-avatar.bot-avatar,.catalog-icon.bot-avatar,.welcome-icon.bot-avatar{border:0;border-radius:50%;background:none}.speaker-avatar{width:22px;height:22px}
 .group-speaker{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--fg2);margin:12px 0 6px}.group-speaker:first-child{margin-top:0}.group-speaker strong{font-weight:500}
+.conversation-title{min-width:0}
+.conversation-actions{display:flex;align-items:center;gap:6px;flex-shrink:0;margin-left:8px}
+.conversation-title .project-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.conversation-title h1>.tag{flex-shrink:0;white-space:nowrap}
+.project-notes details{padding:10px 0;border-bottom:1px solid var(--line)}
+.project-notes summary{cursor:pointer;overflow-wrap:anywhere}
+.project-notes p{margin:8px 0 0;color:var(--fg2);white-space:pre-wrap;overflow-wrap:anywhere}
 .heading-avatar{width:26px;height:26px}.conversation-heading h1 .avatar-stack .stack-avatar{width:24px;height:24px}
 .welcome-icon.welcome-group{width:fit-content;min-width:64px;padding:0 16px;border-radius:999px}.welcome-group .stack-avatar{width:30px;height:30px}
 .avatar-stack{display:inline-flex;align-items:center;flex-shrink:0}.stack-avatar{width:18px;height:18px;box-shadow:0 0 0 2px var(--base)}.stack-avatar+.stack-avatar{margin-left:-6px}.stack-more{font-size:10px;color:var(--fg4);margin-left:4px}

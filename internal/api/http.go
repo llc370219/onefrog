@@ -251,6 +251,9 @@ func (s *Server) Handler() http.Handler {
 	authed.GET("/sessions", s.listSessions)
 	authed.DELETE("/sessions/:id", s.deleteChatSession)
 	authed.GET("/sessions/:id/messages", s.messages)
+	authed.GET("/sessions/:id/project-memory", s.listProjectNotes)
+	authed.POST("/sessions/:id/project-memory", s.saveProjectNote)
+	authed.DELETE("/sessions/:id/project-memory/:noteID", s.deleteProjectNote)
 	r.GET("/ws/chat", s.requireAuth, s.requireFreshCredentials, s.wsChat)
 	if s.WebDir != "" {
 		if info, err := os.Stat(s.WebDir); err == nil && info.IsDir() {

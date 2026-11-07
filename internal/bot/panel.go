@@ -211,11 +211,14 @@ func (a *Agent) panelOverview(ctx context.Context, speaker model.Bot) string {
 		Title string `json:"title"`
 	}
 	listed, _ := a.Store.ListChatSessions(ctx)
-	if len(listed) > 30 {
-		listed = listed[:30]
-	}
 	chatRows := make([]chatRow, 0, len(listed))
 	for _, item := range listed {
+		if len(chatRows) == 30 {
+			break
+		}
+		if !chatVisibleToBot(ctx, item.Session) {
+			continue
+		}
 		title := strings.TrimSpace(a.redact(ctx, item.Title))
 		if title == "" {
 			title = "对话"
@@ -957,6 +960,9 @@ func (a *Agent) findChat(ctx context.Context, idOrTitle string) (model.Session, 
 		return model.Session{}, fmt.Errorf("empty")
 	}
 	if item, err := a.Store.GetChatSession(ctx, idOrTitle); err == nil {
+		if !chatVisibleToBot(ctx, item) {
+			return model.Session{}, store.ErrNotFound
+		}
 		return item, nil
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return model.Session{}, err
@@ -967,7 +973,7 @@ func (a *Agent) findChat(ctx context.Context, idOrTitle string) (model.Session, 
 	}
 	var matched []model.Session
 	for _, item := range listed {
-		if item.Title == idOrTitle {
+		if chatVisibleToBot(ctx, item.Session) && item.Title == idOrTitle {
 			matched = append(matched, item.Session)
 		}
 	}
@@ -998,7 +1004,7 @@ func (a *Agent) panelDeleteChat(ctx context.Context, botID, id string) (string, 
 	if title == "" {
 		title = "对话"
 	}
-	what := fmt.Sprintf("删除对话「%s」（id=%s）。只删除这条对话和里面的消息，不删除登录、密钥或服务器。", title, sess.ID)
+	what := fmt.Sprintf("删除对话「%s」（id=%s）。会删除这条对话、消息及其项目记忆。", title, sess.ID)
 	allow, why := a.approveHighRisk(ctx, botID, store.ServerRec{Server: model.Server{ID: "panel", Name: "面板"}}, what, []string{"会删掉这一条对话记录"})
 	if !allow {
 		return "没有删除对话：" + why, false

@@ -405,6 +405,8 @@ services:
       OF_HOST_INSTALL_DIR: "${install_dir}"
       OF_PROJECT: "${project}"
 ${upgrade_env}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${bind_addr}:${pub_port}:8080"
     volumes:

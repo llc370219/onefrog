@@ -30,14 +30,18 @@ func (a *Agent) rememberCall(ctx context.Context, speaker model.Bot, call toolCa
 	if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
 		return "remember 参数不是有效的 JSON"
 	}
-	item, err := a.Remember(ctx, speaker.ID, args.Title, args.Body, "bot")
+	title, err := a.rememberWork(ctx, speaker.ID, args.Title, args.Body, "bot")
 	if err != nil {
 		return a.safe(ctx, err.Error())
 	}
-	if tr != nil {
-		tr.noteTool(speaker.Name, ToolEvent{Name: "remember", Command: item.Title, OK: true, Output: "已写入本 Bot 的记忆"})
+	scope := "本 Bot 的记忆"
+	if projectID(ctx) != "" {
+		scope = "本项目的工作记忆"
 	}
-	return "已写入本 Bot 的记忆「" + item.Title + "」。其他 Bot 看不到正文。密钥明文不会保存。"
+	if tr != nil {
+		tr.noteTool(speaker.Name, ToolEvent{Name: "remember", Command: title, OK: true, Output: "已写入" + scope})
+	}
+	return "已写入" + scope + "「" + title + "」。"
 }
 
 func (a *Agent) recallCall(ctx context.Context, speaker model.Bot, call toolCall) string {
@@ -48,6 +52,9 @@ func (a *Agent) recallCall(ctx context.Context, speaker model.Bot, call toolCall
 		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
 			return "recall 参数不是有效的 JSON"
 		}
+	}
+	if projectID(ctx) != "" {
+		return a.projectMemory(ctx, 20)
 	}
 	target := speaker
 	if name := strings.TrimSpace(args.BotID); name != "" {
@@ -113,6 +120,9 @@ func (a *Agent) writeOwnMemory(b *strings.Builder, ctx context.Context, bot mode
 }
 
 func (a *Agent) writePeerMemory(b *strings.Builder, ctx context.Context, self string) {
+	if projectID(ctx) != "" {
+		return
+	}
 	bots, err := a.Store.ListBots(ctx)
 	if err != nil {
 		return
@@ -146,7 +156,7 @@ var rememberTool = map[string]any{
 	"type": "function",
 	"function": map[string]any{
 		"name":        "remember",
-		"description": "把一条结论写入当前 Bot 自己的记忆。同一标题会覆盖旧内容。不要写入密码、私钥或 API Key。",
+		"description": "把一条结论写入当前工作范围的记忆：群聊记入项目，单聊记入自己的记忆。同一标题会覆盖旧内容。不要写入密码、私钥或 API Key。",
 		"parameters": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -162,7 +172,7 @@ var recallTool = map[string]any{
 	"type": "function",
 	"function": map[string]any{
 		"name":        "recall",
-		"description": "读取记忆。不填 bot_id 时读自己的。主控可以填另一个 Bot 的名称来读它的记忆；协作 Bot 只能读自己的。",
+		"description": "读取当前工作范围的记忆。群聊只读本项目记忆，忽略 bot_id；单聊默认读自己的记忆。",
 		"parameters": map[string]any{
 			"type": "object",
 			"properties": map[string]any{

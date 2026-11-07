@@ -67,10 +67,13 @@ func messageAgentTool() map[string]any {
 }
 
 func (a *Agent) canMessage(ctx context.Context, speaker model.Bot) bool {
-	return hop(ctx) < maxHops && a.hasPeers(ctx, speaker.ID)
+	return projectID(ctx) == "" && hop(ctx) < maxHops && a.hasPeers(ctx, speaker.ID)
 }
 
 func (a *Agent) sendMessage(ctx context.Context, speaker model.Bot, serverID string, call toolCall, tr *trace) string {
+	if projectID(ctx) != "" {
+		return "项目内容不能发送到全局收件箱。请用 ask_agent 在本项目内派工，或用 remember 留下结论。"
+	}
 	var args struct {
 		BotID   string `json:"bot_id"`
 		Message string `json:"message"`

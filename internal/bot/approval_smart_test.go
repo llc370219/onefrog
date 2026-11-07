@@ -33,7 +33,10 @@ func smartAgent(t *testing.T, reply string, withReviewer bool) (*Agent, *scriptS
 		raw, _ := io.ReadAll(r.Body)
 		body := string(raw)
 		if r.Header.Get("Authorization") != "Bearer review-key" || !strings.Contains(body, `"model":"smart-review"`) || strings.Contains(body, `"tools"`) || !strings.Contains(body, "重大安全隐患") {
-			t.Errorf("smart review used wrong model, key, prompt or tools: %s", body)
+			t.Error("smart review used wrong model, key, prompt or tools")
+		}
+		if strings.Contains(body, "review-key") {
+			t.Error("smart reviewer received a saved credential in the request body")
 		}
 		if reply == "" {
 			return nil, errors.New("network down")
@@ -111,6 +114,16 @@ func TestSmartReviewer(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSmartReviewerRedactsRequest(t *testing.T) {
+	a, _, _, calls := smartAgent(t, `{"major":false,"risk":"low","reason":"ok"}`, true)
+	route, _ := a.smartRoute()
+	ctx := context.WithValue(context.Background(), taskKey{}, "request review-key")
+	gate := riskGate{ModelReason: "purpose review-key", Reasons: []string{"rule detail review-key"}}
+	if major, _, ok := a.smartReview(ctx, "bot", "command review-key", route, gate); !ok || major || *calls != 1 {
+		t.Fatal("redacted request did not get a verdict")
 	}
 }
 

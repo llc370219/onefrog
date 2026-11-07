@@ -317,7 +317,7 @@ func (a *Agent) smartRoute() (preferences.Route, bool) {
 // smartReview asks the smart-approval model whether a risky command carries a
 // major security hazard. ok is false when the model could not give a usable
 // verdict; the caller then falls back to the approval card. It never runs
-// with tools and never sees secret values.
+// with tools or receives expanded vault placeholders.
 func (a *Agent) smartReview(ctx context.Context, botID, command string, route preferences.Route, g riskGate) (major bool, reason string, ok bool) {
 	p, err := a.Settings.Provider(route.ProviderID)
 	if err != nil {
@@ -330,7 +330,11 @@ func (a *Agent) smartReview(ctx context.Context, botID, command string, route pr
 		}
 	}
 	request, _ := ctx.Value(taskKey{}).(string)
-	payload, _ := json.Marshal(map[string]any{"user_request": a.redact(ctx, request), "command": a.redact(ctx, command), "purpose": g.ModelReason, "declared_risk": g.ModelRisk, "rule_check": g.Reasons})
+	reasons := make([]string, len(g.Reasons))
+	for i, reason := range g.Reasons {
+		reasons[i] = a.redact(ctx, reason)
+	}
+	payload, _ := json.Marshal(map[string]any{"user_request": a.redact(ctx, request), "command": a.redact(ctx, command), "purpose": a.redact(ctx, g.ModelReason), "declared_risk": g.ModelRisk, "rule_check": reasons})
 	checkCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 	checkCtx = usageContext(checkCtx, botID, "approval", p.ID)

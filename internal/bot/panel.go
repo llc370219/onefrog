@@ -825,7 +825,7 @@ func approvalModeEffect(mode string) string {
 	case preferences.ModeModel:
 		return "之后由独立审批模型决定是否执行。"
 	default:
-		return "之后只读命令直接执行，有风险的命令仍会审批；配置了智能审批模型时，只有重大安全隐患才弹出审批。"
+		return "之后只读命令直接执行。配置了智能审批模型时，常规变更可由模型放行；原有强制审批仍然有效。"
 	}
 }
 

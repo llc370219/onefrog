@@ -85,7 +85,7 @@ export default function ApprovalCard({
       {isPending && onDecide && (
         <div className="grok-card-actions">
           <Button variant="primary" disabled={disabled} onClick={() => onDecide({ allow: true, always: false })}>批准执行</Button>
-          {!untrusted && (
+          {!untrusted && !pending?.single_use && (
             <Button disabled={disabled} onClick={() => onDecide({ allow: true, always: true })}>本对话始终放行</Button>
           )}
           <Button variant="ghost" className="danger-btn" disabled={disabled} onClick={() => onDecide({ allow: false })}>拒绝</Button>

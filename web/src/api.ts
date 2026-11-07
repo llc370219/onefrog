@@ -99,10 +99,14 @@ export type UsageRow=TokenUsage&{bot_id:string;purpose:string;provider_id:string
 export type Attachment={id:string;name:string;mime:string;size:number};
 /** direct: one-to-one chat with a single bot and its own memory. team (default): the lead bot pulls other bots in. */
 export type ChatMode='direct'|'team';
-export type ChatOptions={approval_route?:ModelRoute;model_route?:ModelRoute;excluded_bot_ids?:string[];approval_mode?:string;attachment_ids?:string[];mode?:ChatMode};
-export type ChatRequest=ChatOptions&{content:string;server_id?:string;bot_id?:string;session_id?:string;choice_answer?:ChoiceReply;secret_answer?:SecretReply};
+export type WorkspaceTarget = {server_id:string;root:string};
+export type WorkspaceRequest = {action:'list'|'status'|'diff'|'read'|'write';path?:string;revision?:string;content?:string};
+export type WorkspaceResult = {files?:string[];text?:string;revision?:string;truncated?:boolean};
+export type ChatOptions={workspace?:WorkspaceTarget;approval_route?:ModelRoute;model_route?:ModelRoute;excluded_bot_ids?:string[];approval_mode?:string;attachment_ids?:string[];mode?:ChatMode};
+export type ChatRequest=ChatOptions&{content:string;project_title?:string;server_id?:string;bot_id?:string;session_id?:string;choice_answer?:ChoiceReply;secret_answer?:SecretReply};
 export type ChatResult={session_id:string;text:string;message_id?:string;choice?:Choice;secret_request?:SecretRequest;timeline?:TurnItem[];answered?:boolean};
 export type BotRow = { id:string;name:string;description:string;system_prompt?:string;enabled:boolean;model_route:ModelRoute;effective_route:ModelRoute;usage:TokenUsage;memory_count?:number };
+export type ProjectNote = { id:string;title:string;body:string;source:string;updated_at:string };
 export type BotMemory = { id:string;bot_id:string;title:string;body:string;source:string;created_at:string;updated_at:string };
 
 type ServerJSON = {
@@ -139,6 +143,8 @@ export type UpdateStatus = {
   install_dir?: string;
   project?: string;
   can_apply?: boolean;
+  /** True when the host helper cannot switch a stable install onto a beta image. */
+  helper_stale?: boolean;
 };
 
 async function call(path: string, init?: RequestInit) {
@@ -218,6 +224,7 @@ export const api = {
  async upload(file:File):Promise<Attachment>{const data=new FormData();data.append('file',file);const res=await fetch('/api/attachments',{method:'POST',credentials:'include',headers:{[CSRF_HEADER]:'1'},body:data});const body=await res.json();if(!res.ok)throw new Error(body.error||'上传失败');return body;},
  async updateBot(id:string,body:{name:string;description:string;system_prompt:string;model_route:ModelRoute}){return call('/api/bots/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(body)});},
  async botEnabled(id:string,enabled:boolean){return call('/api/bots/'+encodeURIComponent(id)+'/enabled',{method:'PUT',body:JSON.stringify({enabled})});},
+ async projectNotes(id:string):Promise<ProjectNote[]>{return call('/api/sessions/'+encodeURIComponent(id)+'/project-memory');},
  async memories(id:string):Promise<BotMemory[]>{return (await call('/api/bots/'+encodeURIComponent(id)+'/memories'))||[];},
  async addMemory(id:string,body:{title:string;body:string}):Promise<BotMemory>{return call('/api/bots/'+encodeURIComponent(id)+'/memories',{method:'POST',body:JSON.stringify(body)});},
  async deleteMemory(id:string,memoryID:string){return call('/api/bots/'+encodeURIComponent(id)+'/memories/'+encodeURIComponent(memoryID),{method:'DELETE'});},
@@ -227,6 +234,7 @@ export const api = {
   async probeToken(id:string,opts:{province?:string;targets?:string[]}={}):Promise<{token:string;server_id:string;ping_targets:PingTarget[]}>{return call("/api/servers/"+encodeURIComponent(id)+"/probe/token",{method:"POST",body:JSON.stringify(opts)});},
   async probeProvince(id:string,province:string,pingIntervalSeconds=60):Promise<{message:string}>{return call('/api/servers/'+encodeURIComponent(id)+'/probe/province',{method:'POST',body:JSON.stringify({province,ping_interval_seconds:pingIntervalSeconds})});},
   async profile(body:{username:string;display_name:string;avatar:string;current_password:string;new_password:string}):Promise<Profile>{return call("/api/auth/profile",{method:"PUT",body:JSON.stringify(body)});},
+  async workspace(target:WorkspaceTarget, request:WorkspaceRequest):Promise<WorkspaceResult>{return call('/api/workspace',{method:'POST',body:JSON.stringify({target,...request})});},
   async sessions():Promise<ChatSession[]>{return (await call("/api/sessions"))||[];},
   async messages(id:string):Promise<{id:string;role:string;content:string;from_bot?:string;attachments?:Attachment[];choice?:Choice;secret_request?:SecretRequest;timeline?:TurnItem[]}[]>{return (await call("/api/sessions/"+encodeURIComponent(id)+"/messages"))||[];},
   async deleteSession(id:string){return call("/api/sessions/"+encodeURIComponent(id),{method:"DELETE"});},
@@ -387,7 +395,7 @@ function toStep(raw: NonNullable<ChatReply["steps"]>[number]): ChatStep {
 /** One server-side rule hit from the command classifier. */
 export type RiskFinding = { category: string; label: string; detail: string };
 /** A command the agent wants to run that needs the operator's decision (smart or manual approval mode). */
-export type ApprovalPrompt = { id: string; bot: string; bot_name?: string; server_id: string; server_name: string; command: string; warning?: string; mode?: string; risk?: 'low'|'medium'|'high'; reasons?: string[]; findings?: RiskFinding[]; model_risk?: string; model_reason?: string; untrusted?: string; timeout_seconds: number };
+export type ApprovalPrompt = { id: string; single_use?: boolean; bot: string; bot_name?: string; server_id: string; server_name: string; command: string; warning?: string; mode?: string; risk?: 'low'|'medium'|'high'; reasons?: string[]; findings?: RiskFinding[]; model_risk?: string; model_reason?: string; untrusted?: string; timeout_seconds: number };
 /** Approval modes. "" = not chosen yet (behaves like smart). */
 export type ApprovalMode = ''|'off'|'smart'|'manual'|'model'|'plan';
 let approvalHandler: ((req: ApprovalPrompt) => Promise<boolean>) | null = null;
@@ -494,7 +502,7 @@ export function setApprovalTimeoutHandler(fn: ((id: string) => void) | null) { a
 export type ServerTestResult = { ok: boolean; status: "online" | "offline" | "host_key_unknown" | "host_key_mismatch" | string; detail: string; fingerprint?: string; stored_fingerprint?: string };
 
 export type ModelRoute = {provider_id:string;model:string};
-export type ProviderSettings = {auth_kind?:string;id:string;name:string;base_url:string;enabled:boolean;auth_required:boolean;models:string[];hidden_models?:string[];has_api_key:boolean;api_key?:string;clear_api_key?:boolean};
+export type ProviderSettings = {protocol?:'chat_completions'|'responses';auth_kind?:string;id:string;name:string;base_url:string;enabled:boolean;auth_required:boolean;models:string[];hidden_models?:string[];has_api_key:boolean;api_key?:string;clear_api_key?:boolean};
 export type SettingsState = {
  disabled_bots?:string[];
  providers:ProviderSettings[];

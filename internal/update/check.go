@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -73,6 +74,10 @@ var ErrNoUpdate = errors.New("当前没有可安装的新版本")
 // directory and the host helper.
 var ErrUpgradeUnavailable = errors.New("这次安装还不能在面板里升级。请先在服务器上重新运行一次安装命令，之后就可以点按钮升级。")
 
+// ErrHelperStale is returned when a beta release was requested but the host
+// helper still only re-pulls the pinned image. Stable upgrades are unaffected.
+var ErrHelperStale = errors.New("这台机器的升级程序还不会切换到测试版，点升级只会重新拉取正式版。请在服务器上重新运行一次安装命令，并带上 OF_CHANNEL=beta。装好之后，再在面板里升级就会换到测试版。")
+
 // ValidRepo reports whether repo looks like "owner/name".
 func ValidRepo(repo string) bool {
 	if !repoPattern.MatchString(repo) {
@@ -106,6 +111,10 @@ type Status struct {
 	// CanApply is true when the upgrade directory is writable, so the panel
 	// can ask the host helper to upgrade. It does not mean Docker is reachable.
 	CanApply bool `json:"can_apply"`
+	// HelperStale is true when this install's host helper is older than the
+	// one that can switch the image between latest and beta. One-click upgrade
+	// to a beta tag is refused in that case.
+	HelperStale bool `json:"helper_stale,omitempty"`
 }
 
 var (
@@ -143,6 +152,23 @@ func upgradeDir() string {
 // Only vX.Y.Z and vX.Y.Z-beta.N are accepted; the host script checks the same shape.
 func safeReleaseTag(tag string) bool {
 	return len(tag) <= maxReleaseTag && releaseTagPattern.MatchString(tag)
+}
+
+const helperVersionCurrent = 2
+
+func helperVersion(dir string) int {
+	if dir == "" {
+		return 0
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "helper-version"))
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 // upgradeDirWritable reports whether dir can be written and the probe file removed.
@@ -307,6 +333,10 @@ func (c *Checker) Status() Status {
 		s.Available = s.Enabled && Newer(c.latest.Tag, c.Current)
 	}
 	s.CanApply = canApply
+	dir := upgradeDir()
+	// The install-time channel, not the Settings override. A stable install
+	// whose helper never rewrites the image tag cannot move onto beta.
+	s.HelperStale = canApply && helperVersion(dir) < helperVersionCurrent && c.Channel != ChannelBeta
 	if !s.Enabled {
 		s.Error = ""
 	}
@@ -324,6 +354,9 @@ func (c *Checker) Apply() (string, error) {
 	dir := upgradeDir()
 	if !s.CanApply || dir == "" {
 		return "", ErrUpgradeUnavailable
+	}
+	if strings.Contains(s.Latest, "-beta.") && s.HelperStale {
+		return "", ErrHelperStale
 	}
 	if err := writeUpgradeTrigger(dir, s.Latest); err != nil {
 		log.Printf("update apply: %v", err)

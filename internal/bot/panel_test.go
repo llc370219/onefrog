@@ -611,6 +611,11 @@ func TestPanelCreatesBotsAndDeletesChats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, sess := range []model.Session{keep, gone} {
+		if err := mem.SaveChatOptions(ctx, sess.ID, json.RawMessage(`{"mode":"direct"}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if _, err = mem.AddMessage(ctx, model.Message{SessionID: gone.ID, Role: "user", Content: "正文里有 sk-live-secret 不要进卡片"}); err != nil {
 		t.Fatal(err)
 	}

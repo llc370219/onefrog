@@ -7,6 +7,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"errors"
+	"io"
 	"net"
 	"strings"
 	"testing"
@@ -44,7 +45,13 @@ func startServer(t *testing.T, keys ...ssh.Signer) (string, int) {
 						for r := range in {
 							if r.Type == "exec" {
 								_ = r.Reply(true, nil)
-								_, _ = ch.Write([]byte("ok\n"))
+								var command struct{ Text string }
+								_ = ssh.Unmarshal(r.Payload, &command)
+								if command.Text == "echo-input" {
+									_, _ = io.Copy(ch, ch)
+								} else {
+									_, _ = ch.Write([]byte("ok\n"))
+								}
 								_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ S uint32 }{0}))
 								ch.Close()
 								return
@@ -120,5 +127,16 @@ func TestSplitPin(t *testing.T) {
 	}
 	if k, s := SplitPin("SHA256:abc"); k != "" || s != "SHA256:abc" {
 		t.Fatal(k, s)
+	}
+}
+
+func TestRunInputSendsWorkspacePayloadOnPinnedSSH(t *testing.T) {
+	ed, _ := signers(t)
+	host, port := startServer(t, ed)
+	pin := Fingerprint(ed.PublicKey())
+	const payload = "{\"path\":\"测试.txt\",\"content\":\"first\\nsecond\"}"
+	out, _, err := RunInput(context.Background(), host, port, "dev", "password", "fixture", pin, "echo-input", []byte(payload))
+	if err != nil || out != payload {
+		t.Fatalf("SSH stdin round-trip: %q %v", out, err)
 	}
 }

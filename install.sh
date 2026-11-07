@@ -326,6 +326,7 @@ ENV
 set -eu
 dir='${install_dir}'
 project='${project}'
+printf '2\n' > "\${dir}/run/helper-version"
 trigger="\${dir}/run/upgrade"
 lock="\${dir}/run/upgrade.lock"
 if command -v flock >/dev/null 2>&1; then
@@ -357,6 +358,7 @@ docker compose --project-directory "\$dir" -f "\$dir/docker-compose.yml" -p "\$p
 EOF
     chown 0:0 "${install_dir}/upgrade.sh"
     chmod 755 "${install_dir}/upgrade.sh"
+    printf '2\n' > "${install_dir}/run/helper-version"
     if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
       cat > "/etc/systemd/system/onefrog-upgrade-${project}.service" <<EOF
 [Unit]
@@ -403,6 +405,8 @@ services:
       OF_HOST_INSTALL_DIR: "${install_dir}"
       OF_PROJECT: "${project}"
 ${upgrade_env}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${bind_addr}:${pub_port}:8080"
     volumes:

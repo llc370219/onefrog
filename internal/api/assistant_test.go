@@ -32,11 +32,10 @@ func TestBotControlsPreserveFieldsAndValidateModel(t *testing.T) {
 		t.Fatal(got)
 	}
 	putJSON(t, c, s.URL+"/api/bots/main", map[string]any{"name": "should-not-save", "model_route": preferences.Route{ProviderID: "p", Model: "hidden"}}, 400, nil)
-	putJSON(t, c, s.URL+"/api/bots/main/enabled", map[string]bool{"enabled": false}, 200, nil)
-	postJSON(t, c, s.URL+"/api/chat", map[string]string{"bot_id": "main", "content": "test"}, 400, nil)
+	putJSON(t, c, s.URL+"/api/bots/main/enabled", map[string]bool{"enabled": false}, 400, nil)
 	getJSON(t, c, s.URL+"/api/bots", &rows)
 	for _, b := range rows {
-		if b.ID == "main" && (b.Name != "重命名" || b.Enabled) {
+		if b.ID == "main" && (b.Name != "重命名" || !b.Enabled) {
 			t.Fatal("failed edit or disable was not enforced")
 		}
 	}

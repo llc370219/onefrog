@@ -44,7 +44,7 @@ func (s *Server) updateApply(c *gin.Context) {
 			"version": tag,
 			"message": "正在升级，容器会重启，请稍等后刷新。账号和数据保留。",
 		})
-	case errors.Is(err, update.ErrNoUpdate), errors.Is(err, update.ErrUpgradeUnavailable):
+	case errors.Is(err, update.ErrNoUpdate), errors.Is(err, update.ErrUpgradeUnavailable), errors.Is(err, update.ErrHelperStale):
 		fail(c, http.StatusConflict, err.Error())
 	default:
 		fail(c, http.StatusInternalServerError, "升级请求没有写出去，请改用安装命令")

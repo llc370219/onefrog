@@ -408,6 +408,10 @@ func (s *Server) updateBot(c *gin.Context) {
 }
 
 func (s *Server) deleteBot(c *gin.Context) {
+	if c.Param("id") == "main" {
+		fail(c, 400, "默认主控不能删除")
+		return
+	}
 	if mapStore(c, s.Store.DeleteBot(c.Request.Context(), c.Param("id"))) {
 		return
 	}

@@ -69,12 +69,14 @@ function ApplyUpgrade({ startConfirm, onCancel }: { startConfirm?: boolean; onCa
 
 /** Dismissible banner shown above every page when a newer release exists. */
 export function UpdateBanner({ status }: { status: UpdateStatus | null }) {
+  const blocked = !!(status?.helper_stale && status.latest?.includes('-beta.'));
   const [dismissed, setDismissed] = useState(() => { try { return localStorage.getItem(DISMISS_KEY) || ''; } catch { return ''; } });
   const [open, setOpen] = useState(false);
   if (!status?.available || !status.latest || dismissed === status.latest) return null;
   const latest = status.latest;
   function dismiss() { try { localStorage.setItem(DISMISS_KEY, latest); } catch { /* ignore */ } setDismissed(latest); }
-  return <div className="update-banner" role="status"><div className="update-banner-row"><ArrowUpCircle size={17}/><span><strong>OneFrog {latest} 已发布</strong><small>当前 {status.current}</small></span>{status.url && <a href={status.url} target="_blank" rel="noreferrer noopener">更新说明<ExternalLink size={12}/></a>}{status.can_apply ? <Button variant="primary" onClick={() => setOpen(v => !v)}>{open ? '收起' : '立即升级'}</Button> : <button type="button" className="text-btn" onClick={() => setOpen(v => !v)}>{open ? '收起' : '如何升级'}</button>}<IconButton label="不再提示此版本" onClick={dismiss}><X size={15}/></IconButton></div>{open && (status.can_apply ? <ApplyUpgrade startConfirm onCancel={() => setOpen(false)}/> : <UpgradeHelp status={status}/>)}</div>;
+  const oneClick = !!status.can_apply && !blocked;
+  return <div className="update-banner" role="status"><div className="update-banner-row"><ArrowUpCircle size={17}/><span><strong>OneFrog {latest} 已发布</strong><small>当前 {status.current}</small></span>{status.url && <a href={status.url} target="_blank" rel="noreferrer noopener">更新说明<ExternalLink size={12}/></a>}{oneClick ? <Button variant="primary" onClick={() => setOpen(v => !v)}>{open ? '收起' : '立即升级'}</Button> : <button type="button" className="text-btn" onClick={() => setOpen(v => !v)}>{open ? '收起' : '如何升级'}</button>}<IconButton label="不再提示此版本" onClick={dismiss}><X size={15}/></IconButton></div>{open && (oneClick ? <ApplyUpgrade startConfirm onCancel={() => setOpen(false)}/> : <><Notice error>这台机器的升级程序还不会切换到测试版，点升级只会重新拉取正式版。</Notice><UpgradeHelp status={status}/></>)}</div>;
 }
 
 const disabledText: Record<string, string> = {
@@ -103,9 +105,11 @@ export function AboutSection({ onStatus }: { onStatus?: (s: UpdateStatus) => voi
     {error && <Notice error>{error}</Notice>}
     {status.enabled && status.error && <Notice error>{status.error}</Notice>}
     {!status.available && status.enabled && status.latest && <Notice>已是最新版本。</Notice>}
-    {status.available && status.can_apply && <Notice><strong>有新版本 {status.latest}。</strong>可以直接升级。</Notice>}
-    {status.available && status.can_apply && <ApplyUpgrade/>}
-    {status.available && status.can_apply && <details className="update-notes"><summary>仍使用命令升级</summary><UpgradeHelp status={status}/></details>}
+    {status.available && status.helper_stale && status.latest?.includes('-beta.') && <Notice error>这台机器的升级程序还不会切换到测试版。请先在服务器上重新运行下面的安装命令，之后再在面板里升级。</Notice>}
+    {status.available && status.can_apply && !(status.helper_stale && status.latest?.includes('-beta.')) && <Notice><strong>有新版本 {status.latest}。</strong>可以直接升级。</Notice>}
+    {status.available && status.can_apply && !(status.helper_stale && status.latest?.includes('-beta.')) && <ApplyUpgrade/>}
+    {status.available && status.can_apply && !(status.helper_stale && status.latest?.includes('-beta.')) && <details className="update-notes"><summary>仍使用命令升级</summary><UpgradeHelp status={status}/></details>}
+    {status.available && status.helper_stale && status.latest?.includes('-beta.') && <UpgradeHelp status={status}/>}
     {status.available && !status.can_apply && <Notice><strong>有新版本 {status.latest}。</strong>这次安装还不能在面板里点升级，请先执行下面的命令。装上之后，以后就可以点按钮。</Notice>}
     {status.available && !status.can_apply && <UpgradeHelp status={status}/>}
     {status.available && status.notes && <details className="update-notes"><summary>本次更新内容</summary><pre>{status.notes}</pre></details>}

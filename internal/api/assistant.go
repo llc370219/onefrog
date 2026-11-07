@@ -32,6 +32,10 @@ func (s *Server) botEnabled(c *gin.Context) {
 		fail(c, 400, "请选择启用状态")
 		return
 	}
+	if c.Param("id") == "main" && !*req.Enabled {
+		fail(c, 400, "默认主控不能停用")
+		return
+	}
 	if err := s.Settings.SetBotEnabled(c.Param("id"), *req.Enabled); err != nil {
 		fail(c, 500, "状态保存失败")
 		return

@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowRight, Blocks, Bot, Check, ChevronRight, History, KeyRound, LayoutDashboard, LoaderCircle, LockKeyhole, LogOut, Menu, MessageSquare, RefreshCw, Server, Settings, Terminal, X } from 'lucide-react';
+import { ArrowRight, Blocks, Bot, Check, ChevronRight, Code2, History, KeyRound, LayoutDashboard, LoaderCircle, LockKeyhole, LogOut, Menu, MessageSquare, RefreshCw, Server, Settings, Terminal, X } from 'lucide-react';
 import { ThemeToggle } from './components/ThemeToggle';
-import { api, type ApprovalDecision, type BotRow, type ChatLine, type ChatMode, type ChatStep, type Hist, type Host, type LiveChatHandlers, type Mod, type SecretRow, type SettingsState, type ServerTestResult, type ModelRoute, type Profile, type ChatSession, type Attachment, type TurnItem, type UpdateStatus, type Choice } from './api';
+import { api, type ApprovalDecision, type BotRow, type ChatLine, type ChatMode, type ChatStep, type Hist, type Host, type LiveChatHandlers, type Mod, type SecretRow, type SettingsState, type ServerTestResult, type ModelRoute, type Profile, type ChatSession, type Attachment, type TurnItem, type UpdateStatus, type Choice, type WorkspaceTarget } from './api';
 import { approvalRuleKey } from './components/ApprovalCard';
 import { Button, Field, IconButton, Modal, Notice } from './components/ui';
 import { RoutePicker } from "./components/ModelPicker";
 import SettingsPanel from "./pages/Settings";
+import BackupMigration, { migrationStatus, type MigrationStatus } from './components/BackupMigration';
 import AccountDialog, { Avatar } from './components/AccountDialog';
 import SetupCredentials from './components/SetupCredentials';
 import ApprovalChoice from './components/ApprovalChoice';
@@ -26,10 +27,11 @@ import Develop, { CustomModulePage } from './pages/Develop';
 import { BotAvatar } from './components/BotAvatar';
 import { latestDirect } from './lib/chatGroups';
 import Automations from './pages/Automations';
+import Workspace from './pages/Workspace';
 
-type View = 'panel' | 'chat' | 'servers' | 'agents' | 'secrets' | 'modules' | 'history';
+type View = 'panel' | 'chat' | 'workspace' | 'servers' | 'agents' | 'secrets' | 'modules' | 'history';
 type Dialog = 'account' | 'settings' | 'modules' | 'server' | 'secret' | 'rotate' | 'agent' | 'rollback' | 'group' | null;
-const navigation = [{id:'panel',label:'面板',icon:LayoutDashboard}, {id:'chat',label:'AI 助理',icon:MessageSquare}, {id:'modules',label:'模块',icon:Blocks}, {id:'servers',label:'服务器',icon:Server}, {id:'agents',label:'Bot',icon:Bot}, {id:'secrets',label:'密钥保险箱',icon:KeyRound}, {id:'history',label:'变更记录',icon:History}] as const;
+const navigation = [{id:'panel',label:'面板',icon:LayoutDashboard}, {id:'chat',label:'AI 助理',icon:MessageSquare}, {id:'workspace',label:'代码工作区',icon:Code2}, {id:'modules',label:'模块',icon:Blocks}, {id:'servers',label:'服务器',icon:Server}, {id:'agents',label:'Bot',icon:Bot}, {id:'secrets',label:'密钥保险箱',icon:KeyRound}, {id:'history',label:'变更记录',icon:History}] as const;
 const emptyForm = {name:'',host:'',role:'',value:'',port:'22',username:'root',auth_type:'password',description:'',system_prompt:'',secret_mode:'manual',gen_length:'32',gen_charset:'alnum'};
 type SecretForm = typeof emptyForm;
 const secretCharsets = [['alnum','大小写字母和数字'],['symbols','字母、数字和安全符号'],['hex','十六进制'],['base64url','Base64URL'],['digits','纯数字']] as const;
@@ -62,6 +64,8 @@ export default function App() {
   const [profile,setProfile]=useState<Profile>({id:'',username:'admin',display_name:'',avatar:''});
   const [sessions,setSessions]=useState<ChatSession[]>([]);const [activeBot,setActiveBot]=useState('');const [chatMode,setChatMode]=useState<ChatMode>('team');const [activeModule,setActiveModule]=useState('');const [secondaryOpen,setSecondaryOpen]=useState(true);const chatLoad=useRef(0);
   const [view,setView] = useState<View>('panel');
+  const [workspaceTarget,setWorkspaceTarget] = useState<WorkspaceTarget>();
+  const [chatWorkspace,setChatWorkspace] = useState<WorkspaceTarget>();
   const [hosts,setHosts] = useState<Host[]>([]); const [mods,setMods] = useState<Mod[]>([]); const [history,setHistory] = useState<Hist[]>([]); const [secrets,setSecrets] = useState<SecretRow[]>([]); const [bots,setBots] = useState<BotRow[]>([]);
   const [selected,setSelected] = useState('');const [addedServer,setAddedServer]=useState('');
   const [serviceFocus,setServiceFocus] = useState('');
@@ -74,8 +78,10 @@ export default function App() {
   const [botModelsLoading,setBotModelsLoading] = useState(false);
   const [formError,setFormError] = useState(''); const [pageError,setPageError] = useState(''); const [notice,setNotice] = useState('');
   const [loading,setLoading] = useState(false); const [busy,setBusy] = useState(false);
+  const [migration,setMigration] = useState<MigrationStatus|null>(null);
+  const [apiPrompt,setApiPrompt] = useState(false);
   const [switching,setSwitching] = useState(''); const [testing,setTesting] = useState(''); const [rollback,setRollback] = useState('');
-  const [draft,setDraft] = useState(''); const [lines,setLines] = useState<ChatLine[]>([]); const [session,setSession] = useState(''); const [sending,setSending] = useState(false); const [groupPick,setGroupPick] = useState<string[]>([]);
+  const [draft,setDraft] = useState(''); const [lines,setLines] = useState<ChatLine[]>([]); const [session,setSession] = useState(''); const [sending,setSending] = useState(false); const [groupPick,setGroupPick] = useState<string[]>([]); const [groupName,setGroupName] = useState(''); const [projectTitle,setProjectTitle] = useState('');
   const sendingRef = useRef(false); const [mobileNav,setMobileNav] = useState(false);
   const [panelJob, setPanelJob] = useState<PanelJob | null>(null);
   const panelSession = useRef('');
@@ -88,13 +94,17 @@ export default function App() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      const migrationState=await migrationStatus();setMigration(migrationState);
+      if(migrationState.paused)return;
       const [h,m,r,s,b,c,settings] = await Promise.all([api.servers(),api.modules(),api.history(),api.secrets(),api.bots(),api.sessions(),api.settings()]);setChatConfig(settings);
+      if(!settings.providers.some(p=>p.enabled)&&localStorage.getItem('onefrog-api-prompt')!=='dismissed')setApiPrompt(true);
       setHosts(h);setMods(m);setHistory(r);setSecrets(s);setBots(b);setSessions(c);setActiveBot(cur=>b.some(x=>x.id===cur)?cur:defaultBot(b));
       setSelected(cur => cur === '' || h.some(item => item.id === cur) ? cur : '');
       setUpdated(new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})); setPageError('');
     } catch(err) {setPageError(message(err));} finally {setLoading(false);}
   },[]);
   useEffect(() => {api.me().then(res => {setUser(res.username);setProfile(res); setAuthed(true); if(!res.must_change_credentials) return load();}).catch(() => setAuthed(false));},[load]);
+  useEffect(()=>{if(!authed||profile.must_change_credentials)return;const timer=setInterval(()=>{migrationStatus().then(s=>setMigration(old=>{if(old?.paused&&!s.paused)window.setTimeout(()=>location.reload(),100);return s;})).catch(()=>{});},3000);return()=>clearInterval(timer);},[authed,profile.must_change_credentials]);
   const [updateStatus,setUpdateStatus]=useState<UpdateStatus|null>(null);
   useEffect(()=>{if(!authed||profile.must_change_credentials)return;let active=true;const get=()=>api.updateStatus().then(s=>{if(active)setUpdateStatus(s);}).catch(()=>{});get();const timer=window.setInterval(get,60*60*1000);return()=>{active=false;window.clearInterval(timer);};},[authed,profile.must_change_credentials]);
   useEffect(() => {if(!notice) return; const timer = window.setTimeout(() => setNotice(''),4500); return () => clearTimeout(timer);},[notice]);
@@ -172,16 +182,34 @@ export default function App() {
   function openBotByName(name: string) { const hit = bots.find(b => b.name === name || b.id === name); if (hit && hit.enabled) { openBot(hit.id); go('chat'); } else { go('agents'); } }
   function openChat(text?: string) {go('chat');setMobileNav(false);if(text) setDraft(text);}
   /** newChat(botID) opens a direct chat with that bot; newChat() opens a team chat led by the lead bot. */
-  function newChat(botID?:string){if(sendingRef.current||uploadRef.current)return;chatLoad.current++;chatAllowRules.current.clear();setChatMode(botID?'direct':'team');setActiveBot(botID||defaultBot(bots));setSession('');setLines([]);setDraft('');setSelected('');setAttachments([]);setControls({model:{provider_id:'',model:''},excluded:[],approval:'default'});setMobileNav(false);}
+  function newChat(botID?:string){if(sendingRef.current||uploadRef.current)return;chatLoad.current++;chatAllowRules.current.clear();setChatMode(botID?'direct':'team');setActiveBot(botID||defaultBot(bots));setSession('');setProjectTitle('');setChatWorkspace(undefined);setLines([]);setDraft('');setSelected('');setAttachments([]);setControls({model:{provider_id:'',model:''},excluded:[],approval:'default'});setMobileNav(false);}
   /** Clicking a bot reopens its latest one-to-one chat, so leaving and coming back keeps the history. */
   function openBot(id:string){const hit=latestDirect(sessions,id);if(hit)restoreChat(hit);else newChat(id);}
   /** A new group chat starts by asking which bots join; every enabled bot is ticked by default. */
-  function openGroupPicker(){if(sendingRef.current||uploadRef.current)return;open('group');setGroupPick(bots.filter(b=>b.enabled).map(b=>b.id));}
-  function startGroup(){const lead=defaultBot(bots);const enabled=bots.filter(b=>b.enabled).map(b=>b.id);newChat();setControls(c=>({...c,excluded:enabled.filter(id=>id!==lead&&!groupPick.includes(id))}));setDialog(null);if(view!=='chat')go('chat');}
-  async function removeChat(item:ChatSession){if(sendingRef.current||uploadRef.current)return;if(!window.confirm('删除对话「'+item.title+'」？这条记录和里面的消息都会去掉，不能恢复。'))return;try{await api.deleteSession(item.id);setSessions(cur=>cur.filter(s=>s.id!==item.id));if(session===item.id){chatLoad.current++;chatAllowRules.current.clear();setSession('');setLines([]);setDraft('');setAttachments([]);setSelected('');}setNotice('已删除对话');}catch(err){setPageError(message(err));}}
-  async function restoreChat(item:ChatSession){if(sendingRef.current||uploadRef.current)return;const request=++chatLoad.current;setLoading(true);try{const rows=await api.messages(item.id);if(request!==chatLoad.current)return;const mode=sessionMode(item);chatAllowRules.current.clear();setChatMode(mode);setActiveBot(item.bot_id);setSelected('');setSession(item.id);setLines(chatLines(rows));setDraft('');setAttachments([]);setControls({model:item.options?.model_route||{provider_id:'',model:''},excluded:mode==='direct'?[]:(item.options?.excluded_bot_ids||[]).filter(id=>bots.some(b=>b.id===id)),approval:item.options?.approval_mode==='rules'?'off':item.options?.approval_mode||'default',review:item.options?.approval_route});setMobileNav(false);}catch(e){setPageError(message(e));}finally{if(request===chatLoad.current)setLoading(false);}}
+  function openGroupPicker(){if(sendingRef.current||uploadRef.current)return;open('group');setGroupName('');setGroupPick(bots.filter(b=>b.enabled).map(b=>b.id));}
+  function startGroup(){const lead=defaultBot(bots);const enabled=bots.filter(b=>b.enabled).map(b=>b.id);newChat();setProjectTitle(groupName.trim());setControls(c=>({...c,excluded:enabled.filter(id=>id!==lead&&!groupPick.includes(id))}));setDialog(null);if(view!=='chat')go('chat');}
+  async function removeChat(item:ChatSession){if(sendingRef.current||uploadRef.current)return;if(!window.confirm('删除对话「'+item.title+'」？会删除消息和项目工作记忆，不能恢复。'))return;try{await api.deleteSession(item.id);setSessions(cur=>cur.filter(s=>s.id!==item.id));if(session===item.id){chatLoad.current++;chatAllowRules.current.clear();setSession('');setProjectTitle('');setChatWorkspace(undefined);setLines([]);setDraft('');setAttachments([]);setSelected('');}setNotice('已删除对话');}catch(err){setPageError(message(err));}}
+  async function restoreChat(item:ChatSession){if(sendingRef.current||uploadRef.current)return;const request=++chatLoad.current;setLoading(true);try{const rows=await api.messages(item.id);if(request!==chatLoad.current)return;const mode=sessionMode(item);chatAllowRules.current.clear();setChatMode(mode);setActiveBot(item.bot_id);setChatWorkspace(item.options?.workspace);setSelected(item.options?.workspace?.server_id||'');setSession(item.id);setProjectTitle(mode==='team'?item.title:'');setLines(chatLines(rows));setDraft('');setAttachments([]);setControls({model:item.options?.model_route||{provider_id:'',model:''},excluded:mode==='direct'?[]:(item.options?.excluded_bot_ids||[]).filter(id=>bots.some(b=>b.id===id)),approval:item.options?.approval_mode==='rules'?'off':item.options?.approval_mode||'default',review:item.options?.approval_route});setMobileNav(false);}catch(e){setPageError(message(e));}finally{if(request===chatLoad.current)setLoading(false);}}
   /** Per-turn options shared by send and card answers; a direct chat never carries team scope. */
-  const turnOptions=()=>({bot_id:activeBot,mode:chatMode,model_route:controls.model,excluded_bot_ids:chatMode==='direct'?[]:controls.excluded,approval_mode:controls.approval,approval_route:controls.approval==='model'?controls.review:undefined});
+  const turnOptions=()=>({bot_id:activeBot,workspace:chatWorkspace,mode:chatMode,model_route:controls.model,excluded_bot_ids:chatMode==='direct'?[]:controls.excluded,approval_mode:controls.approval,approval_route:controls.approval==='model'?controls.review:undefined});
+  function startCodeTask(target:WorkspaceTarget, task:string) {
+    if(sendingRef.current||uploadRef.current)return;
+    newChat();
+    setChatWorkspace(target);
+    setSelected(target.server_id);
+    setProjectTitle('开发 · '+(target.root.split('/').pop()||target.root));
+    setDraft(task);
+    go('chat');
+  }
+  async function openCodeTask(item:ChatSession) {
+    if(sendingRef.current||uploadRef.current)return;
+    await restoreChat(item);
+    go('chat');
+  }
+  function viewCode() {
+    if(chatWorkspace)setWorkspaceTarget(chatWorkspace);
+    go('workspace');
+  }
   async function uploadFiles(files:File[]){if(!files.length||uploadRef.current||sendingRef.current)return;if(files.some(f=>f.size>5*1024*1024)){setPageError('每个文件不能超过 5 MB');return;}if(files.length+attachments.length>4){setPageError('每轮最多上传 4 个附件');return;}if(files.reduce((n,f)=>n+f.size,0)+attachments.reduce((n,f)=>n+f.size,0)>12*1024*1024){setPageError('附件合计不能超过 12 MB');return;}uploadRef.current=true;setUploading(true);setPageError('');try{for(const file of files){const ref=await api.upload(file);setAttachments(cur=>[...cur,ref]);}}catch(e){setPageError(message(e));}finally{uploadRef.current=false;setUploading(false);}}
 
   function makeStreamHandlers(
@@ -200,14 +228,14 @@ export default function App() {
       },
       onApproval: req => {
         const key = approvalRuleKey(req.server_id, req.command);
-        if (!req.untrusted && allowSet.has(key)) {
+        if (!req.untrusted && !req.single_use && allowSet.has(key)) {
           return Promise.resolve({ allow: true, always: true });
         }
         timelineOut.push({ kind: 'approval_pending', pending_req: req });
         syncUI('等待你在上方卡片确认…');
         return new Promise<ApprovalDecision>(resolve => {
           resolvers.set(req.id, dec => {
-            if (dec.allow && dec.always && !req.untrusted) {
+            if (dec.allow && dec.always && !req.untrusted && !req.single_use) {
               allowSet.add(key);
             }
             const idx = timelineOut.findIndex(x => x.kind === 'approval_pending' && x.pending_req?.id === req.id);
@@ -292,7 +320,7 @@ export default function App() {
     const paint = (reply: string,pending: boolean,extra?:Partial<ChatLine>) => setLines(cur => [...cur.slice(0,-1),{who:'bot',text:reply,pending,steps:[...steps],timeline:[...timeline],...extra}]);
     try {
       const handlers = makeStreamHandlers(chatAllowRules.current, chatApprovalResolvers.current, steps, timeline, status => paint('', true, { activeStatus: status }));
-      const reply = await api.chatLive({content:text,server_id:selected,session_id:session,...turnOptions(),attachment_ids:sentAttachments.map(f=>f.id)}, handlers);
+      const reply = await api.chatLive({content:text,server_id:selected,session_id:session,project_title:chatMode==='team'&&!session?projectTitle:undefined,...turnOptions(),attachment_ids:sentAttachments.map(f=>f.id)}, handlers);
       setSession(reply.session_id);
       paint(reply.text,false,{id:reply.message_id,choice:reply.choice,secret:reply.secret_request,timeline:reply.timeline||[...timeline]});
       await load();
@@ -349,7 +377,7 @@ export default function App() {
     const paint = (patch: Partial<PanelJob>) => setPanelJob(cur => cur ? { ...cur, ...patch, steps: [...steps], timeline: patch.timeline || [...timeline] } : cur);
     try {
       const handlers = makeStreamHandlers(panelAllowRules.current, panelApprovalResolvers.current, steps, timeline, status => paint({ pending: true, activeStatus: status }));
-      const reply = await api.chatLive({ content: prompt, server_id: serverId, session_id: panelSession.current, bot_id: botID, approval_mode: 'default' }, handlers);
+      const reply = await api.chatLive({ content: prompt, server_id: serverId, session_id: panelSession.current, mode: 'direct', bot_id: botID, approval_mode: 'default' }, handlers);
       panelSession.current = reply.session_id || panelSession.current;
       paint({ pending: false, text: reply.text, error: '', sessionId: panelSession.current, messageId: reply.message_id, choice: reply.choice, secret: reply.secret_request, timeline: reply.timeline || [...timeline] });
       await load();
@@ -370,7 +398,7 @@ export default function App() {
     const paint = (patch: Partial<PanelJob>) => setPanelJob(cur => cur ? { ...cur, ...patch, steps: [...steps], timeline: patch.timeline || [...timeline] } : cur);
     try {
       const handlers = makeStreamHandlers(panelAllowRules.current, panelApprovalResolvers.current, steps, timeline, status => paint({ pending: true, activeStatus: status }));
-      const reply = await api.chatLive({ content: '', server_id: job.serverId, session_id: panelSession.current, bot_id: job.botId || defaultBot(bots), approval_mode: 'default', choice_answer: { message_id: cardID, values, custom: custom.trim() || undefined } }, handlers);
+      const reply = await api.chatLive({ content: '', server_id: job.serverId, session_id: panelSession.current, mode: 'direct', bot_id: job.botId || defaultBot(bots), approval_mode: 'default', choice_answer: { message_id: cardID, values, custom: custom.trim() || undefined } }, handlers);
       if (reply.answered) { paint({ pending: false, text: '这个问题已经回答过了' }); return; }
       panelSession.current = reply.session_id || panelSession.current;
       paint({ pending: false, text: reply.text, error: '', sessionId: panelSession.current, messageId: reply.message_id, choice: reply.choice, secret: reply.secret_request, timeline: reply.timeline || [...timeline] });
@@ -393,7 +421,7 @@ export default function App() {
     const paint = (patch: Partial<PanelJob>) => setPanelJob(cur => cur ? { ...cur, ...patch, steps: [...steps], timeline: patch.timeline || [...timeline] } : cur);
     try {
       const handlers = makeStreamHandlers(panelAllowRules.current, panelApprovalResolvers.current, steps, timeline, status => paint({ pending: true, activeStatus: status }));
-      const reply = await api.chatLive({ content: '', server_id: job.serverId, session_id: panelSession.current, bot_id: job.botId || defaultBot(bots), approval_mode: 'default', secret_answer: { message_id: cardID, value } }, handlers);
+      const reply = await api.chatLive({ content: '', server_id: job.serverId, session_id: panelSession.current, mode: 'direct', bot_id: job.botId || defaultBot(bots), approval_mode: 'default', secret_answer: { message_id: cardID, value } }, handlers);
       if (reply.answered) { paint({ pending: false, text: '这项密钥已经保存', secret: { ...original, provided_at: original.provided_at || new Date().toISOString() } }); return; }
       panelSession.current = reply.session_id || panelSession.current;
       paint({ pending: false, text: reply.text, error: '', sessionId: panelSession.current, messageId: reply.message_id, choice: reply.choice, secret: reply.secret_request, timeline: reply.timeline || [...timeline] });
@@ -421,28 +449,30 @@ export default function App() {
     setBusy(true);setFormError('');
     try {const res = await api.login(user,password);setUser(res.username);setProfile(res);setAuthed(true);if(res.must_change_credentials)return;setPassword('');await load();} catch(err) {setFormError(message(err));} finally {setBusy(false);}
   }
-  async function logout() {try {await api.logout();chatLoad.current++;chatAllowRules.current.clear();panelAllowRules.current.clear();setAuthed(false);setLines([]);setSession('');setPassword('');setNotice('');setDialog(null);setPanelJob(null);panelSession.current='';} catch(err) {setPageError(message(err));}}
+  async function logout() {try {await api.logout();chatLoad.current++;chatAllowRules.current.clear();panelAllowRules.current.clear();setAuthed(false);setLines([]);setSession('');setWorkspaceTarget(undefined);setChatWorkspace(undefined);setProjectTitle('');setPassword('');setNotice('');setDialog(null);setPanelJob(null);panelSession.current='';} catch(err) {setPageError(message(err));}}
 
   if(authed === null) return <div className="boot-screen"><LoaderCircle className="spin" size={23}/><span>连接工作台…</span></div>;
   if(!authed) return <div className="login-screen"><ThemeToggle className="login-theme"/><div className="login-brand"><span className="brand-icon"><img src="/assets/onefrog-logo.png" alt=""/></span><strong>OneFrog<span>OPERATIONS CONSOLE</span></strong></div><form className="login-card" onSubmit={e => {e.preventDefault();login();}}><h1>进入你的运维工作台</h1><p>服务器、Bot 和密钥，一个地方管理。</p><Field label="账号"><input value={user} autoComplete="username" onChange={e => setUser(e.target.value)} required placeholder="管理员账号"/></Field><Field label="密码"><input type="password" value={password} autoComplete="current-password" onChange={e => setPassword(e.target.value)} required placeholder="输入登录密码"/></Field>{formError && <Notice error>{formError}</Notice>}<Button type="submit" variant="primary" busy={busy}>进入工作台<ArrowRight size={16}/></Button><small><LockKeyhole size={12}/>自托管 · 你的基础设施，由你掌控</small></form><footer>ONEFROG / OPERATIONS, SIMPLIFIED.</footer></div>;
   if(profile.must_change_credentials) return <SetupCredentials profile={profile} initialPassword={password} onDone={async next => {setProfile(next);setUser(next.username);setPassword(''); if(!next.must_change_credentials) await load();}} onLogout={logout}/>;
+  if(migration?.paused&&dialog!=='settings') return <div className="migration-landing"><header><h1>备份与迁移</h1><div className="migration-actions"><ThemeToggle/><Button onClick={logout}>退出登录</Button></div></header><BackupMigration/></div>;
   if(profile.approval_choice_required) return <ApprovalChoice onDone={async mode => {setProfile({...profile,approval_choice_required:false});setChatConfig(c=>c?{...c,approval:{...c.approval,mode}}:c);await load();}} onLogout={logout}/>;
 
   const currentLabel = navigation.find(n => n.id === view)?.label;
   return <div className="app-shell">
     {mobileNav && <div className="nav-backdrop" onClick={() => setMobileNav(false)}/>}
-    <div className={`navigation-shell ${mobileNav?'open':''}`} inert={Boolean(dialog)||(compact&&!mobileNav)}><aside className="sidebar"><a className="brand" href="#panel" onClick={e=>{e.preventDefault();go('panel');}}><span className="brand-icon"><img src="/assets/onefrog-logo.png" alt=""/></span><strong>OneFrog<span>YOUR CONTROL SPACE</span>{updateStatus?.current && <em className="brand-version">{updateStatus.current}</em>}</strong></a><nav aria-label="主导航">{navigation.map((n,i)=><button key={n.id} title={n.label} className={`nav-item ${view===n.id?'active':''} ${i===2||i===3?'nav-separated':''}`} onClick={()=>go(n.id)} aria-current={view===n.id?'page':undefined}><n.icon size={18} strokeWidth={1.6}/><span>{n.label}</span>{(n.id==='chat'||n.id==='modules')&&<ChevronRight size={13} className="nav-chevron"/>}</button>)}</nav><div className="sidebar-bottom"><button className="nav-item" onClick={openSettings} title="设置"><Settings size={18} strokeWidth={1.6}/><span>设置</span></button><div className="account"><button className="account-edit" title="个人账号" onClick={()=>open('account')}><Avatar profile={profile}/><span><strong>{profile.display_name||profile.username}</strong><small>个人账号</small></span></button><IconButton label="退出登录" onClick={logout} disabled={sending}><LogOut size={16}/></IconButton></div></div></aside>
+    <div className={`navigation-shell ${mobileNav?'open':''}`} inert={Boolean(dialog)||(compact&&!mobileNav)}><aside className="sidebar"><a className="brand" href="#panel" onClick={e=>{e.preventDefault();go('panel');}}><span className="brand-icon"><img src="/assets/onefrog-logo.png" alt=""/></span><strong>OneFrog<span>YOUR CONTROL SPACE</span>{updateStatus?.current && <em className="brand-version">{updateStatus.current}</em>}</strong></a><nav aria-label="主导航">{navigation.map(n=><button key={n.id} title={n.label} className={`nav-item ${view===n.id?'active':''} ${n.id==='modules'||n.id==='servers'?'nav-separated':''}`} onClick={()=>go(n.id)} aria-current={view===n.id?'page':undefined}><n.icon size={18} strokeWidth={1.6}/><span>{n.label}</span>{(n.id==='chat'||n.id==='modules')&&<ChevronRight size={13} className="nav-chevron"/>}</button>)}</nav><div className="sidebar-bottom"><button className="nav-item" onClick={openSettings} title="设置"><Settings size={18} strokeWidth={1.6}/><span>设置</span></button><div className="account"><button className="account-edit" title="个人账号" onClick={()=>open('account')}><Avatar profile={profile}/><span><strong>{profile.display_name||profile.username}</strong><small>个人账号</small></span></button><IconButton label="退出登录" onClick={logout} disabled={sending}><LogOut size={16}/></IconButton></div></div></aside>
     {(view==='chat'||view==='modules')&&secondaryOpen&&<SecondaryNav key={view} view={view} bots={bots} sessions={sessions} mods={mods} activeBot={activeBot} session={session} module={activeModule} disabled={sending||loading||uploading} mode={chatMode} onBot={openBot} onSession={restoreChat} onNew={openGroupPicker} onAddBot={()=>open('agent')} onDelete={removeChat} onModule={id=>{setActiveModule(id);if(id==='services')setServiceFocus('');setMobileNav(false);}} onClose={()=>setSecondaryOpen(false)}/>}</div>
     <main className="app-main" inert={Boolean(dialog) || mobileNav}><UpdateBanner status={updateStatus}/><div className="topbar"><IconButton label="展开导航" className="mobile-menu" onClick={() => setMobileNav(true)}><Menu size={20}/></IconButton><span className="breadcrumb">OneFrog<ChevronRight size={13}/><strong>{currentLabel}</strong></span><div className="topbar-right"><span className="sync-time">{updated ? `更新于 ${updated}` : '尚未同步'}</span><ThemeToggle/><IconButton label="刷新数据" onClick={load} disabled={loading}><RefreshCw size={15} className={loading ? 'spin' : ''}/></IconButton><span className="topbar-divider"/><span className="connection"><span className={`live-dot ${pageError ? 'warn' : ''}`}/>{pageError ? '同步异常' : 'API 已连接'}</span></div></div>
     {pageError && <div className="global-error"><Notice error>{pageError}</Notice><IconButton label="关闭错误提示" onClick={() => setPageError('')}><X size={15}/></IconButton></div>}
     <div className={`view-container ${view === 'chat' ? 'chat-view' : ''}`}>
     {view === 'panel' && <Dashboard hosts={hosts} mods={mods} history={history} bots={bots} job={panelJob} sending={sending} onSelect={setSelected} onRun={runPanel} onAnswer={answerPanel} onProvide={answerPanelSecret} onDecideApproval={decidePanelApproval} onModules={() => open('modules')} onSettings={openSettings} onServers={() => go('servers')} onBots={() => go('agents')} onHistory={openHistory} onAssets={() => {setActiveModule('assets'); go('modules');}} onOpenModule={(id,serverId) => {if(id==='services')openServices(serverId);else {setActiveModule(id); go('modules');}}}/>}
-    {view === 'chat' && <Chat onAddServer={()=>open('server')} controls={controls} onControls={setControls} settings={chatConfig} mode={chatMode} attachments={attachments} onFiles={uploadFiles} onRemoveFile={id=>setAttachments(cur=>cur.filter(f=>f.id!==id))} uploading={uploading} activeBot={bots.find(b=>b.id===activeBot)} hosts={hosts} bots={bots} secrets={secrets} selected={selected} onSelect={setSelected} draft={draft} onDraft={setDraft} lines={lines} onSend={send} sending={sending||loading} onNew={openGroupPicker} sessions={sessions} session={session} onSession={restoreChat} onDeleteSession={removeChat} onNewTopic={()=>newChat(activeBot)} onNotice={setNotice} onAnswer={answerChoice} onProvide={answerSecret} onDecideApproval={decideChatApproval} onGoServer={() => go('servers')} onGoAsset={openAssetForServer} onGoHistory={name => openHistory('all', name)}/>}
+    {view === 'chat' && <Chat onAddServer={()=>open('server')} controls={controls} onControls={setControls} settings={chatConfig} mode={chatMode} workspace={chatWorkspace} onOpenWorkspace={viewCode} projectTitle={projectTitle} attachments={attachments} onFiles={uploadFiles} onRemoveFile={id=>setAttachments(cur=>cur.filter(f=>f.id!==id))} uploading={uploading} activeBot={bots.find(b=>b.id===activeBot)} hosts={hosts} bots={bots} secrets={secrets} selected={selected} onSelect={setSelected} draft={draft} onDraft={setDraft} lines={lines} onSend={send} sending={sending||loading} onNew={openGroupPicker} sessions={sessions} session={session} onSession={restoreChat} onDeleteSession={removeChat} onNewTopic={()=>newChat(activeBot)} onNotice={setNotice} onAnswer={answerChoice} onProvide={answerSecret} onDecideApproval={decideChatApproval} onGoServer={() => go('servers')} onGoAsset={openAssetForServer} onGoHistory={name => openHistory('all', name)}/>}
+    {view === 'workspace' && <Workspace hosts={hosts} target={workspaceTarget} onTarget={setWorkspaceTarget} sessions={sessions} activeTask={chatWorkspace} onReturnToTask={()=>go('chat')} onNewTask={startCodeTask} onResume={openCodeTask} sending={sending||uploading} onAddServer={()=>open('server')}/>}
     {view === 'servers' && <Servers addedServer={addedServer} hosts={hosts} selected={selected} onSelect={setSelected} onAdd={() => open('server')} onTest={testServer} testing={testing} onChat={() => openChat()} onOpenServices={openServices} onOpenAsset={openAssetForServer} onOpenHistory={name => openHistory('all', name)} onChanged={load}/>}
     {view === 'agents' && <Bots bots={bots} onAdd={()=>open('agent')} onChanged={load} onChat={id=>{openBot(id);openChat();}}/>}
     {view === 'secrets' && <Secrets secrets={secrets} onAdd={() => open('secret')} onRotate={openRotate} onDelete={removeSecret} onCopyRef={async ref => { try { await navigator.clipboard.writeText(ref); setNotice('已复制密钥引用 ' + ref); } catch { setPageError('复制失败'); } }} onUseInChat={ref => { openChat((draft ? draft + ' ' : '') + ref); }}/>}
     {view === 'modules' && activeModule === 'services' && <Services hosts={hosts} focusServer={serviceFocus} onServer={openServerById} onAsk={(id,text)=>{newChat();setSelected(id);openChat(text);}}/>}
-    {view === 'modules' && activeModule === 'assets' && <Assets hosts={hosts} focusServer={assetFocusServer} onConsumedFocus={() => setAssetFocusServer(null)} onOpenServer={openServerById} onChatServer={(id, name) => { setSelected(id); openChat('检查服务器 ' + name + ' 的运行状态和磁盘情况。'); }} onAsk={text => {const bot = bots.find(b => (b.id === 'module-builder' || b.name === '模块管理' || b.name === '模块构建') && b.enabled); if (bot) newChat(bot.id); go('chat'); setDraft(text);}}/>}
+    {view === 'modules' && activeModule === 'assets' && <Assets hosts={hosts} focusServer={assetFocusServer} onConsumedFocus={() => setAssetFocusServer(null)} onOpenServer={openServerById} onChatServer={(id, name) => { newChat(); setSelected(id); openChat('检查服务器 ' + name + ' 的运行状态和磁盘情况。'); }} onAsk={text => {const bot = bots.find(b => (b.id === 'module-builder' || b.name === '模块管理' || b.name === '模块构建') && b.enabled); if (bot) newChat(bot.id); go('chat'); setDraft(text);}}/>}
     {view === 'modules' && activeModule === 'develop' && <Develop bots={bots} settings={chatConfig} onOpenChat={text => {const bot = bots.find(b => (b.id === 'develop' || b.name === '自定义模块' || b.name === '二次开发') && b.enabled); if (bot) newChat(bot.id); go('chat'); setDraft(text);}} onOpenSettings={openSettings} onOpenModule={id => setActiveModule(id)} onChanged={load}/>}
     {view === 'modules' && activeModule === 'automations' && <Automations bots={bots} hosts={hosts} onOpenSession={async id => {let item = sessions.find(s => s.id === id); if (!item) {try {const list = await api.sessions(); setSessions(list); item = list.find(s => s.id === id);} catch (e) {setPageError(message(e)); return;}} if (item) {await restoreChat(item); go('chat');} else setPageError('这段对话已被删除');}}/>}
     {view === 'modules' && activeModule !== '' && activeModule !== 'assets' && activeModule !== 'services' && activeModule !== 'develop' && activeModule !== 'automations' && mods.find(m => m.id === activeModule)?.type === 'custom' && <CustomModulePage mod={mods.find(m => m.id === activeModule)!} onBack={() => setActiveModule('develop')} onAskDevelop={text => {const bot = bots.find(b => (b.id === 'develop' || b.name === '自定义模块' || b.name === '二次开发') && b.enabled); if (bot) newChat(bot.id); go('chat'); setDraft(text);}} onChanged={load}/>}
@@ -454,11 +484,12 @@ export default function App() {
     <ApprovalDialog/>
     {dialog === 'account' && <AccountDialog profile={profile} onClose={close} onSaved={p=>{setProfile(p);setUser(p.username);setNotice('账号资料已保存');setDialog(null);}}/>}
     {dialog === 'settings' && <SettingsPanel bots={bots} onUpdateStatus={setUpdateStatus} onClose={close} onSaved={() => {setNotice('设置已保存，下一轮任务生效');load();}}/>}
+    {apiPrompt && dialog !== 'settings' && <Modal title="要先配置模型 API 吗？" note="还没有可用的 API 渠道。配好之后，Bot 才能对话和执行任务。之后也可以从左侧「设置」进入。" cancel="稍后再说" confirm="去配置" onClose={()=>{localStorage.setItem('onefrog-api-prompt','dismissed');setApiPrompt(false);}} onSubmit={()=>{localStorage.setItem('onefrog-api-prompt','dismissed');setApiPrompt(false);openSettings();}}/>}
     {dialog === 'modules' && <Modal title="定制面板模块" note="选择你想持续关注的内容，开关即时保存。" onClose={close} confirm="完成"><div className="module-picker">{mods.map(m => <div key={m.id}><span className="host-icon"><Blocks size={16}/></span><div><strong>{m.name}</strong><small>{m.desc}</small></div><button className={`switch ${m.enabled ? 'on' : ''}`} role="switch" aria-checked={m.enabled} aria-label={`显示${m.name}`} disabled={!!switching} onClick={() => toggle(m.id)}><i/></button></div>)}</div></Modal>}
     {dialog === 'server' && <AddServer onClose={close} onChanged={load} onDone={id=>{setSelected(id);setAddedServer(id);setNotice('服务器接入状态已更新');load();}}/>}
     {dialog === 'secret' && <Modal title="添加密钥" note="在这里录入敏感内容，Bot 只能按名称引用。" onClose={close} onSubmit={submit} busy={busy} error={formError}><Field label="密钥名称" hint="命令引用格式：{{secret:名称}}"><input required value={form.name} placeholder="例如 production-db-password" onChange={e => setForm({...form,name:e.target.value})}/></Field><SecretSource form={form} onForm={setForm}/><Field label="用途说明"><input value={form.description} placeholder="例如：生产数据库连接凭据" onChange={e => setForm({...form,description:e.target.value})}/></Field><div className="inline-help"><LockKeyhole size={15}/>关闭窗口会清空未保存的敏感内容。</div></Modal>}{dialog === 'rotate' && <Modal title="轮换密钥" note={'替换「' + form.name + '」的密文。名称不变，明文不会显示。'} onClose={close} onSubmit={submit} busy={busy} error={formError} confirm="保存新内容"><Field label="密钥名称"><input value={form.name} readOnly/></Field><SecretSource form={form} onForm={setForm} rotate/><Field label="用途说明"><input value={form.description} placeholder="可选，留空则清空说明" onChange={e => setForm({...form,description:e.target.value})}/></Field><div className="inline-help"><LockKeyhole size={15}/>提交后输入框会清空。模型仍然只能看到名称。</div></Modal>}
     {dialog === 'agent' && <Modal title="创建 Bot" note="描述分工，让主控知道何时把任务交给它。" onClose={close} onSubmit={submit} busy={busy} submitDisabled={botModelsLoading||!botModels} error={formError} confirm="创建 Bot"><Field label="Bot 名称"><input required placeholder="例如：数据库专家" value={form.name} onChange={e => setForm({...form,name:e.target.value})}/></Field><Field label="职责描述"><input required placeholder="例如：分析数据库性能与慢查询" value={form.description} onChange={e => setForm({...form,description:e.target.value})}/></Field>{botModelsLoading?<div className="loading-inline"><LoaderCircle size={16} className="spin"/>加载可选模型…</div>:botModels&&<><RoutePicker label="Bot 模型" note="跟随协作默认模型，或为此 Bot 单独选择渠道和模型；创建后可在设置中修改。" providers={botModels.providers} value={botRoute} onChange={setBotRoute} inherit/>{!botModels.providers.some(p=>p.enabled)&&<p className="model-hidden-note">尚无可用渠道，可先跟随默认配置，稍后在设置中配置。</p>}</>}<Field label="工作指令" hint="可选，用于约束这个 Bot 的工作方式。"><textarea placeholder="例如：先收集证据，只执行只读查询。" rows={4} value={form.system_prompt} onChange={e => setForm({...form,system_prompt:e.target.value})}/></Field></Modal>}
     {dialog === 'rollback' && <Modal title="撤回详情" note="当前版本仅支持记录撤回标记，暂不恢复服务器上的文件或服务。" onClose={close} confirm="知道了"><div className="rollback-detail"><Terminal size={18}/><code>{history.find(h => h.id === rollback)?.action}</code></div><p className="muted">实际恢复需要有效快照与恢复执行器。这里暂不提供恢复操作，避免将记录更新误认为服务器已恢复。</p></Modal>}
-    {dialog === 'group' && <Modal title="新建群聊" note="选择参与的 Bot。主控固定参与，负责分派任务；聊天中也可以随时剔除或拉入。" onClose={close} onSubmit={startGroup} confirm="开始群聊"><div className="group-picker">{bots.filter(b=>b.enabled).map(b=>{const lead=b.id===defaultBot(bots);const on=lead||groupPick.includes(b.id);return <label key={b.id} className={on?'on':''}><BotAvatar bots={bots} id={b.id} className="small-avatar"/><div><strong>{b.name}{lead&&<span className="tag">主控</span>}</strong><small>{b.description||'按主控分派完成任务'}</small></div><input type="checkbox" checked={on} disabled={lead} aria-label={(on?'移出 ':'加入 ')+b.name} onChange={e=>setGroupPick(cur=>e.target.checked?[...cur,b.id]:cur.filter(id=>id!==b.id))}/></label>;})}</div><p className="group-picker-count">已选 {bots.filter(b=>b.enabled&&(b.id===defaultBot(bots)||groupPick.includes(b.id))).length} / {bots.filter(b=>b.enabled).length} 个 Bot</p></Modal>}
+    {dialog === 'group' && <Modal title="新建群聊" note="每个群聊对应一个独立项目。主控负责派工，成员共享本项目的工作记忆。" onClose={close} onSubmit={startGroup} confirm="开始群聊"><Field label="项目名称（可选）"><input maxLength={60} value={groupName} onChange={e=>setGroupName(e.target.value)} placeholder="例如：生产环境迁移"/></Field><div className="group-picker">{bots.filter(b=>b.enabled).map(b=>{const lead=b.id===defaultBot(bots);const on=lead||groupPick.includes(b.id);return <label key={b.id} className={on?'on':''}><BotAvatar bots={bots} id={b.id} className="small-avatar"/><div><strong>{b.name}{lead&&<span className="tag">主控</span>}</strong><small>{b.description||'按主控分派完成任务'}</small></div><input type="checkbox" checked={on} disabled={lead} aria-label={(on?'移出 ':'加入 ')+b.name} onChange={e=>setGroupPick(cur=>e.target.checked?[...cur,b.id]:cur.filter(id=>id!==b.id))}/></label>;})}</div><p className="group-picker-count">已选 {bots.filter(b=>b.enabled&&(b.id===defaultBot(bots)||groupPick.includes(b.id))).length} / {bots.filter(b=>b.enabled).length} 个 Bot</p></Modal>}
   </div>;
 }

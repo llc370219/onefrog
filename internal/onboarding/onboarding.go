@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/url"
 	"onefrog/internal/id"
+	"onefrog/internal/maintenance"
 	"onefrog/internal/model"
 	"onefrog/internal/monitor"
 	"onefrog/internal/remote"
@@ -77,6 +78,7 @@ type Hook struct {
 	Initialize func(context.Context, model.Server, func(string) (string, error)) error
 }
 type Manager struct {
+	Gate          *maintenance.Gate
 	startMu       sync.Mutex
 	mu            sync.Mutex
 	db            store.Store
@@ -243,6 +245,16 @@ func Validate(r *Request) error {
 	return nil
 }
 func (m *Manager) Start(owner string, r Request) (View, error) {
+	done, gateErr := m.Gate.Enter()
+	if gateErr != nil {
+		return View{}, gateErr
+	}
+	transferred := false
+	defer func() {
+		if !transferred {
+			done()
+		}
+	}()
 	m.startMu.Lock()
 	defer m.startMu.Unlock()
 	if err := Validate(&r); err != nil {
@@ -313,7 +325,8 @@ func (m *Manager) Start(owner string, r Request) (View, error) {
 	m.mu.Unlock()
 	r.Secret = ""
 	r.Passphrase = ""
-	go m.run(v.ID, rec, r)
+	transferred = true
+	go func() { defer done(); m.run(v.ID, rec, r) }()
 	return m.Get(owner, v.ID)
 }
 

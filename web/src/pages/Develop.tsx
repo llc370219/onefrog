@@ -238,7 +238,7 @@ export default function Develop({
   async function runStream(reqBody: Parameters<typeof api.chatLive>[0]) {
     const localItems: TurnItem[] = [];
     const sync = () => setTimeline([...localItems]);
-    return api.chatLive(reqBody, {
+    return api.chatLive({ ...reqBody, mode: 'direct' }, {
       onSay: (bot, content) => {
         if (content.trim()) {
           localItems.push({ kind: 'say', bot, text: content.trim() });

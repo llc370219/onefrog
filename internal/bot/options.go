@@ -9,13 +9,16 @@ import (
 	"onefrog/internal/audit"
 	"onefrog/internal/model"
 	"onefrog/internal/preferences"
+	"onefrog/internal/workspace"
 	"strings"
 )
 
 type Options struct {
+	Workspace      *workspace.Target  `json:"workspace,omitempty"`
 	ApprovalRoute  *preferences.Route `json:"approval_route,omitempty"`
 	ModelRoute     *preferences.Route `json:"model_route,omitempty"`
 	ExcludedBotIDs []string           `json:"excluded_bot_ids,omitempty"`
+	ProjectTitle   string             `json:"project_title,omitempty"`
 	// Mode is "direct" (one-to-one chat with a single bot and its own memory)
 	// or "team" (the default: the lead bot pulls other bots in as needed).
 	Mode          string   `json:"mode,omitempty"`
@@ -36,6 +39,7 @@ type Options struct {
 // ApprovalRequest is shown to the operator before a command runs.
 type ApprovalRequest struct {
 	ID         string `json:"id"`
+	SingleUse  bool   `json:"single_use,omitempty"`
 	BotID      string `json:"bot_id"`
 	BotName    string `json:"bot_name,omitempty"`
 	ServerID   string `json:"server_id"`
@@ -89,6 +93,11 @@ func (a *Agent) allowedBot(ctx context.Context, id string) bool {
 	return true
 }
 func (a *Agent) ReplyWithOptions(ctx context.Context, botID, serverID, sessionID, content string, opt Options, sink func(Step)) (Result, error) {
+	done, gateErr := a.Gate.Enter()
+	if gateErr != nil {
+		return Result{}, gateErr
+	}
+	defer done()
 	if a.Settings != nil {
 		copy := *a
 		copy.Settings = a.Settings.Frozen()
@@ -139,7 +148,6 @@ func (a *Agent) ReplyWithOptions(ctx context.Context, botID, serverID, sessionID
 	case "", "team":
 		opt.Mode = ""
 	case "direct":
-		// A direct chat is with one bot; scope controls do not apply.
 		opt.ExcludedBotIDs = nil
 	default:
 		return Result{}, errors.New("对话模式无效")

@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"onefrog/internal/model"
 	"onefrog/internal/preferences"
+	"onefrog/internal/providerlogin"
 )
 
 func (s *Server) getSettings(c *gin.Context) {
@@ -120,6 +121,10 @@ func (s *Server) probe(c *gin.Context) (providerProbe, string, bool) {
 		return req, "", false
 	}
 	req.BaseURL = base
+	if err := preferences.ValidateProtocol(req.Protocol); err != nil {
+		fail(c, 400, err.Error())
+		return req, "", false
+	}
 	key := strings.TrimSpace(req.APIKey)
 	if key == "" && !req.ClearAPIKey {
 		for _, p := range s.Settings.Snapshot().Providers {
@@ -230,7 +235,14 @@ func (s *Server) testProvider(c *gin.Context) {
 		return
 	}
 	started := time.Now()
-	raw, status, err := providerHTTP(c.Request.Context(), "POST", req.BaseURL+"/chat/completions", key, map[string]any{"model": req.Model, "messages": []map[string]string{{"role": "user", "content": "Reply only OK. Do not call tools."}}})
+	messages := []map[string]any{{"role": "user", "content": "Reply only OK. Do not call tools."}}
+	path := "/chat/completions"
+	body := map[string]any{"model": req.Model, "messages": messages}
+	if req.Protocol == preferences.ProtocolResponses {
+		path = "/responses"
+		body = providerlogin.ResponsesRequest(req.Model, messages, nil, false)
+	}
+	raw, status, err := providerHTTP(c.Request.Context(), "POST", req.BaseURL+path, key, body)
 	if err != nil {
 		fail(c, 502, "模型连接失败或超时")
 		return
@@ -238,6 +250,13 @@ func (s *Server) testProvider(c *gin.Context) {
 	if status != 200 {
 		c.JSON(502, gin.H{"error": "模型调用失败，请检查模型名称、权限和余额", "upstream_status": status})
 		return
+	}
+	if req.Protocol == preferences.ProtocolResponses {
+		raw, err = providerlogin.NormalizeResponses(raw)
+		if err != nil {
+			fail(c, 502, "接口未返回有效的 Responses 响应")
+			return
+		}
 	}
 	var reply struct {
 		Choices []json.RawMessage `json:"choices"`

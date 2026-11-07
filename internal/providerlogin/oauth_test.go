@@ -158,7 +158,7 @@ func TestAdapterToolRoundTrip(t *testing.T) {
 			t.Fatal("missing", want)
 		}
 	}
-	raw, _ = json.Marshal(responsesRequest("model", messages, nil))
+	raw, _ = json.Marshal(ResponsesRequest("model", messages, nil, true))
 	if !bytes.Contains(raw, []byte("function_call_output")) {
 		t.Fatal("missing tool result")
 	}
@@ -166,7 +166,7 @@ func TestAdapterToolRoundTrip(t *testing.T) {
 	if e != nil || !bytes.Contains(out, []byte("thought_signature")) {
 		t.Fatal(string(out), e)
 	}
-	if _, e = normalizeResponses([]byte("data: {\"type\":\"response.failed\"}\n")); e == nil {
+	if _, e = NormalizeResponses([]byte("data: {\"type\":\"response.failed\"}\n")); e == nil {
 		t.Fatal("accepted failed stream")
 	}
 }

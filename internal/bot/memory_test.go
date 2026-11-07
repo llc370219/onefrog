@@ -70,7 +70,7 @@ func TestRecallIsolatesWorkersAndRedactsVault(t *testing.T) {
 	}
 }
 
-func TestHandoffMemoryFeedsNextPrompt(t *testing.T) {
+func TestProjectHandoffMemoryIsSharedOnlyWithinTheSameGroup(t *testing.T) {
 	const vault = "p@ss-vault-99"
 	const task = "确认 web-01 磁盘"
 	mem, box := memoryFixture(t, vault)
@@ -103,10 +103,14 @@ func TestHandoffMemoryFeedsNextPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 	agent := &Agent{Store: mem, Box: box, SSH: &scriptSSH{}, HTTP: srv.Client()}
-	if _, err := agent.Reply(ctx, "main", "", "", "让巡检看磁盘"); err != nil {
+	first, err := agent.ReplyWithOptions(ctx, "main", "", "", "让巡检看磁盘", Options{ProjectTitle: "容量检查"}, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	items, err := mem.ListBotMemories(ctx, "check")
+	if sess, err := mem.GetChatSession(ctx, first.SessionID); err != nil || sess.Title != "容量检查" {
+		t.Fatalf("project title: %+v %v", sess, err)
+	}
+	items, err := mem.ListProjectNotes(ctx, first.SessionID)
 	if err != nil || len(items) != 1 || items[0].Source != "handoff" || items[0].Title != task {
 		t.Fatalf("%+v %v", items, err)
 	}
@@ -114,26 +118,24 @@ func TestHandoffMemoryFeedsNextPrompt(t *testing.T) {
 		t.Fatal(items[0].Body)
 	}
 
-	leader, _ := mem.GetBot(ctx, "main")
-	worker, _ := mem.GetBot(ctx, "check")
-	leaderPrompt := agent.leaderPrompt(ctx, leader, "")
-	workerPrompt := agent.workerPrompt(ctx, worker, "")
-	if strings.Contains(leaderPrompt, vault) || strings.Contains(workerPrompt, vault) {
-		t.Fatal("prompt leaked the vault secret")
+	if notes, err := mem.ListBotMemories(ctx, "check"); err != nil || len(notes) != 0 {
+		t.Fatalf("project contaminated private memory: %+v %v", notes, err)
 	}
-	if !strings.Contains(leaderPrompt, task) || strings.Contains(leaderPrompt, "磁盘还剩 40%") {
-		t.Fatal("leader should see the title, not the body")
+	if _, err = agent.Remember(ctx, "main", "私聊偏好", "只属于单聊", "user"); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(workerPrompt, task) || !strings.Contains(workerPrompt, "磁盘还剩 40%") || !strings.Contains(workerPrompt, "***") {
-		t.Fatal(workerPrompt)
+	if _, err := agent.Reply(ctx, "main", "", first.SessionID, "再确认一次"); err != nil {
+		t.Fatal(err)
 	}
-
-	if _, err := agent.Reply(ctx, "main", "", "", "再确认一次"); err != nil {
+	if _, err := agent.Reply(ctx, "main", "", "", "另一个项目"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agent.ReplyWithOptions(ctx, "main", "", "", "单聊", Options{Mode: "direct"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(bodies) < 5 {
+	if len(bodies) != 8 {
 		t.Fatalf("model calls %d", len(bodies))
 	}
 	for _, body := range bodies {
@@ -144,11 +146,18 @@ func TestHandoffMemoryFeedsNextPrompt(t *testing.T) {
 	if strings.Contains(bodies[0], task) {
 		t.Fatal("memory was injected before the handoff finished")
 	}
-	if !strings.Contains(bodies[3], task) || strings.Contains(bodies[3], "磁盘还剩 40%") {
-		t.Fatal("next leader prompt missing the handoff title")
+	for _, i := range []int{3, 4} {
+		if !strings.Contains(bodies[i], "磁盘还剩 40%") || strings.Contains(bodies[i], "只属于单聊") {
+			t.Fatalf("call %d used the wrong memory: %s", i+1, bodies[i])
+		}
 	}
-	if !strings.Contains(bodies[4], task) || !strings.Contains(bodies[4], "磁盘还剩 40%") || !strings.Contains(bodies[4], "***") {
-		t.Fatal("next worker prompt missing its own note")
+	for _, i := range []int{6, 7} {
+		if strings.Contains(bodies[i], task) || strings.Contains(bodies[i], "磁盘还剩 40%") {
+			t.Fatalf("project memory leaked to call %d", i+1)
+		}
+	}
+	if strings.Contains(bodies[6], "只属于单聊") || !strings.Contains(bodies[7], "只属于单聊") {
+		t.Fatal("private note was not confined to the direct chat")
 	}
 }
 
@@ -179,15 +188,15 @@ func TestHandoffSkipsEmptyAndPaused(t *testing.T) {
 		t.Fatal(err)
 	}
 	agent := &Agent{Store: mem, Box: box, HTTP: srv.Client()}
-	if _, err := agent.Reply(ctx, "main", "", "", "第一次"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := agent.Reply(ctx, "main", "", "", "第二次"); err != nil {
-		t.Fatal(err)
-	}
-	items, err := mem.ListBotMemories(ctx, "check")
-	if err != nil || len(items) != 0 {
-		t.Fatalf("skipped conclusions were saved: %+v %v", items, err)
+	for _, task := range []string{"第一次", "第二次"} {
+		res, err := agent.Reply(ctx, "main", "", "", task)
+		if err != nil {
+			t.Fatal(err)
+		}
+		notes, err := mem.ListProjectNotes(ctx, res.SessionID)
+		if err != nil || len(notes) != 0 {
+			t.Fatalf("skipped conclusions were saved: %+v %v", notes, err)
+		}
 	}
 }
 

@@ -206,6 +206,29 @@ func TestApplyWritesCachedTag(t *testing.T) {
 	}
 }
 
+func TestApplyRefusesBetaWhenHelperCannotSwitch(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("OF_UPGRADE_DIR", dir)
+	c := &Checker{Current: "v0.1.31", Channel: ChannelStable}
+	cacheRelease(c, "v0.1.32-beta.1")
+	if s := c.Status(); !s.HelperStale {
+		t.Fatalf("expected stale helper, %+v", s)
+	}
+	if _, err := c.Apply(); !errors.Is(err, ErrHelperStale) {
+		t.Fatalf("err %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "upgrade")); !os.IsNotExist(err) {
+		t.Fatal("stale helper still wrote a trigger")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "helper-version"), []byte("2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.Apply()
+	if err != nil || got != "v0.1.32-beta.1" {
+		t.Fatalf("apply %q %v", got, err)
+	}
+}
+
 func TestApplyRefusesMissingDir(t *testing.T) {
 	t.Setenv("OF_UPGRADE_DIR", filepath.Join(t.TempDir(), "missing"))
 	c := &Checker{Current: "v0.1.7"}

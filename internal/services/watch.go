@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode"
 
+	"onefrog/internal/maintenance"
 	"onefrog/internal/model"
 	"onefrog/internal/secret"
 	"onefrog/internal/store"
@@ -72,6 +73,7 @@ type watchKey struct{ server, kind, name string }
 
 // Watch polls only the services the user selected and records state changes.
 type Watch struct {
+	Gate    *maintenance.Gate
 	path    string
 	box     *secret.Box
 	store   store.Store
@@ -328,6 +330,11 @@ func (w *Watch) Run(ctx context.Context) {
 
 // Poll checks every selected server once. The scanner caps SSH concurrency.
 func (w *Watch) Poll(ctx context.Context) {
+	done, err := w.Gate.Enter()
+	if err != nil {
+		return
+	}
+	defer done()
 	w.mu.Lock()
 	scanner := w.scanner
 	ids := make([]string, 0, len(w.cfg.Servers))

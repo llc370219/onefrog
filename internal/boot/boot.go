@@ -92,6 +92,9 @@ func Prepare(ctx context.Context, db store.Store, cfg config.Config) error {
 	); err != nil {
 		return err
 	}
+	if err := ensureLead(ctx, db); err != nil {
+		return err
+	}
 	if !cfg.Seed {
 		return nil
 	}
@@ -100,6 +103,36 @@ func Prepare(ctx context.Context, db store.Store, cfg config.Config) error {
 		return err
 	}
 	return seed(ctx, db)
+}
+
+// ensureLead restores the default lead bot after it was deleted. An existing
+// bot named 服务器管理 keeps its own instructions and model.
+func ensureLead(ctx context.Context, db store.Store) error {
+	if _, err := db.GetBot(ctx, "main"); err == nil {
+		return nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	bots, err := db.ListBots(ctx)
+	if err != nil {
+		return err
+	}
+	for _, item := range bots {
+		if item.Name != "服务器管理" {
+			continue
+		}
+		item.ID = "main"
+		if _, err = db.UpdateBot(ctx, item); err == nil || !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+		_, err = db.CreateBot(ctx, item)
+		return err
+	}
+	_, err = db.CreateBot(ctx, model.Bot{
+		ID: "main", Name: "服务器管理", Description: "默认主控。管理接入的服务器，并把任务分派给其他 Bot。",
+		CreatedAt: time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC),
+	})
+	return err
 }
 
 func AttachModel(ctx context.Context, db store.Store, box *secret.Box, cfg config.Config) error {

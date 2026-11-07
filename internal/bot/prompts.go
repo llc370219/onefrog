@@ -72,7 +72,7 @@ const promptPanel = `
 - create_bot：新建 Bot。name 必填，description、system_prompt 可选；不要传 api_key、base_url、password 或任何密钥明文。新 Bot 默认启用、跟随默认模型，直接创建，无需审批。
 - set_bot_prompt：修改已有 Bot 的工作指令或简介，id 用 Bot 的 id 或名称。用户要改 Bot 的行为或做二次开发时直接调用。
 - delete_bot：删除一个 Bot，它的记忆一起删除，已有对话保留。不能删除你自己，也不能删除默认主控「服务器管理」（id=main）。
-- delete_chat：删除一条对话记录，id 用 overview 里的对话 id 或标题。只删对话，不碰登录会话、密钥和服务器。
+- delete_chat：删除一条对话记录，id 用 overview 里的对话 id 或标题。删除对话及其项目工作记忆；只能操作 overview 列出的对话。
 - test_server：测试已保存服务器的 SSH。如果汇报了未确认的指纹，把指纹原样交给 confirm_fingerprint，不要假装已经登录成功。
 - confirm_fingerprint：id 加指纹。只有钉住这个指纹并登录成功才会保存；已保存的不同指纹不会被覆盖。
 - reset_fingerprint：清除已保存的指纹，清除后不会自动信任新指纹。

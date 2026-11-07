@@ -130,12 +130,12 @@ func (m *Manager) CompleteChat(ctx context.Context, owner, kind, model string, m
 		return nil, e
 	}
 	if kind == "oauth-openai" {
-		body := responsesRequest(model, messages, tools)
+		body := ResponsesRequest(model, messages, tools, true)
 		raw, e := m.request(ctx, "POST", d.BaseURL+"/responses", c.Access, c.AccountID, body)
 		if e != nil {
 			return nil, e
 		}
-		return normalizeResponses(raw)
+		return NormalizeResponses(raw)
 	}
 	if c.ProjectID == "" {
 		return nil, errors.New("请先在官方 Antigravity 应用完成账号初始化并拉取模型")
@@ -169,13 +169,20 @@ func object(v any) map[string]any {
 	return out
 }
 func str(v any) string { s, _ := v.(string); return s }
-func responsesRequest(model string, messages, tools []map[string]any) map[string]any {
+
+// ResponsesRequest translates the agent's transcript into Responses input items.
+func ResponsesRequest(model string, messages, tools []map[string]any, stream bool) map[string]any {
 	input := []map[string]any{}
 	instructions := []string{}
 	for _, msg := range messages {
 		role := str(msg["role"])
 		if role == "system" {
 			instructions = append(instructions, str(msg["content"]))
+			continue
+		}
+		if items, ok := msg["response_items"].([]json.RawMessage); ok && len(items) > 0 {
+			// Replay the native items unchanged, including opaque reasoning state.
+			input = append(input, arr(items)...)
 			continue
 		}
 		if role == "tool" {
@@ -212,15 +219,17 @@ func responsesRequest(model string, messages, tools []map[string]any) map[string
 	defs := []map[string]any{}
 	for _, t := range tools {
 		f := object(t["function"])
-		defs = append(defs, map[string]any{"type": "function", "name": f["name"], "description": f["description"], "parameters": f["parameters"]})
+		defs = append(defs, map[string]any{"type": "function", "name": f["name"], "description": f["description"], "parameters": f["parameters"], "strict": false})
 	}
-	body := map[string]any{"model": model, "instructions": strings.Join(instructions, "\n"), "input": input, "store": false, "stream": true}
+	body := map[string]any{"model": model, "instructions": strings.Join(instructions, "\n"), "input": input, "store": false, "stream": stream}
 	if len(defs) > 0 {
 		body["tools"] = defs
 	}
 	return body
 }
-func normalizeResponses(raw []byte) ([]byte, error) {
+
+// NormalizeResponses accepts a JSON response or an SSE stream with a terminal response.
+func NormalizeResponses(raw []byte) ([]byte, error) {
 	var response map[string]any
 	if json.Unmarshal(raw, &response) != nil {
 		scanner := bufio.NewScanner(bytes.NewReader(raw))
@@ -234,19 +243,19 @@ func normalizeResponses(raw []byte) ([]byte, error) {
 			if json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))), &ev) != nil {
 				continue
 			}
-			if ev["type"] == "response.failed" || ev["type"] == "error" {
-				return nil, errors.New("OAuth 模型响应失败，请检查模型权限或配额")
+			if ev["type"] == "response.failed" || ev["type"] == "response.incomplete" || ev["type"] == "error" {
+				return nil, errors.New("Responses 模型响应失败，请检查模型权限或配额")
 			}
 			if ev["type"] == "response.completed" {
 				response = object(ev["response"])
 			}
 		}
 		if scanner.Err() != nil {
-			return nil, errors.New("OAuth 流读取失败")
+			return nil, errors.New("Responses 流读取失败")
 		}
 	}
-	if response["error"] != nil || response["status"] == "failed" || response["status"] == "incomplete" {
-		return nil, errors.New("OAuth 模型未完成本次请求")
+	if status := str(response["status"]); response["error"] != nil || (status != "" && status != "completed") {
+		return nil, errors.New("Responses 模型未完成本次请求")
 	}
 	texts := []string{}
 	calls := []map[string]any{}
@@ -255,15 +264,21 @@ func normalizeResponses(raw []byte) ([]byte, error) {
 			calls = append(calls, map[string]any{"id": item["call_id"], "type": "function", "function": map[string]any{"name": item["name"], "arguments": item["arguments"]}})
 		}
 		for _, p := range arr(item["content"]) {
-			if p["type"] == "output_text" {
+			switch p["type"] {
+			case "output_text":
 				texts = append(texts, str(p["text"]))
+			case "refusal":
+				texts = append(texts, str(p["refusal"]))
 			}
 		}
 	}
 	if response == nil || len(texts) == 0 && len(calls) == 0 {
-		return nil, errors.New("OAuth 模型未返回文本或工具调用")
+		return nil, errors.New("Responses 模型未返回文本或工具调用")
 	}
 	out := map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": strings.Join(texts, "\n"), "tool_calls": calls}}}}
+	if len(calls) > 0 {
+		out["response_items"] = response["output"]
+	}
 	if u := object(response["usage"]); len(u) > 0 {
 		out["usage"] = map[string]any{"prompt_tokens": u["input_tokens"], "completion_tokens": u["output_tokens"], "total_tokens": u["total_tokens"]}
 	}

@@ -100,9 +100,10 @@ export type Attachment={id:string;name:string;mime:string;size:number};
 /** direct: one-to-one chat with a single bot and its own memory. team (default): the lead bot pulls other bots in. */
 export type ChatMode='direct'|'team';
 export type ChatOptions={approval_route?:ModelRoute;model_route?:ModelRoute;excluded_bot_ids?:string[];approval_mode?:string;attachment_ids?:string[];mode?:ChatMode};
-export type ChatRequest=ChatOptions&{content:string;server_id?:string;bot_id?:string;session_id?:string;choice_answer?:ChoiceReply;secret_answer?:SecretReply};
+export type ChatRequest=ChatOptions&{content:string;project_title?:string;server_id?:string;bot_id?:string;session_id?:string;choice_answer?:ChoiceReply;secret_answer?:SecretReply};
 export type ChatResult={session_id:string;text:string;message_id?:string;choice?:Choice;secret_request?:SecretRequest;timeline?:TurnItem[];answered?:boolean};
 export type BotRow = { id:string;name:string;description:string;system_prompt?:string;enabled:boolean;model_route:ModelRoute;effective_route:ModelRoute;usage:TokenUsage;memory_count?:number };
+export type ProjectNote = { id:string;title:string;body:string;source:string;updated_at:string };
 export type BotMemory = { id:string;bot_id:string;title:string;body:string;source:string;created_at:string;updated_at:string };
 
 type ServerJSON = {
@@ -220,6 +221,7 @@ export const api = {
  async upload(file:File):Promise<Attachment>{const data=new FormData();data.append('file',file);const res=await fetch('/api/attachments',{method:'POST',credentials:'include',headers:{[CSRF_HEADER]:'1'},body:data});const body=await res.json();if(!res.ok)throw new Error(body.error||'上传失败');return body;},
  async updateBot(id:string,body:{name:string;description:string;system_prompt:string;model_route:ModelRoute}){return call('/api/bots/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(body)});},
  async botEnabled(id:string,enabled:boolean){return call('/api/bots/'+encodeURIComponent(id)+'/enabled',{method:'PUT',body:JSON.stringify({enabled})});},
+ async projectNotes(id:string):Promise<ProjectNote[]>{return call('/api/sessions/'+encodeURIComponent(id)+'/project-memory');},
  async memories(id:string):Promise<BotMemory[]>{return (await call('/api/bots/'+encodeURIComponent(id)+'/memories'))||[];},
  async addMemory(id:string,body:{title:string;body:string}):Promise<BotMemory>{return call('/api/bots/'+encodeURIComponent(id)+'/memories',{method:'POST',body:JSON.stringify(body)});},
  async deleteMemory(id:string,memoryID:string){return call('/api/bots/'+encodeURIComponent(id)+'/memories/'+encodeURIComponent(memoryID),{method:'DELETE'});},
@@ -496,7 +498,7 @@ export function setApprovalTimeoutHandler(fn: ((id: string) => void) | null) { a
 export type ServerTestResult = { ok: boolean; status: "online" | "offline" | "host_key_unknown" | "host_key_mismatch" | string; detail: string; fingerprint?: string; stored_fingerprint?: string };
 
 export type ModelRoute = {provider_id:string;model:string};
-export type ProviderSettings = {auth_kind?:string;id:string;name:string;base_url:string;enabled:boolean;auth_required:boolean;models:string[];hidden_models?:string[];has_api_key:boolean;api_key?:string;clear_api_key?:boolean};
+export type ProviderSettings = {protocol?:'chat_completions'|'responses';auth_kind?:string;id:string;name:string;base_url:string;enabled:boolean;auth_required:boolean;models:string[];hidden_models?:string[];has_api_key:boolean;api_key?:string;clear_api_key?:boolean};
 export type SettingsState = {
  disabled_bots?:string[];
  providers:ProviderSettings[];

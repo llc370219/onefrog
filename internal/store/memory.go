@@ -12,26 +12,27 @@ import (
 )
 
 type Memory struct {
-	serverPath  string
-	serverBox   *secret.Box
-	accountPath string
-	botPath     string
-	botBox      *secret.Box
-	dataDir     string
-	dataBox     *secret.Box
-	mu          sync.Mutex
-	users       map[string]userRow
-	byName      map[string]string
-	sessions    map[string]sessionRow
-	servers     map[string]ServerRec
-	bots        map[string]model.Bot
-	secrets     map[string]SecretRec
-	secretName  map[string]string
-	modules     map[string]model.Module
-	history     map[string]HistoryRec
-	chats       map[string]model.Session
-	messages    map[string][]model.Message
-	memories    map[string]model.BotMemory
+	serverPath   string
+	serverBox    *secret.Box
+	accountPath  string
+	botPath      string
+	botBox       *secret.Box
+	dataDir      string
+	dataBox      *secret.Box
+	mu           sync.Mutex
+	users        map[string]userRow
+	byName       map[string]string
+	sessions     map[string]sessionRow
+	servers      map[string]ServerRec
+	bots         map[string]model.Bot
+	secrets      map[string]SecretRec
+	secretName   map[string]string
+	modules      map[string]model.Module
+	history      map[string]HistoryRec
+	chats        map[string]model.Session
+	messages     map[string][]model.Message
+	memories     map[string]model.BotMemory
+	projectNotes map[string][]model.ProjectNote
 }
 
 type userRow struct {
@@ -51,7 +52,7 @@ func NewMemory() *Memory {
 		secrets: map[string]SecretRec{}, secretName: map[string]string{},
 		modules: map[string]model.Module{}, history: map[string]HistoryRec{},
 		chats: map[string]model.Session{}, messages: map[string][]model.Message{},
-		memories: map[string]model.BotMemory{},
+		memories: map[string]model.BotMemory{}, projectNotes: map[string][]model.ProjectNote{},
 	}
 }
 

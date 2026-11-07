@@ -17,7 +17,19 @@ import (
 	"onefrog/internal/store"
 )
 
+const ProtocolResponses = "responses"
+
+func ValidateProtocol(protocol string) error {
+	switch protocol {
+	case "", "chat_completions", ProtocolResponses:
+		return nil
+	default:
+		return errors.New("不支持的模型接口协议")
+	}
+}
+
 type Provider struct {
+	Protocol     string   `json:"protocol,omitempty"`
 	AuthKind     string   `json:"auth_kind,omitempty"`
 	ID           string   `json:"id"`
 	Name         string   `json:"name"`
@@ -185,6 +197,9 @@ func (m *Manager) Save(in Input) (State, error) {
 			return State{}, err
 		}
 		p.BaseURL = base
+		if err := ValidateProtocol(p.Protocol); err != nil {
+			return State{}, err
+		}
 		if p.AuthKind != "" && p.AuthKind != "api_key" {
 			expected := ""
 			if p.AuthKind == "oauth-openai" {
@@ -200,6 +215,7 @@ func (m *Manager) Save(in Input) (State, error) {
 			if strings.TrimSpace(req.APIKey) != "" {
 				return State{}, errors.New("OAuth 渠道不使用手动 API Key")
 			}
+			p.Protocol = ""
 			p.AuthRequired = false
 			next.Keys[p.ID] = ""
 		}

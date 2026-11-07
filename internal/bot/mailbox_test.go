@@ -71,7 +71,7 @@ func TestMessageAgentWakesTargetInbox(t *testing.T) {
 	agent := &Agent{Store: mem, Box: box, SSH: &scriptSSH{}, HTTP: srv.Client(), Mail: NewMailbox()}
 	ctx := context.Background()
 
-	result, err := agent.Reply(ctx, "main", "", "", "告诉巡检 web-01 磁盘快满了")
+	result, err := agent.ReplyWithOptions(ctx, "main", "", "", "告诉巡检 web-01 磁盘快满了", Options{Mode: "direct"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

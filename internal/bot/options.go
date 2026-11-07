@@ -16,6 +16,7 @@ type Options struct {
 	ApprovalRoute  *preferences.Route `json:"approval_route,omitempty"`
 	ModelRoute     *preferences.Route `json:"model_route,omitempty"`
 	ExcludedBotIDs []string           `json:"excluded_bot_ids,omitempty"`
+	ProjectTitle   string             `json:"project_title,omitempty"`
 	// Mode is "direct" (one-to-one chat with a single bot and its own memory)
 	// or "team" (the default: the lead bot pulls other bots in as needed).
 	Mode          string   `json:"mode,omitempty"`
@@ -144,7 +145,6 @@ func (a *Agent) ReplyWithOptions(ctx context.Context, botID, serverID, sessionID
 	case "", "team":
 		opt.Mode = ""
 	case "direct":
-		// A direct chat is with one bot; scope controls do not apply.
 		opt.ExcludedBotIDs = nil
 	default:
 		return Result{}, errors.New("对话模式无效")

@@ -87,6 +87,10 @@ type Store interface {
 	EnsureSession(ctx context.Context, id, botID, title string) (model.Session, error)
 	AddMessage(ctx context.Context, msg model.Message) (model.Message, error)
 	SaveChatOptions(ctx context.Context, id string, options json.RawMessage) error
+	ListProjectNotes(ctx context.Context, sessionID string) ([]model.ProjectNote, error)
+	UpsertProjectNote(ctx context.Context, sessionID string, item model.ProjectNote) (model.ProjectNote, error)
+	DeleteProjectNote(ctx context.Context, sessionID, noteID string) error
+
 	ListChatSessions(ctx context.Context) ([]model.SessionSummary, error)
 	// GetChatSession returns one chat without its messages.
 	GetChatSession(ctx context.Context, id string) (model.Session, error)

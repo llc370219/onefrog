@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowUp, Blocks, CalendarClock, Code2, HardDrive, History, Inbox, KeyRound, LoaderCircle, LockKeyhole, Plus, Server, ShieldCheck, Sparkles, Paperclip, Send, Trash2, Users, Wallet } from 'lucide-react';
-import { api, type ApprovalDecision, type BotMemory, type BotRow, type ChatLine, type ChatMode, type ChatSession, type Host, type Attachment, type SecretRow, type SettingsState } from '../api';
+import { ArrowUp, Blocks, BookOpen, CalendarClock, Code2, HardDrive, History, Inbox, KeyRound, LoaderCircle, LockKeyhole, Plus, Server, ShieldCheck, Sparkles, Paperclip, Send, Trash2, Users, Wallet } from 'lucide-react';
+import { api, type ApprovalDecision, type BotMemory, type ProjectNote, type BotRow, type ChatLine, type ChatMode, type ChatSession, type Host, type Attachment, type SecretRow, type SettingsState } from '../api';
 import ChatControls, { type ChatControlState } from '../components/ChatControls';
 import Attachments from '../components/Attachments';
 import TurnStream from '../components/TurnStream';
-import { Button, IconButton, Status } from '../components/ui';
+import { Button, IconButton, Modal, Status } from '../components/ui';
 import { BotAvatar } from '../components/BotAvatar';
 import { AvatarStack } from '../components/SecondaryNav';
 import { groupMembers, groupSessions } from '../lib/chatGroups';
@@ -22,6 +22,7 @@ export default function Chat({
   onControls,
   settings,
   mode,
+  projectTitle,
   attachments,
   onFiles,
   onRemoveFile,
@@ -56,6 +57,7 @@ export default function Chat({
   onControls: (s: ChatControlState) => void;
   settings: SettingsState | null;
   mode: ChatMode;
+  projectTitle: string;
   attachments: Attachment[];
   onFiles: (files: File[]) => void;
   onRemoveFile: (id: string) => void;
@@ -100,6 +102,22 @@ export default function Chat({
     return () => { live = false; };
   }, [memoryBot, lines.length]);
   const memories = memoryState && memoryState.bot === memoryBot ? memoryState.rows : null;
+
+  const [projectNotes, setProjectNotes] = useState<{ id: string; rows: ProjectNote[]; error?: string } | null>(null);
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const projectID = mode === 'team' ? session : '';
+  useEffect(() => {
+    if (!projectID || sending) return;
+    let active = true;
+    api.projectNotes(projectID).then(rows => {
+      if (active) setProjectNotes({ id: projectID, rows });
+    }).catch(() => {
+      if (active) setProjectNotes({ id: projectID, rows: [], error: '工作记忆暂时无法读取。' });
+    });
+    return () => { active = false; };
+  }, [projectID, sending]);
+  const notes = projectID && projectNotes?.id === projectID ? projectNotes : null;
+  const title = projectTitle || sessions.find(s => s.id === session)?.title || '群聊';
 
   const current = hosts.find(h => h.id === selected);
   const members = mode === 'team' ? groupMembers(bots, activeBot?.id || '', controls.excluded) : [];
@@ -146,15 +164,17 @@ export default function Chat({
     <div className="chat-layout">
       <div className="conversation">
         <header className="conversation-heading">
-          <div>
-            
+          <div className="conversation-title">
             {mode === 'direct'
               ? <h1>{activeBot && <BotAvatar bots={bots} id={activeBot.id} className="heading-avatar"/>}{activeBot?.name || 'Bot'} <span className="tag">单聊</span></h1>
-              : <h1><AvatarStack bots={bots} members={members}/>群聊 <span className="tag">{members.length} 个 Bot</span></h1>}
+              : <h1><AvatarStack bots={bots} members={members}/><span className="project-name" title={title}>{title}</span> <span className="tag">{members.length} 个 Bot</span></h1>}
           </div>
           {mode === 'direct'
             ? <Button onClick={onNewTopic || onNew} disabled={sending}><Plus size={15}/>新话题</Button>
-            : <Button onClick={onNew} disabled={sending}><Users size={15}/>新建群聊</Button>}
+            : <div className="conversation-actions">
+              <IconButton label="项目工作记忆" onClick={() => setMemoryOpen(true)}><BookOpen size={16}/></IconButton>
+              <Button onClick={onNew} disabled={sending}><Users size={15}/>新建群聊</Button>
+            </div>}
         </header>
         <div className="chat-scroll">
           {!lines.length ? (
@@ -355,6 +375,11 @@ export default function Chat({
           </div>
           </>
         ) : (
+          <>
+          <div className="context-section">
+            <h3>项目工作记忆 {notes && !notes.error && <span className="tag">{notes.rows.length}</span>}</h3>
+            <button type="button" className="text-btn" onClick={() => setMemoryOpen(true)}><BookOpen size={13}/>查看笔记</button>
+          </div>
           <div className="context-section">
             <h3>群成员 <span className="tag">{members.length}</span></h3>
             <p className="muted">主控按需分派任务给群里的 Bot，可随时剔除或拉入。</p>
@@ -383,6 +408,7 @@ export default function Chat({
               );
             })}
           </div>
+          </>
         )}
         {secrets.length > 0 && (
           <div className="context-section">
@@ -409,6 +435,12 @@ export default function Chat({
           <p>Bot 通过名称引用密钥，执行记录中的敏感内容会打码。</p>
         </div>
       </aside>
+      {mode === 'team' && memoryOpen && <Modal title="项目工作记忆" note={title} onClose={() => setMemoryOpen(false)} confirm="完成">
+        {notes?.error && <p className="muted" role="status">{notes.error}</p>}
+        {!notes && <p className="muted">{projectID ? '正在读取…' : '开始对话后，可以让 Bot 记下项目的决定和进度。'}</p>}
+        {notes && !notes.error && !notes.rows.length && <p className="muted">还没有笔记。让 Bot 记下以后需要用到的结论。</p>}
+        <div className="project-notes">{notes?.rows.map(note => <details key={note.id}><summary>{note.title}</summary><p>{note.body}</p></details>)}</div>
+      </Modal>}
     </div>
   );
 }

@@ -151,6 +151,9 @@ func (a *Agent) converse(ctx context.Context, speaker model.Bot, creds credentia
 			spec = append(spec, toolDefs(false, true)...)
 		}
 	}
+	if projectID(ctx) != "" && a.managesAssets(speaker) {
+		spec = append(spec, rememberTool, recallTool)
+	}
 	if a.canMessage(ctx, speaker) {
 		spec = append(spec, messageAgentTool())
 	}
@@ -177,7 +180,11 @@ func (a *Agent) converse(ctx context.Context, speaker model.Bot, creds credentia
 				tr.emit(Step{Kind: "say", Bot: speaker.Name, Output: say})
 			}
 		}
-		messages = append(messages, map[string]any{"role": "assistant", "content": msg.Content, "tool_calls": msg.ToolCalls})
+		entry := map[string]any{"role": "assistant", "content": msg.Content, "tool_calls": msg.ToolCalls}
+		if len(msg.ResponseItems) > 0 {
+			entry["response_items"] = msg.ResponseItems
+		}
+		messages = append(messages, entry)
 		for _, call := range msg.ToolCalls {
 			out := a.execCall(ctx, speaker, creds, serverID, call, canDelegate, tr)
 			messages = append(messages, map[string]any{"role": "tool", "tool_call_id": call.ID, "content": out})
@@ -460,7 +467,7 @@ func (a *Agent) handOff(ctx context.Context, speaker model.Bot, creds credential
 		if title == "" {
 			title = "最近一次协作"
 		}
-		_, _ = a.Remember(ctx, target.ID, title, text, "handoff")
+		_, _ = a.rememberWork(ctx, target.ID, title, text, "handoff")
 	}
 	return target.Name + "：" + text
 }
@@ -591,8 +598,7 @@ func (a *Agent) leaderPrompt(ctx context.Context, bot model.Bot, serverID string
 	writeExtra(&b, bot)
 	a.writePeers(&b, ctx, bot.ID)
 	a.writeMailbox(&b, ctx, bot, false)
-	b.WriteString(promptMemory)
-	a.writeOwnMemory(&b, ctx, bot)
+	a.writeMemory(&b, ctx, bot)
 	a.writePeerMemory(&b, ctx, bot.ID)
 	a.writeSecrets(&b, ctx)
 	a.writeServers(&b, ctx, serverID)
@@ -614,9 +620,8 @@ func (a *Agent) workerPrompt(ctx context.Context, bot model.Bot, serverID string
 	a.writeOperations(&b, ctx)
 	b.WriteString(promptConnect)
 	b.WriteString(promptNoPanelSource)
-	b.WriteString(promptMemory)
 	a.writeMailbox(&b, ctx, bot, true)
-	a.writeOwnMemory(&b, ctx, bot)
+	a.writeMemory(&b, ctx, bot)
 	writeExtra(&b, bot)
 	a.writeSecrets(&b, ctx)
 	a.writeServers(&b, ctx, serverID)
@@ -669,6 +674,9 @@ func (a *Agent) assetPrompt(ctx context.Context, bot model.Bot) string {
 	}
 	writeExtra(&b, bot)
 	a.writeMailbox(&b, ctx, bot, isWorker(ctx))
+	if projectID(ctx) != "" {
+		a.writeMemory(&b, ctx, bot)
+	}
 	a.writeAllModulesSummary(&b, ctx)
 	a.writeServers(&b, ctx, "")
 	a.writeAssets(&b, bot)

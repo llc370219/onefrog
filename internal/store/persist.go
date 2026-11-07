@@ -90,8 +90,9 @@ type persistedSession struct {
 }
 
 type persistedChat struct {
-	Session  model.Session
-	Messages []model.Message
+	Session      model.Session
+	Messages     []model.Message
+	ProjectNotes []model.ProjectNote `json:",omitempty"`
 }
 
 // EnablePersistence stores the secret vault, login sessions, chats, change
@@ -167,6 +168,7 @@ func (m *Memory) EnablePersistence(dir string, box *secret.Box) error {
 		}
 		m.chats[c.Session.ID] = c.Session
 		m.messages[c.Session.ID] = c.Messages
+		m.projectNotes[c.Session.ID] = c.ProjectNotes
 	}
 	return nil
 }
@@ -249,7 +251,7 @@ func (m *Memory) saveChatLocked(id string) error {
 	if msgs := m.messages[id]; len(msgs) > MaxMessagesPerChat {
 		m.messages[id] = append([]model.Message(nil), msgs[len(msgs)-MaxMessagesPerChat:]...)
 	}
-	return writeEncryptedJSON(m.chatFile(id), m.dataBox, persistedChat{Session: m.chats[id], Messages: m.messages[id]})
+	return writeEncryptedJSON(m.chatFile(id), m.dataBox, persistedChat{Session: m.chats[id], Messages: m.messages[id], ProjectNotes: m.projectNotes[id]})
 }
 
 func (m *Memory) GetChatSession(_ context.Context, idv string) (model.Session, error) {
@@ -273,6 +275,7 @@ func (m *Memory) DeleteChatSession(_ context.Context, idv string) error {
 	delete(m.chats, idv)
 	delete(m.messages, idv)
 	if !m.persisting() {
+		delete(m.projectNotes, idv)
 		return nil
 	}
 	err := os.Remove(m.chatFile(idv))
@@ -283,6 +286,7 @@ func (m *Memory) DeleteChatSession(_ context.Context, idv string) error {
 		}
 		return err
 	}
+	delete(m.projectNotes, idv)
 	return nil
 }
 
@@ -310,6 +314,7 @@ func (m *Memory) pruneChatsLocked(keep string) {
 	for _, id := range ids[:len(m.chats)-MaxChats] {
 		delete(m.chats, id)
 		delete(m.messages, id)
+		delete(m.projectNotes, id)
 		if m.persisting() {
 			_ = os.Remove(m.chatFile(id))
 		}

@@ -27,6 +27,7 @@ import (
 	"onefrog/internal/update"
 	"onefrog/internal/usage"
 	"onefrog/internal/version"
+	"onefrog/internal/workspace"
 	"os"
 	"path/filepath"
 	"sync"
@@ -167,6 +168,7 @@ func run() {
 		// OF_TRUSTED_PROXIES: reverse proxies whose X-Forwarded-For is trusted for login rate limiting.
 		TrustedProxies: os.Getenv("OF_TRUSTED_PROXIES"),
 		Agent: &bot.Agent{
+			Workspace:    &workspace.Service{Store: db, Box: box, Run: remote.RunInput},
 			Store:        db,
 			Settings:     settings,
 			SettingsLive: settings,

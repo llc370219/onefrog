@@ -70,16 +70,24 @@ func (a *Agent) lead(ctx context.Context, leader model.Bot, serverID, sessionID 
 	tr := &trace{agent: a, ctx: ctx, sink: sink}
 	ctx = context.WithValue(ctx, traceKey{}, tr)
 	tr.ctx = ctx
-	system, canDelegate := a.leaderPrompt(ctx, leader, serverID), a.hasPeers(ctx, leader.ID)
-	if isInbox(ctx) || isAutomation(ctx) {
+	var system string
+	canDelegate := false
+	if options(ctx).Workspace != nil {
+		system = a.workspacePrompt(ctx, leader)
+	} else if isInbox(ctx) || isAutomation(ctx) {
 		// A background inbox or automation turn works like a worker: no user
 		// to ask, no delegation, only an optional note via message_agent.
 		system, canDelegate = a.workerPrompt(ctx, leader, serverID), false
 		if isAutomation(ctx) {
 			system += promptAutomation
 		}
-	} else if isDirect(ctx) {
-		system = a.directPrompt(ctx, leader, serverID)
+	} else {
+		canDelegate = a.hasPeers(ctx, leader.ID)
+		if isDirect(ctx) {
+			system = a.directPrompt(ctx, leader, serverID)
+		} else {
+			system = a.leaderPrompt(ctx, leader, serverID)
+		}
 	}
 	messages, err := a.sessionMessages(ctx, sessionID, system, leader.Name)
 	if err != nil {
@@ -123,7 +131,9 @@ func (a *Agent) lead(ctx context.Context, leader model.Bot, serverID, sessionID 
 func (a *Agent) converse(ctx context.Context, speaker model.Bot, creds credentials, serverID string, messages []map[string]any, canDelegate bool, tr *trace) (string, error) {
 	limit := a.execution().MaxSteps
 	var spec []map[string]any
-	if a.developsModules(speaker) {
+	if options(ctx).Workspace != nil {
+		spec = []map[string]any{workspaceTool, askUserTool, rememberTool, recallTool}
+	} else if a.developsModules(speaker) {
 		spec = []map[string]any{developModuleTool, rememberTool, recallTool}
 		if !isWorker(ctx) {
 			spec = append(spec, askUserTool)
@@ -154,7 +164,7 @@ func (a *Agent) converse(ctx context.Context, speaker model.Bot, creds credentia
 	if projectID(ctx) != "" && a.managesAssets(speaker) {
 		spec = append(spec, rememberTool, recallTool)
 	}
-	if a.canMessage(ctx, speaker) {
+	if options(ctx).Workspace == nil && a.canMessage(ctx, speaker) {
 		spec = append(spec, messageAgentTool())
 	}
 	mediaNote := ""
@@ -274,6 +284,15 @@ func toolLabel(call toolCall) string {
 }
 
 func (a *Agent) execCall(ctx context.Context, speaker model.Bot, creds credentials, serverID string, call toolCall, canDelegate bool, tr *trace) string {
+	if options(ctx).Workspace != nil {
+		switch call.Function.Name {
+		case "workspace":
+			return a.workspaceCall(ctx, speaker, call, tr)
+		case "ask_user", "remember", "recall":
+		default:
+			return "代码任务只能使用已绑定的工作区工具"
+		}
+	}
 	if a.managesAssets(speaker) && call.Function.Name != "manage_module_record" && call.Function.Name != "manage_modules" && call.Function.Name != "ask_agent" && call.Function.Name != "ask_user" && call.Function.Name != "message_agent" {
 		return "模块管理 Bot 只负责开关面板模块与维护模块数据，不能执行命令；需要服务器操作或新建自定义模块时请用 ask_agent 协同对应 Bot。"
 	}

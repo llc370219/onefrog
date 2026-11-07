@@ -1,12 +1,14 @@
 package remote
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -78,6 +80,34 @@ func pinMatches(knownKey string, key ssh.PublicKey) bool {
 // (see Fingerprint); an empty knownKey only probes the fingerprint and returns
 // ErrHostKeyUnknown together with the presented pin.
 func Run(ctx context.Context, host string, port int, user, authType, secret, knownKey, command string) (string, string, error) {
+	return run(ctx, host, port, user, authType, secret, knownKey, command, nil)
+}
+
+// RunInput executes a fixed protocol over SSH. The payload is passed over
+// stdin, keeping file contents out of command arguments and process listings.
+func RunInput(ctx context.Context, host string, port int, user, authType, secret, knownKey, command string, input []byte) (string, string, error) {
+	if input == nil {
+		input = []byte{}
+	}
+	return run(ctx, host, port, user, authType, secret, knownKey, command, input)
+}
+
+type boundedOutput struct {
+	mu        sync.Mutex
+	buf       bytes.Buffer
+	truncated bool
+}
+
+func (b *boundedOutput) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	n := min(len(p), (2<<20)-b.buf.Len())
+	b.buf.Write(p[:n])
+	b.truncated = b.truncated || n < len(p)
+	return len(p), nil
+}
+
+func run(ctx context.Context, host string, port int, user, authType, secret, knownKey, command string, input []byte) (string, string, error) {
 	if port == 0 {
 		port = 22
 	}
@@ -136,8 +166,19 @@ func Run(ctx context.Context, host string, port int, user, authType, secret, kno
 	var out []byte
 	var runErr error
 	go func() {
-		out, runErr = session.CombinedOutput(command)
-		close(done)
+		defer close(done)
+		if input == nil {
+			out, runErr = session.CombinedOutput(command)
+			return
+		}
+		buf := &boundedOutput{}
+		session.Stdout, session.Stderr = buf, buf
+		session.Stdin = bytes.NewReader(input)
+		runErr = session.Run(command)
+		if buf.truncated {
+			runErr = errors.New("工作区响应过大")
+		}
+		out = buf.buf.Bytes()
 	}()
 	select {
 	case <-ctx.Done():

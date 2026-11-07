@@ -77,6 +77,7 @@ var riskRank = map[string]int{"low": 1, "medium": 2, "high": 3}
 
 // riskGate is the smart-approval verdict for one command.
 type riskGate struct {
+	SingleUse   bool
 	Ask         bool
 	Level       string // final risk: the higher of the rules and the model
 	Findings    []audit.Finding
@@ -144,7 +145,7 @@ func (a *Agent) askOperator(ctx context.Context, botID string, rec store.ServerR
 	if len(g.Reasons) == 0 {
 		g.Reasons = []string{"规则和 AI 都判断为低风险；逐条确认模式下每条命令都要确认"}
 	}
-	req := ApprovalRequest{ID: id.New(), BotID: botID, ServerID: rec.ID, ServerName: rec.Name, Command: command, Mode: mode, Risk: g.Level, Reasons: g.Reasons, Findings: g.Findings, ModelRisk: g.ModelRisk, ModelReason: g.ModelReason, Untrusted: g.Untrusted}
+	req := ApprovalRequest{ID: id.New(), SingleUse: g.SingleUse, BotID: botID, ServerID: rec.ID, ServerName: rec.Name, Command: command, Mode: mode, Risk: g.Level, Reasons: g.Reasons, Findings: g.Findings, ModelRisk: g.ModelRisk, ModelReason: g.ModelReason, Untrusted: g.Untrusted}
 	if b, err := a.Store.GetBot(ctx, botID); err == nil {
 		req.BotName = b.Name
 	}
@@ -152,6 +153,9 @@ func (a *Agent) askOperator(ctx context.Context, botID string, rec store.ServerR
 		req.Warning = g.Findings[0].Label + "：" + g.Findings[0].Detail
 	}
 	allow, reason := approver(ctx, req)
+	if g.SingleUse && reason == "always" {
+		reason = "用户已批准本次操作"
+	}
 	review.Allow = allow
 	review.Reason = reason
 	cardStatus := "denied"

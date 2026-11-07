@@ -72,7 +72,7 @@ export default function SecondaryNav({ view, bots, sessions, mods, activeBot, se
       {!filteredBots.length && <p className="directory-empty">{query ? '没有匹配的 Bot' : '还没有 Bot'}</p>}
       <div className="directory-section-title conversation-section"><span>群聊</span><small>{filteredGroups.length}</small></div>
       {filteredGroups.map(s => {
-        const members = groupMembers(bots, s.bot_id, s.options?.excluded_bot_ids);
+        const members = s.options?.workspace ? bots.filter(b => b.id === s.bot_id) : groupMembers(bots, s.bot_id, s.options?.excluded_bot_ids);
         return (
           <div className={`directory-conversation ${session === s.id ? 'selected' : ''}`} key={s.id}>
             <button className="conversation-open" onClick={() => onSession(s)} disabled={disabled}>

@@ -99,7 +99,10 @@ export type UsageRow=TokenUsage&{bot_id:string;purpose:string;provider_id:string
 export type Attachment={id:string;name:string;mime:string;size:number};
 /** direct: one-to-one chat with a single bot and its own memory. team (default): the lead bot pulls other bots in. */
 export type ChatMode='direct'|'team';
-export type ChatOptions={approval_route?:ModelRoute;model_route?:ModelRoute;excluded_bot_ids?:string[];approval_mode?:string;attachment_ids?:string[];mode?:ChatMode};
+export type WorkspaceTarget = {server_id:string;root:string};
+export type WorkspaceRequest = {action:'list'|'status'|'diff'|'read'|'write';path?:string;revision?:string;content?:string};
+export type WorkspaceResult = {files?:string[];text?:string;revision?:string;truncated?:boolean};
+export type ChatOptions={workspace?:WorkspaceTarget;approval_route?:ModelRoute;model_route?:ModelRoute;excluded_bot_ids?:string[];approval_mode?:string;attachment_ids?:string[];mode?:ChatMode};
 export type ChatRequest=ChatOptions&{content:string;project_title?:string;server_id?:string;bot_id?:string;session_id?:string;choice_answer?:ChoiceReply;secret_answer?:SecretReply};
 export type ChatResult={session_id:string;text:string;message_id?:string;choice?:Choice;secret_request?:SecretRequest;timeline?:TurnItem[];answered?:boolean};
 export type BotRow = { id:string;name:string;description:string;system_prompt?:string;enabled:boolean;model_route:ModelRoute;effective_route:ModelRoute;usage:TokenUsage;memory_count?:number };
@@ -231,6 +234,7 @@ export const api = {
   async probeToken(id:string,opts:{province?:string;targets?:string[]}={}):Promise<{token:string;server_id:string;ping_targets:PingTarget[]}>{return call("/api/servers/"+encodeURIComponent(id)+"/probe/token",{method:"POST",body:JSON.stringify(opts)});},
   async probeProvince(id:string,province:string,pingIntervalSeconds=60):Promise<{message:string}>{return call('/api/servers/'+encodeURIComponent(id)+'/probe/province',{method:'POST',body:JSON.stringify({province,ping_interval_seconds:pingIntervalSeconds})});},
   async profile(body:{username:string;display_name:string;avatar:string;current_password:string;new_password:string}):Promise<Profile>{return call("/api/auth/profile",{method:"PUT",body:JSON.stringify(body)});},
+  async workspace(target:WorkspaceTarget, request:WorkspaceRequest):Promise<WorkspaceResult>{return call('/api/workspace',{method:'POST',body:JSON.stringify({target,...request})});},
   async sessions():Promise<ChatSession[]>{return (await call("/api/sessions"))||[];},
   async messages(id:string):Promise<{id:string;role:string;content:string;from_bot?:string;attachments?:Attachment[];choice?:Choice;secret_request?:SecretRequest;timeline?:TurnItem[]}[]>{return (await call("/api/sessions/"+encodeURIComponent(id)+"/messages"))||[];},
   async deleteSession(id:string){return call("/api/sessions/"+encodeURIComponent(id),{method:"DELETE"});},
@@ -391,7 +395,7 @@ function toStep(raw: NonNullable<ChatReply["steps"]>[number]): ChatStep {
 /** One server-side rule hit from the command classifier. */
 export type RiskFinding = { category: string; label: string; detail: string };
 /** A command the agent wants to run that needs the operator's decision (smart or manual approval mode). */
-export type ApprovalPrompt = { id: string; bot: string; bot_name?: string; server_id: string; server_name: string; command: string; warning?: string; mode?: string; risk?: 'low'|'medium'|'high'; reasons?: string[]; findings?: RiskFinding[]; model_risk?: string; model_reason?: string; untrusted?: string; timeout_seconds: number };
+export type ApprovalPrompt = { id: string; single_use?: boolean; bot: string; bot_name?: string; server_id: string; server_name: string; command: string; warning?: string; mode?: string; risk?: 'low'|'medium'|'high'; reasons?: string[]; findings?: RiskFinding[]; model_risk?: string; model_reason?: string; untrusted?: string; timeout_seconds: number };
 /** Approval modes. "" = not chosen yet (behaves like smart). */
 export type ApprovalMode = ''|'off'|'smart'|'manual'|'model'|'plan';
 let approvalHandler: ((req: ApprovalPrompt) => Promise<boolean>) | null = null;

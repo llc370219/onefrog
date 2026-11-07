@@ -267,13 +267,7 @@ func (a *Agent) approve(ctx context.Context, botID, serverID, command string, g 
 	return review
 }
 func parseReview(text string) (Review, error) {
-	text = strings.TrimSpace(text)
-	if strings.HasPrefix(text, "```") {
-		lines := strings.Split(text, "\n")
-		if len(lines) > 2 && strings.TrimSpace(lines[len(lines)-1]) == "```" {
-			text = strings.Join(lines[1:len(lines)-1], "\n")
-		}
-	}
+	text = stripFence(text)
 	var raw struct {
 		Allow  *bool  `json:"allow"`
 		Risk   string `json:"risk"`
@@ -283,6 +277,86 @@ func parseReview(text string) (Review, error) {
 		return Review{}, errors.New("invalid verdict")
 	}
 	return Review{Allow: *raw.Allow && raw.Risk != "high", Risk: raw.Risk, Reason: raw.Reason}, nil
+}
+
+func stripFence(text string) string {
+	text = strings.TrimSpace(text)
+	if strings.HasPrefix(text, "```") {
+		lines := strings.Split(text, "\n")
+		if len(lines) > 2 && strings.TrimSpace(lines[len(lines)-1]) == "```" {
+			text = strings.Join(lines[1:len(lines)-1], "\n")
+		}
+	}
+	return text
+}
+
+// alwaysMajorCategories are rule hits the smart reviewer may never wave
+// through: they are major hazards by definition, and a reviewer model could
+// be misled by the command text itself.
+var alwaysMajorCategories = map[string]bool{audit.CatDisk: true, audit.CatRemoteCode: true, audit.CatObfuscation: true, audit.CatSecretRead: true, audit.CatCritical: true}
+
+func alwaysMajor(findings []audit.Finding) bool {
+	for _, f := range findings {
+		if alwaysMajorCategories[f.Category] {
+			return true
+		}
+	}
+	return false
+}
+
+// smartRoute is the optional reviewer of smart approval; ok is false when
+// none is configured.
+func (a *Agent) smartRoute() (preferences.Route, bool) {
+	if a.Settings == nil {
+		return preferences.Route{}, false
+	}
+	r := a.Settings.Snapshot().Approval.SmartRoute
+	return r, r.ProviderID != "" && strings.TrimSpace(r.Model) != ""
+}
+
+// smartReview asks the smart-approval model whether a risky command carries a
+// major security hazard. ok is false when the model could not give a usable
+// verdict; the caller then falls back to the approval card. It never runs
+// with tools and never sees secret values.
+func (a *Agent) smartReview(ctx context.Context, botID, command string, route preferences.Route, g riskGate) (major bool, reason string, ok bool) {
+	p, err := a.Settings.Provider(route.ProviderID)
+	if err != nil {
+		return true, "", false
+	}
+	key := ""
+	if !strings.HasPrefix(p.AuthKind, "oauth-") {
+		if key, err = a.Settings.Key(p.ID); err != nil {
+			return true, "", false
+		}
+	}
+	request, _ := ctx.Value(taskKey{}).(string)
+	payload, _ := json.Marshal(map[string]any{"user_request": a.redact(ctx, request), "command": a.redact(ctx, command), "purpose": g.ModelReason, "declared_risk": g.ModelRisk, "rule_check": g.Reasons})
+	checkCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
+	checkCtx = usageContext(checkCtx, botID, "approval", p.ID)
+	msg, err := a.chat(checkCtx, p.BaseURL, route.Model, key, []map[string]any{{"role": "system", "content": promptSmartReviewer}, {"role": "user", "content": string(payload)}}, nil)
+	if err != nil {
+		return true, "", false
+	}
+	major, reason, err = parseSmartReview(msg.Content)
+	if err != nil {
+		return true, "", false
+	}
+	return major, a.redact(ctx, clip(reason, 300)), true
+}
+
+// parseSmartReview reads {"major":bool,"risk":"low|medium|high","reason":"..."}.
+// A high risk always counts as major, whatever the flag says.
+func parseSmartReview(text string) (bool, string, error) {
+	var raw struct {
+		Major  *bool  `json:"major"`
+		Risk   string `json:"risk"`
+		Reason string `json:"reason"`
+	}
+	if json.Unmarshal([]byte(stripFence(text)), &raw) != nil || raw.Major == nil || strings.TrimSpace(raw.Reason) == "" || (raw.Risk != "low" && raw.Risk != "medium" && raw.Risk != "high") {
+		return true, "", errors.New("invalid verdict")
+	}
+	return *raw.Major || raw.Risk == "high", strings.TrimSpace(raw.Reason), nil
 }
 func (a *Agent) recordReview(ctx context.Context, botID, serverID, command string, review Review) {
 	command = a.redact(ctx, command)

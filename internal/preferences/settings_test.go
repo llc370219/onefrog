@@ -69,6 +69,20 @@ func TestEncryptedPersistenceRoutingAndValidation(t *testing.T) {
 	if _, err = m.Save(in); err == nil {
 		t.Fatal("missing reviewer accepted")
 	}
+	in.Approval = Approval{Mode: "smart", SmartRoute: Route{"b", "guard"}}
+	if _, err = m.Save(in); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := New(path, box); again.Snapshot().Approval.SmartRoute != (Route{"b", "guard"}) {
+		t.Fatal("smart reviewer not kept")
+	}
+	if s, err := m.SetApprovalMode("smart"); err != nil || s.Approval.SmartRoute.Model != "guard" {
+		t.Fatalf("mode change dropped smart reviewer: %v", err)
+	}
+	in.Approval.SmartRoute = Route{"missing", "guard"}
+	if _, err = m.Save(in); err == nil {
+		t.Fatal("invalid smart reviewer accepted")
+	}
 	wrong, _ := secret.New(bytes.Repeat([]byte{5}, 32))
 	if _, err = New(path, wrong); err == nil {
 		t.Fatal("wrong key accepted")

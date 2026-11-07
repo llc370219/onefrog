@@ -67,6 +67,9 @@ type Approval struct {
 	Mode         string `json:"mode"`
 	Route        Route  `json:"route"`
 	Instructions string `json:"instructions"`
+	// SmartRoute is the optional reviewer used by smart approval. It only
+	// stops major security hazards; empty means every risky command asks.
+	SmartRoute Route `json:"smart_route"`
 }
 type Execution struct {
 	TimeoutSeconds        int `json:"timeout_seconds"`
@@ -258,7 +261,7 @@ func (m *Manager) Save(in Input) (State, error) {
 	if next.State.Default.ProviderID == "" && strings.TrimSpace(next.State.Default.Model) == "" && usable {
 		next.State.Default = fallback
 	}
-	for label, route := range map[string]Route{"主控": next.State.Default, "协作": in.Worker, "审批": in.Approval.Route} {
+	for label, route := range map[string]Route{"主控": next.State.Default, "协作": in.Worker, "审批": in.Approval.Route, "智能审批": in.Approval.SmartRoute} {
 		required := label == "主控" && usable || label == "审批" && in.Approval.Mode == "model"
 		if err := validateRoute(next.State, route, required); err != nil {
 			return State{}, fmt.Errorf("%s：%w", label, err)

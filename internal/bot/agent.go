@@ -463,6 +463,21 @@ func (a *Agent) runTool(ctx context.Context, botID, fallbackServer string, call 
 		if hard := audit.Decide(expanded); !hard.Allow {
 			gate.Reasons = append([]string{"命中内置危险命令清单：" + hard.Reason}, gate.Reasons...)
 			gate.Level = "high"
+		} else if route, ok := a.smartRoute(); ok && mode == preferences.ModeSmart && !unselected && gate.Untrusted == "" && gate.ModelRisk != "high" && !alwaysMajor(gate.Findings) {
+			// The optional smart reviewer only stops major hazards. Commands
+			// from untrusted content, on unselected servers, on the built-in
+			// list, declared high by the AI or in an always-major rule
+			// category always go to the operator.
+			major, why, valid := a.smartReview(ctx, botID, args.Command, route, gate)
+			if valid && !major {
+				a.recordReview(ctx, botID, rec.ID, ev.Command, Review{Allow: true, Reason: "智能审批模型放行：" + why, Risk: gate.Level, ProviderID: route.ProviderID, Model: route.Model, Mode: mode, Findings: gate.Findings, ModelRisk: gate.ModelRisk, ModelReason: gate.ModelReason})
+				break
+			}
+			if valid {
+				gate.Reasons = append([]string{"智能审批模型：" + why}, gate.Reasons...)
+			} else {
+				gate.Reasons = append([]string{"智能审批模型没有给出有效判断，交给你确认"}, gate.Reasons...)
+			}
 		}
 		if decision := a.askOperator(ctx, botID, rec, ev.Command, mode, gate); !decision.Allow {
 			return denied(decision.Reason)

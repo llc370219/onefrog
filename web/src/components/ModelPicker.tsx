@@ -12,11 +12,11 @@ export function ModelSelect({provider,value,onChange,label,disabled}: {provider?
   </select>;
 }
 
-export function RoutePicker({label,note,value,onChange,providers,inherit}: {label:string;note:string;value:ModelRoute;onChange:(r:ModelRoute)=>void;providers:ProviderSettings[];inherit?:boolean}) {
+export function RoutePicker({label,note,value,onChange,providers,inherit,emptyLabel}: {label:string;note:string;value:ModelRoute;onChange:(r:ModelRoute)=>void;providers:ProviderSettings[];inherit?:boolean;emptyLabel?:string}) {
   const provider=providers.find(p=>p.id===value.provider_id);
   return <section className="route-row"><div><h3>{label}</h3><p>{note}</p></div><div className="route-inputs">
     <select aria-label={`${label}渠道`} value={value.provider_id} onChange={e=>{const p=providers.find(p=>p.id===e.target.value);onChange({provider_id:e.target.value,model:visibleModels(p)[0]||''});}}>
-      <option value="">{inherit?'跟随默认模型':'选择渠道'}</option>
+      <option value="">{emptyLabel||(inherit?'跟随默认模型':'选择渠道')}</option>
       {provider&&!provider.enabled&&<option value={provider.id} disabled>{provider.name}（已停用）</option>}
       {providers.filter(p=>p.enabled).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
     </select>

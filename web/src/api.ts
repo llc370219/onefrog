@@ -503,7 +503,7 @@ export type SettingsState = {
  default:ModelRoute;
  worker:ModelRoute;
  bot_routes:Record<string,ModelRoute>;
- approval:{mode:ApprovalMode;route:ModelRoute;instructions:string};
+ approval:{mode:ApprovalMode;route:ModelRoute;instructions:string;smart_route?:ModelRoute};
  execution:{timeout_seconds:number;command_timeout_seconds:number;max_steps:number;context_messages:number};
 };
 export type ApprovalRow = {id:string;created_at:string;bot_name:string;server_name:string;command:string;status:string;review:{allow:boolean;reason:string;risk:string;model:string;provider_id:string;mode:string;findings?:RiskFinding[];model_reason?:string;untrusted?:string}};

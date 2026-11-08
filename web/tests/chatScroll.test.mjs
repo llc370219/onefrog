@@ -19,7 +19,7 @@ test('chat scroll is scoped to its container and not to document scrollIntoView'
   const source = readFileSync(new URL('../src/pages/Chat.tsx', import.meta.url), 'utf8');
   assert.match(source, /followBottom.current = nearChatBottom/);
   assert.ok(source.includes('if (container && followBottom.current)'));
-  assert.ok(source.includes('!uploading && !taskRunning && activeBot?.enabled'), 'a rejected send must not resume following');
+  assert.ok(source.includes('if (sending || uploading || !activeBot?.enabled'), 'a rejected send must not resume following');
   assert.ok(source.includes('}, [conversationKey]'), 'a different conversation should open at its latest message');
   assert.ok(source.includes("if (previous?.startsWith('new:') && session) return;"), 'a new chat gaining its session id is not a navigation');
   assert.doesNotMatch(source, /scrollIntoView/);

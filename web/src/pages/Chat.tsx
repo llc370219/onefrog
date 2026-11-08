@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowUp, Blocks, BookOpen, CodeXml, CalendarClock, Code2, HardDrive, History, Inbox, KeyRound, LoaderCircle, LockKeyhole, Plus, Server, ShieldCheck, Sparkles, Paperclip, Send, Trash2, Users, Wallet } from 'lucide-react';
-import { api, taskIsActive, type BotMemory, type ProjectNote, type BotRow, type ChatLine, type ChatMode, type ChatSession, type Host, type Attachment, type SecretRow, type SettingsState, type TaskView, type WorkspaceTarget } from '../api';
+import { api, type BotMemory, type ProjectNote, type BotRow, type ChatLine, type ChatMode, type ChatSession, type Host, type Attachment, type SecretRow, type SettingsState, type TaskView, type WorkspaceTarget } from '../api';
 import ChatControls, { type ChatControlState } from '../components/ChatControls';
 import Attachments from '../components/Attachments';
 import TurnStream from '../components/TurnStream';
@@ -10,6 +10,8 @@ import { BotAvatar } from '../components/BotAvatar';
 import { AvatarStack } from '../components/SecondaryNav';
 import { groupMembers, groupSessions } from '../lib/chatGroups';
 import { nearChatBottom } from '../lib/chatScroll';
+import { chatQueue } from '../lib/chatQueue';
+import { taskBusyId } from '../lib/taskCardFormat';
 
 function when(value: string) {
   const d = new Date(value);
@@ -98,15 +100,15 @@ export default function Chat({
   onGoHistory?: (hostName: string) => void;
   tasks?: TaskView[];
   taskBusy?: string | string[];
-  onTaskAction: (id: string, action: 'pause' | 'resume' | 'cancel') => void;
+  onTaskAction: (id: string, action: 'pause' | 'resume' | 'cancel' | 'withdraw') => void;
   onTaskApproval: (taskID: string, approvalID: string, allow: boolean) => void;
 }) {
   const scroll = useRef<HTMLDivElement>(null);
   const followBottom = useRef(true);
   const fileInput = useRef<HTMLInputElement>(null);
-  const taskRunning = tasks.some(taskIsActive);
-  const replyPending = Boolean(submitting || taskRunning);
-  const replyError = replyPending ? '' : replyFailure(tasks.find(t => !t.parent_id));
+  const queue = chatQueue(tasks, lines);
+  const replyPending = Boolean(submitting || queue.current);
+  const replyError = replyPending || queue.latest?.user_message_id ? '' : replyFailure(queue.latest);
   const lastUser = lines.reduce((last, line, index) => line.who === 'user' ? index : last, -1);
   const conversationKey = session || `new:${mode}:${activeBot?.id || ''}`;
   const previousConversation = useRef<string | undefined>(undefined);
@@ -127,10 +129,23 @@ export default function Chat({
     if (container && followBottom.current) container.scrollTop = container.scrollHeight;
   });
   function sendFromComposer() {
-    // A rejected send (e.g. a task is already running) must not take a
-    // reader away from history on the next render.
-    if (!sending && !uploading && !taskRunning && activeBot?.enabled && (draft.trim() || attachments.length)) followBottom.current = true;
+    if (sending || uploading || !activeBot?.enabled || (!draft.trim() && !attachments.length)) return;
+    followBottom.current = true;
     onSend();
+  }
+
+  function pendingMessage(task: TaskView, label: string, removable = false) {
+    return <article className="message user" key={task.user_message_id}>
+      <div className="user-message-content">
+        <div className="user-text">{task.goal}</div>
+        <Attachments files={task.chat_attachments || []}/>
+        <div className="reply-actions" role="status">
+          <span>{label}</span>
+          {removable && <button type="button" className="text-btn" disabled={!!taskBusyId(taskBusy, task.id)}
+            onClick={() => onTaskAction(task.id, 'withdraw')}>取消排队</button>}
+        </div>
+      </div>
+    </article>;
   }
 
   const [memoryState, setMemoryState] = useState<{ bot: string; rows: BotMemory[] } | null>(null);
@@ -226,7 +241,7 @@ export default function Chat({
         <div className="chat-scroll" ref={scroll} onScroll={() => {
           if (scroll.current) followBottom.current = nearChatBottom(scroll.current);
         }}>
-          {!lines.length && !replyPending && !replyError ? (
+          {!lines.length && !replyPending && !replyError && !queue.unsentErrors.length ? (
             <div className="chat-welcome">
               {mode === 'direct' && activeBot ? <BotAvatar bots={bots} id={activeBot.id} className="welcome-icon"/> : <div className="welcome-icon welcome-group"><AvatarStack bots={bots} members={members} max={5}/></div>}
               
@@ -245,12 +260,15 @@ export default function Chat({
           ) : (
             <div className="messages">
               {lines.map((line, i) => (
-                <article className={`message ${line.who}`} key={i}>
+                <article className={`message ${line.who}`} key={line.id || i}>
                   {line.who === 'user' ? (
                     <div className={line.fromBot ? 'user-message-content from-bot' : 'user-message-content'}>
                       {line.fromBot && <div className="from-bot-label"><Send size={12}/>来自 Bot {bots.find(b => b.id === line.fromBot)?.name || line.fromBot}</div>}
                       {line.text && <div className="user-text">{line.text}</div>}
                       <Attachments files={line.attachments || []}/>
+                      {replyFailure(line.id ? queue.tasksByMessage.get(line.id) : undefined) && <div className="reply-actions">
+                        <span>{replyFailure(line.id ? queue.tasksByMessage.get(line.id) : undefined)}</span>
+                      </div>}
                     </div>
                   ) : (
                     <div className="bot-turn">
@@ -283,6 +301,7 @@ export default function Chat({
                   )}
                 </article>
               ))}
+              {queue.currentMessage && pendingMessage(queue.currentMessage, '已发送')}
               {(replyPending || replyError) && <article className="message bot">
                 <div className="bot-turn">
                   <div className="speaker">
@@ -290,11 +309,13 @@ export default function Chat({
                     <strong>{activeBot?.name || 'Bot'}</strong>
                   </div>
                   {replyPending ? <>
-                    <TaskReplyControls tasks={tasks} bots={bots} busy={taskBusy} onAction={onTaskAction} onApproval={onTaskApproval}/>
-                    <TurnStream pending waitingStatus={submitting ? undefined : replyWaitingStatus(tasks)}/>
+                    <TaskReplyControls tasks={queue.currentTasks} bots={bots} busy={taskBusy} onAction={onTaskAction} onApproval={onTaskApproval}/>
+                    <TurnStream pending waitingStatus={replyWaitingStatus(queue.currentTasks)}/>
                   </> : <p className="operator-error" role="status">{replyError}</p>}
                 </div>
               </article>}
+              {queue.waiting.map(task => pendingMessage(task, '已排队 · 上一轮结束后回复', true))}
+              {queue.unsentErrors.map(task => pendingMessage(task, replyFailure(task)))}
             </div>
           )}
         </div>
@@ -328,7 +349,7 @@ export default function Chat({
             <Attachments files={attachments} onRemove={onRemoveFile} disabled={sending || uploading}/>
             <textarea
               aria-label="任务指令"
-              placeholder="输入指令，按步骤交互对话或上传图片、配置、日志…"
+              placeholder={queue.current ? '继续发消息，当前回复结束后按顺序处理…' : '发消息，或上传图片、配置、日志…'}
               value={draft}
               onChange={e => onDraft(e.target.value)}
               onPaste={e => {
@@ -367,12 +388,12 @@ export default function Chat({
               <span className="attachment-hint" title="最多 4 个附件；图片/PDF 每个 5 MB，UTF-8 文本每个 256 KB，合计 12 MB。">
                 {uploading ? '正在加密上传…' : attachments.length ? `${attachments.length}/4 个附件` : '图片 / PDF / 配置 / 日志'}
               </span>
-              <button className="send-btn" type="submit" aria-label="发送指令" disabled={(!draft.trim() && !attachments.length) || sending || uploading || !activeBot?.enabled || taskRunning} title={taskRunning ? '正在回复，可以在对话中停止' : undefined}>
+              <button className="send-btn" type="submit" aria-label="发送指令" disabled={(!draft.trim() && !attachments.length) || sending || uploading || !activeBot?.enabled} title={queue.current ? '发送并排队' : undefined}>
                 {sending ? <LoaderCircle size={18} className="spin"/> : <ArrowUp size={19}/>}
               </button>
             </div>
           </form>
-          <p className="composer-note"><LockKeyhole size={11}/>凭据通过加密卡片录入 · 高危操作在对话内联卡片确认 · Enter 发送{taskRunning ? ' · 任务执行中，可先写好下一条指令' : ''}</p>
+          <p className="composer-note"><LockKeyhole size={11}/>凭据通过加密卡片录入 · 高危操作在对话内确认 · Enter {queue.current ? '发送并排队' : '发送'}</p>
         </div>
       </div>
       <aside className="context-panel">

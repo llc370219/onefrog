@@ -548,6 +548,10 @@ func (a *Agent) ResumableCardAnswer(ctx context.Context, sessionID, messageID st
 // private memory) and a direct session keeps its own private memory. Freezing
 // the prompt under the wrong scope would embed private notes in the checkpoint.
 func (a *Agent) AcceptMessages(ctx context.Context, sess model.Session, botID, serverID, content string, refs []model.Attachment, opt Options) ([]map[string]any, error) {
+	return a.acceptMessages(ctx, sess, botID, serverID, content, refs, opt, true)
+}
+
+func (a *Agent) acceptMessages(ctx context.Context, sess model.Session, botID, serverID, content string, refs []model.Attachment, opt Options, includeHistory bool) ([]map[string]any, error) {
 	b, err := a.Store.GetBot(ctx, botID)
 	if err != nil {
 		return nil, err
@@ -578,9 +582,12 @@ func (a *Agent) AcceptMessages(ctx context.Context, sess model.Session, botID, s
 			system = a.leaderPrompt(promptCtx, b, serverID)
 		}
 	}
-	messages, err := a.sessionMessages(promptCtx, sess.ID, system, b.Name)
-	if err != nil {
-		return nil, err
+	messages := []map[string]any{{"role": "system", "content": system}}
+	if includeHistory {
+		messages, err = a.sessionMessages(promptCtx, sess.ID, system, b.Name)
+		if err != nil {
+			return nil, err
+		}
 	}
 	message := model.Message{SessionID: sess.ID, Role: "user", Content: content, Attachments: refs}
 	userContent, err := a.messageContent(promptCtx, message)

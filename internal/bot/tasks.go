@@ -103,8 +103,8 @@ func (r *Runner) Run(ctx context.Context) {
 		// the only thing that can turn a parked task into a running one.
 		r.ExpireOverdue(time.Now().UTC())
 		r.wakeDueJobs()
-		r.dispatch()
 		r.repairFinals()
+		r.dispatch()
 		// An acceptance that died before its transcript write must not linger
 		// as a task that looks accepted. This runs on every tick, not just at
 		// startup, so a submission that crashed a minute ago is cleaned up too.
@@ -309,10 +309,15 @@ func (r *Runner) wakeDueJobs() {
 
 // dispatch starts every queued task whose session has no other task running.
 func (r *Runner) dispatch() {
-	for _, it := range r.Book.List("") {
+	items := r.Book.List("")
+	heads := chatQueueHeads(items)
+	for _, it := range items {
 		// AcceptancePending is a lifecycle gate, not an identity: a task whose
 		// transcript write was never confirmed must never be dispatched.
 		if it.Status != task.StatusQueued || it.AcceptancePending {
+			continue
+		}
+		if head := heads[it.SessionID]; head != "" && it.ParentID == "" && head != it.ID {
 			continue
 		}
 		if !r.acquire(it.SessionID) {
@@ -492,7 +497,11 @@ func (r *Runner) execute(ctx context.Context, id string) {
 		ctx, stop = context.WithDeadline(ctx, it.Deadline)
 		defer stop()
 	}
-	out, err := r.step(ctx, it)
+	opened, err := r.openChatTurn(ctx, it)
+	var out taskOutcome
+	if err == nil {
+		out, err = r.step(ctx, opened)
+	}
 	if errors.Is(err, errCancelled) {
 		_, _ = r.Book.Update(id, func(t *task.Task) error {
 			// A late outcome from a window must not overwrite what the
@@ -864,6 +873,19 @@ func (r *Runner) AcceptTask(ctx context.Context, req CreateRequest, opt Options)
 	if raw == "" {
 		return task.Task{}, errors.New("无法保存任务设置")
 	}
+	if req.ChatQueue.OrderedChat {
+		// Extend the frozen options envelope without changing the registry
+		// format or exposing queue metadata as mutable session settings.
+		meta, err := json.Marshal(req.ChatQueue)
+		if err != nil {
+			return task.Task{}, err
+		}
+		if raw == "{}" {
+			raw = string(meta)
+		} else {
+			raw = raw[:len(raw)-1] + "," + string(meta[1:])
+		}
+	}
 	snapshot := cloneMessages(req.Messages)
 	if len(snapshot) == 0 {
 		return task.Task{}, errors.New("任务缺少已接受的对话上下文")
@@ -1080,6 +1102,7 @@ type CreateRequest struct {
 	// ClientRequestID makes acceptance idempotent: a retried request resolves
 	// to the same task instead of creating a second one.
 	ClientRequestID string
+	ChatQueue       chatQueueOptions
 	// AppendGoal writes the user's transcript entry (with attachments) after
 	// the task row exists but before it is queued. It is supplied by the API
 	// layer so transcript storage stays out of the runtime.

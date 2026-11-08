@@ -136,7 +136,7 @@ function Toolbar({ width, onWidth }: { width: number | 'auto'; onWidth: (w: numb
 }
 
 function TaskCardsFixture() {
-  const [tasks, setTasks] = useState<TaskView[]>([parentTask, childTask, queuedTask, legacyTask, userTask, doneTask, failedTask, budgetTask]);
+  const [tasks, setTasks] = useState<TaskView[]>([parentTask, childTask, queuedTask, legacyTask, userTask, pausedTask, doneTask, failedTask, budgetTask]);
   const [busy, setBusy] = useState('');
   const busyFor = (id: string, action: string) => { setBusy(id + ':' + action); window.setTimeout(() => setBusy(''), 400); };
   const patch = (id: string, fn: (t: TaskView) => TaskView) => setTasks(cur => cur.map(t => t.id === id ? fn(t) : t));
@@ -171,7 +171,7 @@ function TaskCardsFixture() {
 }
 
 function ChatFixture() {
-  const [tasks, setTasks] = useState<TaskView[]>([parentTask, childTask, pausedTask]);
+  const [tasks, setTasks] = useState<TaskView[]>([parentTask, childTask]);
   const [draft, setDraft] = useState('清理 /var/log 里 3 天前的旧日志，先只读确认。');
   const [lines, setLines] = useState<ChatLine[]>(lines0());
   const [busy, setBusy] = useState('');
@@ -182,13 +182,13 @@ function ChatFixture() {
 
   function send() {
     if (!draft.trim()) return;
-    const task: TaskView = { id: 'task-new-' + lines.length, bot_id: 'main', session_id: 'sess-1', goal: draft.trim(), status: 'queued', total_steps: 0, max_steps: 32, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
-    setLines(cur => [...cur, { who: 'user', text: draft.trim() }]);
+    const id = 'task-new-' + tasks.length;
+    const task: TaskView = { id, user_message_id: 'chat-' + id, bot_id: 'main', session_id: 'sess-1', goal: draft.trim(), status: 'queued', total_steps: 0, max_steps: 32, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
     setTasks(cur => [task, ...cur]);
     setDraft('');
-    setNotice('已创建持久任务（夹具）');
+    setNotice('已接受消息（夹具）');
   }
-  function action(id: string, act: 'pause' | 'resume' | 'cancel') {
+  function action(id: string, act: 'pause' | 'resume' | 'cancel' | 'withdraw') {
     setBusy(id + ':' + act);
     window.setTimeout(() => setBusy(''), 400);
     patch(id, t => ({ ...t, status: act === 'pause' ? 'paused' : act === 'resume' ? 'queued' : 'cancelled' }));
@@ -199,8 +199,13 @@ function ChatFixture() {
       <h2>对话页 · 动画回复</h2>
       <p>真实 Chat 组件；等待动效显示在对话中，审批和停止回复仍可操作。</p>
       <button className="text-btn" type="button" onClick={() => {
-        setTasks(cur => cur.map(t => ({ ...t, status: 'completed' })));
-        setLines(cur => [...cur, { who: 'bot', text: '排查完成，日志轮转正常。\n\n没有改动服务器配置。' }]);
+        const pending = tasks.filter(t => !t.parent_id && ['running', 'queued', 'waiting_approval'].includes(t.status)).reverse();
+        const [current, next] = pending;
+        if (!current) return;
+        setTasks(cur => cur.map(t => t.id === current.id || t.parent_id === current.id
+          ? { ...t, status: 'completed' } : t.id === next?.id ? { ...t, status: 'running' } : t));
+        setLines(cur => [...cur, { who: 'bot', text: '排查完成，日志轮转正常。\n\n没有改动服务器配置。' },
+          ...(next ? [{ who: 'user' as const, id: next.user_message_id, text: next.goal }] : [])]);
       }}>模拟收到最终回复</button>
       <div className="preview-frame">
         <Chat

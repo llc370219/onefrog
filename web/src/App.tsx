@@ -227,9 +227,14 @@ export default function App() {
   // a refresh or reconnect finds the same task again through this list.
   useTaskPoll(Boolean(authed&&!profile.must_change_credentials&&view==='chat'&&session),4000,async(isCurrent)=>{
     const sid=sessionRef.current;
-    if(!sid)return;
+    if(!sid||sendingRef.current)return;
+    const revision=chatLoad.current;
+    const previousKey=taskKey.current;
     const items=await api.tasks(sid);
-    if(!isCurrent()||sid!==sessionRef.current)return;
+    // A response requested before a send, navigation or task action may
+    // predate the accepted bubble or undo an already confirmed cancellation.
+    if(!isCurrent()||sid!==sessionRef.current||revision!==chatLoad.current||
+      previousKey!==taskKey.current||sendingRef.current)return;
     const key=taskKeyOf(sid,items);
     const changed=key!==taskKey.current;
     if(changed)applyTasks(sid,items);
@@ -361,14 +366,14 @@ export default function App() {
   async function uploadFiles(files:File[]){if(!files.length||uploadRef.current||sendingRef.current)return;if(files.some(f=>f.size>5*1024*1024)){setPageError('每个文件不能超过 5 MB');return;}if(files.length+attachments.length>4){setPageError('每轮最多上传 4 个附件');return;}if(files.reduce((n,f)=>n+f.size,0)+attachments.reduce((n,f)=>n+f.size,0)>12*1024*1024){setPageError('附件合计不能超过 12 MB');return;}uploadRef.current=true;setUploading(true);setPageError('');try{for(const file of files){const ref=await api.upload(file);setAttachments(cur=>[...cur,ref]);}}catch(e){setPageError(message(e));}finally{uploadRef.current=false;setUploading(false);}}
 
   /** Pauses, resumes or cancels a durable task; the runtime owns the actual work. */
-  async function taskAction(id:string, action:'pause'|'resume'|'cancel') {
+  async function taskAction(id:string, action:'pause'|'resume'|'cancel'|'withdraw') {
     if(taskBusyRef.current.has(id)) return;
     taskBusyRef.current.set(id,id+':'+action);
     setTaskBusy(cur => [...cur,id+':'+action]);
     try {
       const task = await api.taskAction(id,action);
       mergeTask(task);
-      setNotice(action==='pause' ? '任务已暂停' : action==='resume' ? '任务已继续' : '任务已取消');
+      setNotice(action==='withdraw' ? '已取消排队' : action==='pause' ? '任务已暂停' : action==='resume' ? '任务已继续' : '回复已停止');
     } catch(err) { setPageError(message(err)); }
     finally {
       // Clears only this task's entry: other in-flight controls stay busy.
@@ -395,19 +400,19 @@ export default function App() {
   async function send() {
     if(sendingRef.current || uploadRef.current || loading || (!draft.trim()&&!attachments.length)) return;
     if(!bots.some(b=>b.id===activeBot&&b.enabled)){setPageError('请先选取一个已启用的 Bot');return;}
-    if(sessionTasks.some(t=>(!t.session_id||t.session_id===session)&&taskIsActive(t))){setPageError('这个对话正在回复，请等它结束或先停止回复');return;}
     chatLoad.current++;
     const request = chatLoad.current;
     sendingRef.current = true;setSending(true);
-    const text = draft.trim();const sentAttachments=[...attachments];
+    const originalDraft = draft;
+    const text = draft.trim() || '请查看我发来的附件。';const sentAttachments=[...attachments];
     const sid = session;
     setDraft('');setAttachments([]);
-    setLines(cur => [...cur,{who:'user',text,attachments:sentAttachments}]);
     // One stable client request id identifies this submission, so a retry of
     // the identical body is deduplicated by the runtime instead of running
     // twice.
     const requestID = clientRequestID();
-    const body:ChatRequest = {content:text,server_id:selected,session_id:sid,project_title:chatMode==='team'&&!sid?projectTitle:undefined,...turnOptions(),attachment_ids:sentAttachments.map(f=>f.id),client_request_id:requestID};
+    setLines(cur => [...cur,{id:requestID,who:'user',text,attachments:sentAttachments}]);
+    const body:ChatRequest = {content:text,server_id:selected,session_id:sid,project_title:chatMode==='team'&&!sid?projectTitle:undefined,...turnOptions(),attachment_ids:sentAttachments.map(f=>f.id),client_request_id:requestID,ordered_chat:true};
     // 202 only means the task was accepted: the runtime finishes it in the
     // background, so the composer is released right away and progress is read
     // from the task, never invented here. This helper is the only submission
@@ -418,7 +423,10 @@ export default function App() {
       if(request===chatLoad.current){
         // Still the same chat: enter the (possibly new) session before adopting.
         if(next){sessionRef.current=next;setSession(next);}
-        await adoptTask(result.task);
+        adoptTask(result.task);
+        // The durable task represents a queued bubble until the transcript
+        // includes its exact message id. Replace the optimistic copy.
+        if(result.task.user_message_id)setLines(cur=>cur.filter(line=>line.id!==requestID));
         if(sid&&sid===next)await loadTaskLines(next);
       } else {
         // The operator already moved to another chat: record globally only.
@@ -426,8 +434,8 @@ export default function App() {
       }
       if(result.attempts>1)setNotice('网络中断，但任务已创建，正在后台执行');
     } else if(request===chatLoad.current){
-      setLines(cur => cur.slice(0,-1));
-      setDraft(text);setAttachments(sentAttachments);
+      setLines(cur => cur.filter(line=>line.id!==requestID));
+      setDraft(current=>current ? originalDraft+'\n'+current : originalDraft);setAttachments(sentAttachments);
       const detail=message(result.error);
       setPageError(result.uncertain
         ? detail+'。这次提交是否已被接收无法确认，刷新页面核对任务列表后再决定重发，避免重复执行。'

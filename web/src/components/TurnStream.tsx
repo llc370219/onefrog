@@ -42,6 +42,7 @@ export default function TurnStream({
   text = '',
   pending,
   activeStatus,
+  waitingStatus,
   hosts = [],
   choice,
   secret,
@@ -61,6 +62,7 @@ export default function TurnStream({
   text?: string;
   pending?: boolean;
   activeStatus?: string;
+  waitingStatus?: string;
   hosts?: Host[];
   choice?: Choice;
   secret?: SecretRequest;
@@ -192,11 +194,11 @@ export default function TurnStream({
       )}
 
       {pending ? (
-        <div className={`bot-working-bar${waitingApproval ? ' waiting' : ''}`} role="status" aria-live="polite">
-          {waitingApproval ? (
+        <div className={`bot-working-bar${waitingApproval || waitingStatus ? ' waiting' : ''}`} role="status" aria-live="polite">
+          {waitingApproval || waitingStatus ? (
             <>
               <span className="waiting-dot"/>
-              <span>等待你在上方审批卡片确认是否执行…</span>
+              <span>{waitingStatus || '等待你在上方审批卡片确认是否执行…'}</span>
             </>
           ) : (
             <>

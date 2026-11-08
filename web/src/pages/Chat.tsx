@@ -1,17 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowUp, Blocks, BookOpen, CodeXml, CalendarClock, Code2, HardDrive, History, Inbox, KeyRound, LoaderCircle, LockKeyhole, Plus, Server, ShieldCheck, Sparkles, Paperclip, Send, Square, Trash2, Users, Wallet } from 'lucide-react';
+import { ArrowUp, Blocks, BookOpen, CodeXml, CalendarClock, Code2, HardDrive, History, Inbox, KeyRound, LoaderCircle, LockKeyhole, Plus, Server, ShieldCheck, Sparkles, Paperclip, Send, Trash2, Users, Wallet } from 'lucide-react';
 import { api, taskIsActive, type BotMemory, type ProjectNote, type BotRow, type ChatLine, type ChatMode, type ChatSession, type Host, type Attachment, type SecretRow, type SettingsState, type TaskView, type WorkspaceTarget } from '../api';
 import ChatControls, { type ChatControlState } from '../components/ChatControls';
 import Attachments from '../components/Attachments';
 import TurnStream from '../components/TurnStream';
-import TaskPanel from '../components/TaskPanel';
-import ChatTaskStatus from '../components/ChatTaskStatus';
+import TaskReplyControls, { replyFailure, replyWaitingStatus } from '../components/TaskReplyControls';
 import { Button, IconButton, Modal, Status } from '../components/ui';
 import { BotAvatar } from '../components/BotAvatar';
 import { AvatarStack } from '../components/SecondaryNav';
 import { groupMembers, groupSessions } from '../lib/chatGroups';
-import { statusLine, taskBusyId } from '../lib/taskCardFormat';
-import { cardTasks, chatTaskClockActive, compactTasks, presentChatTasks } from '../lib/chatTaskPresentation';
 import { nearChatBottom } from '../lib/chatScroll';
 
 function when(value: string) {
@@ -45,6 +42,7 @@ export default function Chat({
   lines,
   onSend,
   sending,
+  submitting,
   onNew,
   onNewTopic,
   sessions = [],
@@ -60,10 +58,7 @@ export default function Chat({
   tasks = [],
   taskBusy,
   onTaskAction,
-  onTaskGuide,
   onTaskApproval,
-  onTaskDismiss,
-  onTaskParent,
 }: {
   onAddServer: () => void;
   controls: ChatControlState;
@@ -88,6 +83,7 @@ export default function Chat({
   lines: ChatLine[];
   onSend: () => void;
   sending: boolean;
+  submitting?: boolean;
   onNew: () => void;
   onNewTopic?: () => void;
   sessions?: ChatSession[];
@@ -103,33 +99,15 @@ export default function Chat({
   tasks?: TaskView[];
   taskBusy?: string | string[];
   onTaskAction: (id: string, action: 'pause' | 'resume' | 'cancel') => void;
-  onTaskGuide: (id: string, content: string) => void;
   onTaskApproval: (taskID: string, approvalID: string, allow: boolean) => void;
-  onTaskDismiss?: (id: string) => void;
-  onTaskParent?: (task: TaskView) => TaskView | undefined;
 }) {
   const scroll = useRef<HTMLDivElement>(null);
   const followBottom = useRef(true);
   const fileInput = useRef<HTMLInputElement>(null);
   const taskRunning = tasks.some(taskIsActive);
-  // Roots of THIS chat that are still active (incl. paused): the pinned strip
-  // above the composer keeps the interrupt discoverable even when many child
-  // cards push the TaskPanel out of the visible scroll area.
-  const activeRoots = tasks.filter(t => taskIsActive(t) && !t.parent_id);
-  // Not every turn deserves the big live card: short single replies collapse to
-  // one status line, while long, multi-step, delegated or operator-blocked work
-  // keeps the card. The decision is pure (chatTaskPresentation) so it is tested
-  // outside React; a clock runs only while a task can still cross the threshold.
-  const [now, setNow] = useState(() => Date.now());
-  const taskClock = tasks.some(chatTaskClockActive);
-  useEffect(() => {
-    if (!taskClock) return;
-    const handle = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(handle);
-  }, [taskClock]);
-  const taskEntries = presentChatTasks(tasks, now);
-  const taskCards = cardTasks(taskEntries);
-  const taskRows = compactTasks(taskEntries);
+  const replyPending = Boolean(submitting || taskRunning);
+  const replyError = replyPending ? '' : replyFailure(tasks.find(t => !t.parent_id));
+  const lastUser = lines.reduce((last, line, index) => line.who === 'user' ? index : last, -1);
   const conversationKey = session || `new:${mode}:${activeBot?.id || ''}`;
   const previousConversation = useRef<string | undefined>(undefined);
   // A different conversation starts at its latest message. Polls and card
@@ -248,7 +226,7 @@ export default function Chat({
         <div className="chat-scroll" ref={scroll} onScroll={() => {
           if (scroll.current) followBottom.current = nearChatBottom(scroll.current);
         }}>
-          {!lines.length ? (
+          {!lines.length && !replyPending && !replyError ? (
             <div className="chat-welcome">
               {mode === 'direct' && activeBot ? <BotAvatar bots={bots} id={activeBot.id} className="welcome-icon"/> : <div className="welcome-icon welcome-group"><AvatarStack bots={bots} members={members} max={5}/></div>}
               
@@ -295,7 +273,7 @@ export default function Chat({
                         secret={line.secret}
                         stale={i < lines.length - 1}
                         disabled={sending}
-                        showCompletion={!taskRunning}
+                        showCompletion={i < lastUser || (!replyPending && !replyError)}
                         animateFinal={i === lines.length - 1 && !line.pending}
                         onAnswerChoice={(values, custom) => onAnswer(line, values, custom)}
                         onProvideSecret={value => onProvide(line, value)}
@@ -305,37 +283,22 @@ export default function Chat({
                   )}
                 </article>
               ))}
+              {(replyPending || replyError) && <article className="message bot">
+                <div className="bot-turn">
+                  <div className="speaker">
+                    {activeBot && <BotAvatar bots={bots} id={activeBot.id} className="speaker-avatar"/>}
+                    <strong>{activeBot?.name || 'Bot'}</strong>
+                  </div>
+                  {replyPending ? <>
+                    <TaskReplyControls tasks={tasks} bots={bots} busy={taskBusy} onAction={onTaskAction} onApproval={onTaskApproval}/>
+                    <TurnStream pending waitingStatus={submitting ? undefined : replyWaitingStatus(tasks)}/>
+                  </> : <p className="operator-error" role="status">{replyError}</p>}
+                </div>
+              </article>}
             </div>
           )}
-          <ChatTaskStatus entries={taskRows}/>
-          <TaskPanel tasks={taskCards} bots={bots} parentOf={onTaskParent} busy={taskBusy} settings={settings} onAction={onTaskAction} onGuide={onTaskGuide} onApproval={onTaskApproval} onDismiss={onTaskDismiss} chat/>
         </div>
         <div className="composer-area">
-          {(sending || activeRoots.length > 0) && (
-            <div className="composer-task-strip" role="status" aria-label="当前任务状态">
-              {sending && !activeRoots.length ? (
-                <span className="composer-task">
-                  <LoaderCircle size={13} className="spin"/>
-                  <span className="composer-task-status">已提交，等待任务创建…</span>
-                </span>
-              ) : activeRoots.map(t => (
-                <span className={`composer-task ${t.status}`} key={t.id}>
-                  {t.status === 'queued' || t.status === 'running'
-                    ? <LoaderCircle size={13} className="spin"/>
-                    : <span className="waiting-dot" aria-hidden="true"/>}
-                  <span className="composer-task-status" title={t.goal}>{statusLine(t)}</span>
-                  <button
-                    type="button"
-                    className="composer-task-stop"
-                    disabled={Boolean(taskBusyId(taskBusy, t.id))}
-                    aria-label={`停止任务：${t.goal}`}
-                    title={t.goal}
-                    onClick={() => onTaskAction(t.id, 'cancel')}
-                  ><Square size={12}/>停止</button>
-                </span>
-              ))}
-            </div>
-          )}
           <ChatControls
             workspace={Boolean(workspace)}
             onAddServer={onAddServer}
@@ -404,7 +367,7 @@ export default function Chat({
               <span className="attachment-hint" title="最多 4 个附件；图片/PDF 每个 5 MB，UTF-8 文本每个 256 KB，合计 12 MB。">
                 {uploading ? '正在加密上传…' : attachments.length ? `${attachments.length}/4 个附件` : '图片 / PDF / 配置 / 日志'}
               </span>
-              <button className="send-btn" type="submit" aria-label="发送指令" disabled={(!draft.trim() && !attachments.length) || sending || uploading || !activeBot?.enabled || taskRunning} title={taskRunning ? '当前任务还在执行，可在上方任务卡片暂停、取消或补充引导' : undefined}>
+              <button className="send-btn" type="submit" aria-label="发送指令" disabled={(!draft.trim() && !attachments.length) || sending || uploading || !activeBot?.enabled || taskRunning} title={taskRunning ? '正在回复，可以在对话中停止' : undefined}>
                 {sending ? <LoaderCircle size={18} className="spin"/> : <ArrowUp size={19}/>}
               </button>
             </div>

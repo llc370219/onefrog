@@ -196,8 +196,12 @@ function ChatFixture() {
 
   return (
     <section className="preview-section preview-chat">
-      <h2>对话页 · 任务卡片与输入框</h2>
-      <p>真实 Chat 组件；任务卡片在消息之后，输入框上方固定显示每个活跃根任务的状态和「停止」按钮（含已暂停）；任务执行中回复不再显示「已完成」角标，只有运行时确认后才算完成。</p>
+      <h2>对话页 · 动画回复</h2>
+      <p>真实 Chat 组件；等待动效显示在对话中，审批和停止回复仍可操作。</p>
+      <button className="text-btn" type="button" onClick={() => {
+        setTasks(cur => cur.map(t => ({ ...t, status: 'completed' })));
+        setLines(cur => [...cur, { who: 'bot', text: '排查完成，日志轮转正常。\n\n没有改动服务器配置。' }]);
+      }}>模拟收到最终回复</button>
       <div className="preview-frame">
         <Chat
           onAddServer={() => {}} controls={controls} onControls={next => setState(next as typeof state)} settings={null}
@@ -207,10 +211,7 @@ function ChatFixture() {
           sessions={sessions} session="sess-1" onSession={() => {}} onDeleteSession={() => {}} onNewTopic={() => {}}
           onNotice={setNotice} onAnswer={() => {}} onProvide={() => {}}
           tasks={tasks} taskBusy={busy} onTaskAction={action}
-          onTaskGuide={(id, content) => patch(id, t => ({ ...t, progress: [...(t.progress || []), '收到引导：' + content] }))}
           onTaskApproval={(id, approvalID, allow) => patch(id, t => ({ ...t, status: 'queued', pending: undefined, approvals: (t.approvals || []).map(a => a.id === approvalID ? { ...a, status: allow ? 'allowed' : 'denied' } : a) }))}
-          onTaskDismiss={id => setTasks(cur => cur.filter(t => t.id !== id))}
-          onTaskParent={t => tasks.find(x => x.id === t.parent_id)}
         />
       </div>
       {notice && <p className="preview-note" role="status">{notice}</p>}
@@ -234,19 +235,17 @@ function DashboardFixture() {
   const patch = (id: string, fn: (t: TaskView) => TaskView) => setTasks(cur => cur.map(t => t.id === id ? fn(t) : t));
   return (
     <section className="preview-section preview-dashboard">
-      <h2>面板页 · 持久任务卡片</h2>
-      <p>真实 Dashboard 组件的任务卡片区域；面板请求也走同一套持久任务 API。</p>
+      <h2>面板页 · 动画回复</h2>
+      <p>真实 Dashboard 组件；面板请求使用相同的回复动画和审批控件。</p>
       <div className="preview-frame">
         <Dashboard
           hosts={hosts} mods={mods} history={[]} bots={bots}
-          job={{ pending: true, prompt: '检查生产环境磁盘', text: '', error: '', activeStatus: '执行中：读取磁盘占用', steps: [], sessionId: 'sess-panel', botId: 'main' }}
+          job={{ pending: true, prompt: '检查生产环境磁盘', text: '', error: '', activeStatus: '执行中：读取磁盘占用', steps: [], sessionId: 'sess-panel', botId: 'main', taskID: parentTask.id }}
           tasks={tasks} taskBusy={busy} sending={false}
           onSelect={() => {}} onRun={() => {}} onAnswer={() => {}} onProvide={() => {}}
           onModules={() => {}} onSettings={() => {}} onServers={() => {}} onBots={() => {}} onHistory={() => {}} onAssets={() => {}} onOpenModule={() => {}}
           onTaskAction={(id, act) => { setBusy(id + ':' + act); window.setTimeout(() => setBusy(''), 400); patch(id, t => ({ ...t, status: act === 'pause' ? 'paused' : act === 'resume' ? 'queued' : 'cancelled' })); }}
-          onTaskGuide={(id, content) => patch(id, t => ({ ...t, progress: [...(t.progress || []), content] }))}
           onTaskApproval={(id, approvalID, allow) => patch(id, t => ({ ...t, status: 'queued', pending: undefined, approvals: (t.approvals || []).map(a => a.id === approvalID ? { ...a, status: allow ? 'allowed' : 'denied' } : a) }))}
-          onTaskDismiss={id => setTasks(cur => cur.filter(t => t.id !== id))}
         />
       </div>
     </section>

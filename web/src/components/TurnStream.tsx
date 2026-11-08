@@ -48,6 +48,7 @@ export default function TurnStream({
   stale,
   disabled,
   animateFinal,
+  showCompletion = true,
   onDecideApproval,
   onAnswerChoice,
   onProvideSecret,
@@ -66,6 +67,9 @@ export default function TurnStream({
   stale?: boolean;
   disabled?: boolean;
   animateFinal?: boolean;
+  /** False while a durable task is still running: its later commentary must
+   *  not claim 已完成, which only the runtime can confirm. */
+  showCompletion?: boolean;
   onDecideApproval?: (id: string, dec: ApprovalDecision) => void;
   onAnswerChoice?: (values: string[], custom: string) => void;
   onProvideSecret?: (value: string) => void;
@@ -202,20 +206,22 @@ export default function TurnStream({
             </>
           )}
         </div>
-      ) : (
+      ) : (showCompletion || waitingChoice || waitingSecret || onCopy) && (
         <div className="bot-done-bar">
           {onCopy && fullCopyText && (
             <IconButton label="复制回复" onClick={() => onCopy(fullCopyText)}><Copy size={13}/></IconButton>
           )}
-          <span className={`done-badge${waitingChoice || waitingSecret ? ' waiting' : ''}`}>
-            {waitingSecret ? (
-              <><span className="waiting-dot"/>等待你在卡片中输入加密内容</>
-            ) : waitingChoice ? (
-              <><span className="waiting-dot"/>等待你在卡片中选择以继续</>
-            ) : (
-              <><CircleCheck size={13}/><Terminal size={11} style={{ display: 'none' }}/>已完成</>
-            )}
-          </span>
+          {(showCompletion || waitingChoice || waitingSecret) && (
+            <span className={`done-badge${waitingChoice || waitingSecret ? ' waiting' : ''}`}>
+              {waitingSecret ? (
+                <><span className="waiting-dot"/>等待你在卡片中输入加密内容</>
+              ) : waitingChoice ? (
+                <><span className="waiting-dot"/>等待你在卡片中选择以继续</>
+              ) : showCompletion ? (
+                <><CircleCheck size={13}/><Terminal size={11} style={{ display: 'none' }}/>已完成</>
+              ) : null}
+            </span>
+          )}
         </div>
       )}
     </div>

@@ -782,6 +782,13 @@ func (e *LocalEngine) exec(ctx context.Context, dir, command string) (string, st
 	// New process group: on timeout/cancel the whole group (children included)
 	// is killed, so no descendant holds the output pipes forever.
 	cmd.SysProcAttr = procGroupAttr()
+	// exec.CommandContext kills only the direct child on cancellation; its
+	// grandchildren survive and can hold the output pipes open, leaving Wait
+	// blocked on a hung tree. Wiring Cancel to the process-group kill makes
+	// context cancellation take down the whole tree, and WaitDelay guarantees
+	// Wait cannot block on pipes left open by a survivor.
+	cmd.Cancel = func() error { return killProcessTree(cmd.Process) }
+	cmd.WaitDelay = 2 * time.Second
 	// Sanitized environment: only PATH/HOME/TERM/LANG pass through, so
 	// commands cannot inherit OneFrog's own process secrets.
 	cmd.Env = sanitizedEnv()

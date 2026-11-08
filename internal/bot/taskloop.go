@@ -392,6 +392,97 @@ func (st *taskState) writeFinal(ctx context.Context, a *Agent, text, messageID s
 	return nil
 }
 
+// commentaryMessageID is a stable id for the assistant commentary of one
+// non-final tool-call turn. It is derived from the task id and the turn, so a
+// retried or replayed write detects the message it already appended.
+func (st *taskState) commentaryMessageID() string {
+	sum := sha256.Sum256([]byte("commentary\x00" + st.id + "\x00" + strconv.Itoa(st.turn)))
+	return "task-commentary-" + hex.EncodeToString(sum[:12])
+}
+
+// writeCommentary appends the redacted user-facing text that accompanied a
+// non-final tool-call turn to the transcript exactly once. It never carries
+// reasoning or response items — only the content the user was meant to read.
+// Best-effort context/state gates suppress stale writes; Book and Store are
+// separate, so this is not an atomic pause/write guarantee. A commentary
+// write failure does not stop the task.
+func (st *taskState) writeCommentary(ctx context.Context, a *Agent, text string) error {
+	if st.finished || st.halted || strings.TrimSpace(text) == "" {
+		return nil
+	}
+	session := taskSession(ctx)
+	if session == "" {
+		return nil
+	}
+	// A window the request already abandoned must not write anything.
+	if err := ctx.Err(); err != nil {
+		return nil
+	}
+	it, err := st.book.Get(st.id)
+	if err != nil || it.Status != task.StatusRunning {
+		// The task is no longer running (paused, cancelled, parked, finished):
+		// no commentary belongs to it any more.
+		return nil
+	}
+	messageID := st.commentaryMessageID()
+	if st.finalMu != nil {
+		st.finalMu.Lock()
+		defer st.finalMu.Unlock()
+	}
+	// The transcript store may ignore ctx, so the checks after taking the lock
+	// are best-effort race gates, not an atomic guarantee across the registry
+	// and the transcript store: a pause or cancel can still land between the
+	// last check and the write. They narrow the window in which a late write
+	// happens; the deterministic id and the runner lock keep the write itself
+	// exactly once.
+	if err := ctx.Err(); err != nil {
+		return nil
+	}
+	if it, err := st.book.Get(st.id); err != nil || it.Status != task.StatusRunning {
+		return nil
+	}
+	// A request that was cancelled or a task that was paused while
+	// ListMessages was in flight (it may block too) must not reach the write.
+	if msgs, err := a.Store.ListMessages(ctx, session); err == nil {
+		for _, m := range msgs {
+			if m.ID == messageID {
+				return nil
+			}
+		}
+	} else {
+		// Cannot prove the message is absent; skip rather than risk a duplicate.
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil
+	}
+	if it, err := st.book.Get(st.id); err != nil || it.Status != task.StatusRunning {
+		return nil
+	}
+	if _, err := a.Store.AddMessage(ctx, model.Message{ID: messageID, SessionID: session, Role: "assistant", Content: text}); err != nil {
+		// A duplicate id means another writer already appended it.
+		if msgs, listErr := a.Store.ListMessages(ctx, session); listErr == nil {
+			for _, m := range msgs {
+				if m.ID == messageID {
+					return nil
+				}
+			}
+		}
+		return err
+	}
+	return nil
+}
+
+// hasFinishCall reports whether the batch closes the task.
+func hasFinishCall(calls []toolCall) bool {
+	for _, c := range calls {
+		if c.Function.Name == "finish" {
+			return true
+		}
+	}
+	return false
+}
+
 // repairFinals writes the closing message of every completed task whose
 // transcript entry is missing. It runs on each scan, not just at startup: a
 // transient transcript error, a crash between the task write and the transcript
@@ -567,11 +658,27 @@ func (a *Agent) taskLoop(ctx context.Context, st *taskState, speaker model.Bot, 
 		if err := st.countStep(ctx); err != nil {
 			return taskOutcome{}, err
 		}
-		st.track.modelStep("模型步骤")
+		st.track.toolStart("model", "正在生成回复")
 		msg, err := a.nextModelTurn(ctx, speaker, creds, messages, spec)
 		if err != nil {
+			// The HTTP client wraps the abort with its own text, so the
+			// context identity can be lost in the error chain. The request
+			// context itself is authoritative: if it is done, the turn was
+			// interrupted, not failed, and the caller sees the real signal.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				err = ctxErr
+			}
+			// The in-flight activity closes with how the request ended: a
+			// cancelled or timed-out request was interrupted, anything else
+			// failed.
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				st.track.toolEnd("model", "正在生成回复", ActivityInterrupted)
+			} else {
+				st.track.toolEnd("model", "正在生成回复", ActivityFailed)
+			}
 			return taskOutcome{}, err
 		}
+		st.track.toolEnd("model", "正在生成回复", ActivityCompleted)
 		if note, rest := peelMediaNote(msg.Content); note != "" {
 			mediaNote = note
 			msg.Content = rest
@@ -585,9 +692,19 @@ func (a *Agent) taskLoop(ctx context.Context, st *taskState, speaker model.Bot, 
 			st.outcome = taskOutcome{Text: joinMediaNote(mediaNote, text), Mutated: st.mutated, Steps: st.step}
 			return st.outcome, nil
 		}
-		if tr != nil && !isWorker(ctx) && !hasInteractiveCardCall(msg.ToolCalls) {
-			if say := strings.TrimSpace(a.redact(ctx, msg.Content)); say != "" {
-				tr.emit(Step{Kind: "say", Bot: speaker.Name, Output: say})
+		say := strings.TrimSpace(a.redact(ctx, msg.Content))
+		if tr != nil && !isWorker(ctx) && !hasInteractiveCardCall(msg.ToolCalls) && say != "" {
+			tr.emit(Step{Kind: "say", Bot: speaker.Name, Output: say})
+		}
+		// The text that accompanied the tool calls was only in the live trace;
+		// persist the redacted version so a reload still shows what the task
+		// said while it worked. The final answer is stored by saveFinal, and a
+		// turn with a card (ask_user/request_secret) keeps its own handling.
+		// A finish turn's text would duplicate the closing message saveFinal
+		// already stores; a card turn keeps its own interactive handling.
+		if say != "" && !hasInteractiveCardCall(msg.ToolCalls) && !hasFinishCall(msg.ToolCalls) {
+			if err := st.writeCommentary(ctx, a, say); err != nil {
+				log.Printf("task %s: write commentary: %v", st.id, err)
 			}
 		}
 		entry := map[string]any{"role": "assistant", "content": msg.Content, "tool_calls": msg.ToolCalls}

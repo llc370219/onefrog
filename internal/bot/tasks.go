@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
@@ -167,6 +168,17 @@ func (r *Runner) ExpireOverdue(now time.Time) int {
 		// A parked window may still be running: stop it so it cannot keep
 		// working for a task that is over.
 		r.cancelHandle(it.ID)
+		// The deadline is over for the whole tree: make the direct children
+		// durably cancelled first (this also stops their windows), then stop
+		// this task's own remaining windows and background jobs. Errors are
+		// logged, not fatal: expiry must complete for the other tasks in the
+		// scan.
+		if err := r.PropagateCancel(it.ID); err != nil {
+			log.Printf("tasks: expire children of %s: %v", it.ID, err)
+		}
+		if err := r.stopTaskWork(it, r.ChildTasks(it.ID)); err != nil {
+			log.Printf("tasks: expire jobs of %s: %v", it.ID, err)
+		}
 		// A parent waiting on this child must learn it is done instead of
 		// polling until its own deadline.
 		r.wakeParent(it.ID)
@@ -306,6 +318,20 @@ func (r *Runner) dispatch() {
 		if !r.acquire(it.SessionID) {
 			continue
 		}
+		// Register this window's cancel handle BEFORE claiming the task.
+		// The claim (Book.Update) and the handle map (r.mu) are separate
+		// locks, so the ordering matters: once the claim makes the task
+		// visible as running, a Pause/Cancel may fire at any moment and must
+		// never miss the in-flight window's context. Installing the handle
+		// first closes that gap; the persisted-state gate in execute covers
+		// the residual window between claim and context observation.
+		runCtx, cancel := context.WithCancel(r.baseOrBackground())
+		r.mu.Lock()
+		r.cancel[it.ID] = cancel
+		r.mu.Unlock()
+		// Same-session serialization is held by acquire above, so no new
+		// window for this task or session can be started until release: the
+		// stale-window unregister below can never delete a newer handle.
 		// Claim under the registry lock: a concurrent pause/cancel/duplicate
 		// dispatch loses the race and does nothing.
 		if _, err := r.Book.Update(it.ID, func(t *task.Task) error {
@@ -321,13 +347,13 @@ func (r *Runner) dispatch() {
 			}
 			return nil
 		}); err != nil {
+			r.mu.Lock()
+			delete(r.cancel, it.ID)
+			r.mu.Unlock()
+			cancel()
 			r.release(it.SessionID)
 			continue
 		}
-		runCtx, cancel := context.WithCancel(r.baseOrBackground())
-		r.mu.Lock()
-		r.cancel[it.ID] = cancel
-		r.mu.Unlock()
 		r.wg.Add(1)
 		go func(id, session string) {
 			defer r.wg.Done()
@@ -376,6 +402,37 @@ func (r *Runner) cancelHandle(id string) {
 	}
 }
 
+// stopTaskWork stops all work belonging to one task tree after the durable
+// status change: it cancels the root's and every direct child's window
+// context first, then cancels the background jobs the bot started for the
+// root task and each child. Job ownership is (BotID, taskID): Jobs.CancelTask
+// kills exactly the jobs started under those coordinates, and the worker
+// validates the same scope, so one task's cleanup never touches another
+// bot's or another task's jobs.
+//
+// Order matters: the window contexts are cancelled BEFORE the job snapshot
+// so a window unwinding from its own cancellation cannot start a new job
+// that the snapshot would miss. Nested delegation is forbidden, so direct
+// children cover the whole tree.
+func (r *Runner) stopTaskWork(root task.Task, children []task.Task) error {
+	r.cancelHandle(root.ID)
+	for _, child := range children {
+		r.cancelHandle(child.ID)
+	}
+	var errs []error
+	if r.Agent != nil && r.Agent.Jobs != nil {
+		if err := r.Agent.Jobs.CancelTask(root.BotID, root.ID); err != nil {
+			errs = append(errs, err)
+		}
+		for _, child := range children {
+			if err := r.Agent.Jobs.CancelTask(child.BotID, child.ID); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // step runs one window, through the test hook when one is installed.
 func (r *Runner) step(ctx context.Context, it task.Task) (taskOutcome, error) {
 	if hook := r.stepHook; hook != nil {
@@ -412,8 +469,21 @@ func windowActive(t *task.Task) bool {
 
 // execute runs one task window to its next stopping point.
 func (r *Runner) execute(ctx context.Context, id string) {
+	// Gate before the first step: the window must not run a model call for a
+	// task whose context is already dead (operator cancel/pause that won the
+	// race against dispatch, or process shutdown) or whose persisted state is
+	// no longer running (paused/cancelled/queued by a newer decision).
+	if ctx.Err() != nil {
+		return
+	}
 	it, err := r.Book.Get(id)
 	if err != nil {
+		return
+	}
+	// The persisted state must still say running: a Pause/Cancel/Resume that
+	// landed between the claim and this read owns the newer decision, and this
+	// stale window must not step the model for it.
+	if it.Status != task.StatusRunning {
 		return
 	}
 	defer r.wakeParent(id)
@@ -460,6 +530,24 @@ func (r *Runner) execute(ctx context.Context, id string) {
 				t.Pending = nil
 				return nil
 			})
+			// The time budget is over for this task: stop any still-running
+			// background jobs it (and its direct children) started, so a
+			// parked job wait cannot outlive the deadline. The direct
+			// children are made durably cancelled FIRST (their windows stop
+			// inside propagation), then window contexts are cancelled and
+			// jobs snapped. The job cancel is scoped to (BotID, task). This
+			// is deadline-only: a pure context.Canceled may be process
+			// shutdown, which must not durably cancel delegated children.
+			// Normal window completion takes no such cleanup: jobs are meant
+			// to span windows.
+			if it2, e := r.Book.Get(id); e == nil {
+				if err := r.PropagateCancel(id); err != nil {
+					log.Printf("tasks: deadline children of %s: %v", id, err)
+				}
+				if err := r.stopTaskWork(it2, r.ChildTasks(id)); err != nil {
+					log.Printf("tasks: deadline jobs of %s: %v", id, err)
+				}
+			}
 		}
 		return
 	}
@@ -1032,18 +1120,24 @@ func (r *Runner) Pause(ctx context.Context, ownerID, id string) (task.Task, erro
 	if err != nil {
 		return task.Task{}, err
 	}
-	// Stop the in-flight window so pause takes effect now instead of after the
-	// current model or tool call finishes.
-	r.cancelHandle(id)
-	// A child has its own runner slot, so pausing the parent must pause it too
-	// and stop its window; otherwise it keeps working for a paused task.
-	for _, child := range r.ChildTasks(id) {
-		r.cancelHandle(child.ID)
-	}
+	// A child has its own runner slot, so pausing the parent must pause it
+	// too and stop its window; otherwise it keeps working for a paused task.
+	// PropagatePause makes every child durably paused and cancels its window
+	// handle; the child list is read before propagation so the job cleanup
+	// below covers exactly the direct children.
+	children := r.ChildTasks(id)
+	errs := []error{}
 	if err := r.PropagatePause(id); err != nil {
-		log.Printf("tasks: pause children of %s: %v", id, err)
+		errs = append(errs, fmt.Errorf("暂停子任务: %w", err))
 	}
-	return it, nil
+	// Stop the in-flight window so pause takes effect now instead of after
+	// the current model or tool call finishes, then cancel this task's and
+	// its children's background jobs. The window contexts are cancelled
+	// before the job snapshot inside stopTaskWork.
+	// Cleanup always runs, even if propagation failed: a half-paused tree
+	// must not keep jobs running.
+	errs = append(errs, r.stopTaskWork(it, children))
+	return it, errors.Join(errs...)
 }
 
 // Resume re-queues a paused task, or answers a waiting one.
@@ -1128,17 +1222,23 @@ func (r *Runner) Cancel(ctx context.Context, ownerID, id string) (task.Task, err
 	if err != nil {
 		return task.Task{}, err
 	}
-	// Stop the in-flight window now; the status check above already made the
-	// cancellation durable, so the goroutine cannot overwrite it.
-	r.cancelHandle(id)
-	for _, child := range r.ChildTasks(id) {
-		r.cancelHandle(child.ID)
-	}
+	// PropagateCancel makes every direct child durably cancelled and cancels
+	// its window handle; nested delegation is forbidden, so direct children
+	// cover the whole tree. The child list is read before propagation so the
+	// job cleanup below covers exactly the direct children.
+	children := r.ChildTasks(id)
+	errs := []error{}
 	if err := r.PropagateCancel(id); err != nil {
-		log.Printf("tasks: cancel children of %s: %v", id, err)
+		errs = append(errs, fmt.Errorf("取消子任务: %w", err))
 	}
+	// Stop the in-flight window now; the status updates above already made
+	// the cancellation durable, so the goroutine cannot overwrite it. Then
+	// cancel this task's and its children's background jobs.
+	// Cleanup always runs, even if propagation failed: a half-cancelled tree
+	// must not keep jobs running.
+	errs = append(errs, r.stopTaskWork(it, children))
 	r.Wake()
-	return it, nil
+	return it, errors.Join(errs...)
 }
 
 // Guide appends an operator instruction without interrupting a running window.

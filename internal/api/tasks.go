@@ -78,8 +78,9 @@ type TaskActivity struct {
 }
 
 type TaskPending struct {
-	Kind       string `json:"kind"`
-	ApprovalID string `json:"approval_id,omitempty"`
+	Kind          string `json:"kind"`
+	ApprovalID    string `json:"approval_id,omitempty"`
+	CardMessageID string `json:"card_message_id,omitempty"`
 }
 
 type TaskApproval struct {
@@ -134,7 +135,7 @@ func taskView(it task.Task) TaskView {
 		v.Deadline = &d
 	}
 	if it.Pending != nil {
-		v.Pending = &TaskPending{Kind: it.Pending.Kind, ApprovalID: it.Pending.ApprovalID}
+		v.Pending = &TaskPending{Kind: it.Pending.Kind, ApprovalID: it.Pending.ApprovalID, CardMessageID: it.Pending.CardMessageID}
 	}
 	for _, a := range it.Approvals {
 		v.Approvals = append(v.Approvals, TaskApproval{
@@ -486,13 +487,20 @@ func (s *Server) guideTask(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
 	var in struct {
 		Content string `json:"content"`
+		Steer   bool   `json:"steer"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
 		fail(c, http.StatusBadRequest, "请求无效")
 		return
 	}
 	user := c.MustGet("user").(model.User)
-	it, err := s.Tasks.Guide(c.Request.Context(), user.ID, c.Param("id"), in.Content)
+	var it task.Task
+	var err error
+	if in.Steer {
+		it, err = s.Tasks.GuideChat(user.ID, c.Param("id"), in.Content)
+	} else {
+		it, err = s.Tasks.Guide(c.Request.Context(), user.ID, c.Param("id"), in.Content)
+	}
 	if err != nil {
 		taskError(c, err)
 		return

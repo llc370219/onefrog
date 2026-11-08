@@ -697,6 +697,9 @@ input:focus,select:focus,textarea:focus{border-color:color-mix(in srgb,var(--acc
 .composer-task-stop{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border:1px solid var(--line);border-radius:8px;background:var(--field);color:var(--fg2);font-size:11.5px;cursor:pointer;flex-shrink:0}
 .composer-task-stop:hover:not(:disabled){color:var(--danger);border-color:color-mix(in srgb,var(--danger) 40%,transparent)}
 .composer-task-stop:disabled{opacity:.55;cursor:not-allowed}
+.composer-reply-context{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 8px;padding:0 4px;color:var(--fg2);font-size:12px}
+.composer-reply-context span{min-width:0;overflow-wrap:anywhere}
+.composer-reply-context button,.composer-tools>.text-btn{flex-shrink:0}
 @media(max-width:600px){.composer-task{padding:6px 9px;gap:6px}.composer-task-status{font-size:11.5px}}
 /* Offline visual fixture (web/tests/runtime-preview.html). Every rule is scoped
    to .preview-* and inherits the theme variables, so nothing here leaks into the app. */

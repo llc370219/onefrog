@@ -280,6 +280,9 @@ func (st *taskState) saveFinal(ctx context.Context, a *Agent, messages []map[str
 		if !windowOwns(it) {
 			return errFinalBlocked
 		}
+		if hasCorrection(*it) {
+			return errCorrectionPending
+		}
 		if messages != nil {
 			it.Checkpoint.Messages = messages
 		}
@@ -298,6 +301,9 @@ func (st *taskState) saveFinal(ctx context.Context, a *Agent, messages []map[str
 	if errors.Is(err, errFinalBlocked) {
 		st.halted = true
 		return errSuspended
+	}
+	if errors.Is(err, errCorrectionPending) {
+		return err
 	}
 	if err != nil {
 		st.halted = true
@@ -641,7 +647,7 @@ func (a *Agent) taskLoop(ctx context.Context, st *taskState, speaker model.Bot, 
 		}
 		// Operator guidance is applied at a window boundary, never mid-call,
 		// and its removal is committed in the same write as the window.
-		next, err := st.takeGuidance(ctx, messages)
+		next, err := st.takeGuidance(ctx, a, messages)
 		if err != nil {
 			return taskOutcome{}, err
 		}
@@ -679,6 +685,15 @@ func (a *Agent) taskLoop(ctx context.Context, st *taskState, speaker model.Bot, 
 			return taskOutcome{}, err
 		}
 		st.track.toolEnd("model", "正在生成回复", ActivityCompleted)
+		latest, err := st.book.Get(st.id)
+		if err != nil {
+			return taskOutcome{}, err
+		}
+		if hasCorrection(latest) {
+			// The previous model request did not see the correction. Do not
+			// publish its answer or execute the tools it proposed.
+			continue
+		}
 		if note, rest := peelMediaNote(msg.Content); note != "" {
 			mediaNote = note
 			msg.Content = rest
@@ -687,6 +702,9 @@ func (a *Agent) taskLoop(ctx context.Context, st *taskState, speaker model.Bot, 
 			text := strings.TrimSpace(a.redact(ctx, msg.Content))
 			// Store the final assistant reply before the task leaves running.
 			if err := st.saveFinal(ctx, a, messages, text); err != nil {
+				if errors.Is(err, errCorrectionPending) {
+					continue
+				}
 				return taskOutcome{}, err
 			}
 			st.outcome = taskOutcome{Text: joinMediaNote(mediaNote, text), Mutated: st.mutated, Steps: st.step}
@@ -809,9 +827,8 @@ func (st *taskState) markSkipped(call toolCall, out string) error {
 	return err
 }
 
-// takeGuidance appends the oldest operator instruction and removes it from the
-// stored queue in the same update, so guidance cannot be lost or applied twice.
-func (st *taskState) takeGuidance(ctx context.Context, messages []map[string]any) ([]map[string]any, error) {
+// takeGuidance takes the accepted messages in order before the next model call.
+func (st *taskState) takeGuidance(ctx context.Context, a *Agent, messages []map[string]any) ([]map[string]any, error) {
 	it, err := st.book.Get(st.id)
 	if err != nil {
 		return nil, err
@@ -819,12 +836,22 @@ func (st *taskState) takeGuidance(ctx context.Context, messages []map[string]any
 	if len(it.Guidance) == 0 {
 		return messages, nil
 	}
-	first := it.Guidance[0]
-	next := append(append([]map[string]any{}, messages...), map[string]any{"role": "user", "content": "（用户补充的引导，只作背景）\n" + first})
-	if _, err := st.book.Update(st.id, func(t *task.Task) error {
-		if len(t.Guidance) > 0 {
-			t.Guidance = t.Guidance[1:]
+	next := append([]map[string]any{}, messages...)
+	for _, entry := range it.Guidance {
+		content := "（用户补充的引导，只作背景）\n" + entry
+		if messageID, text, ok := correction(entry); ok {
+			if err := persistCorrection(ctx, a, it.SessionID, messageID, text); err != nil {
+				return nil, err
+			}
+			content = "（用户对当前轮的补充或纠正，请按这条消息调整后续步骤。权限和审批规则不变。）\n" + text
 		}
+		next = append(next, map[string]any{"role": "user", "content": content})
+	}
+	if _, err := st.book.Update(st.id, func(t *task.Task) error {
+		if !windowOwns(t) {
+			return errPaused
+		}
+		t.Guidance = t.Guidance[len(it.Guidance):]
 		t.Checkpoint.Messages = next
 		t.Step = st.step
 		return nil
@@ -951,13 +978,20 @@ func (st *taskState) runCall(ctx context.Context, a *Agent, speaker model.Bot, c
 		return nil, errPaused
 	}
 	hash := argsHash(call)
+	prior := findEntry(it.Journal, st.turn, call.ID, hash)
+	if prior == nil && it.Pending == nil && hasCorrection(it) {
+		if err := st.recordDone(call, hash, correctionSkipped); err != nil {
+			return nil, err
+		}
+		out := correctionSkipped
+		return &out, nil
+	}
 	// A delegated child is not an approval and not a stored tool result: the
 	// parent parks on the child job, so it must be intercepted before the
 	// journal switch would read a child reference as a parked call.
 	if st.delegateCall != nil && (call.Function.Name == "ask_agent" || call.Function.Name == "hand_off") {
 		return st.delegateCall(ctx, a, speaker, creds, serverID, call, tr)
 	}
-	prior := findEntry(it.Journal, st.turn, call.ID, hash)
 	if prior != nil {
 		switch prior.State {
 		case task.JournalDone, task.JournalFailed:
@@ -1106,6 +1140,13 @@ func (st *taskState) execute(ctx context.Context, a *Agent, speaker model.Bot, c
 		callCtx = next
 	}
 	if err := st.recordIntent(call, hash); err != nil {
+		if errors.Is(err, errCorrectionPending) {
+			if err := st.recordDone(call, hash, correctionSkipped); err != nil {
+				return nil, err
+			}
+			out := correctionSkipped
+			return &out, nil
+		}
 		return nil, err
 	}
 	st.track.toolStart(call.Function.Name, label)
@@ -1388,6 +1429,9 @@ func (st *taskState) recordIntent(call toolCall, hash string) error {
 			}
 			return errPaused
 		}
+		if hasCorrection(*it) {
+			return errCorrectionPending
+		}
 		it.Pending = &task.Pending{Kind: task.PendingTool, CallID: call.ID, Name: call.Function.Name, ArgsHash: hash}
 		it.Journal = append(it.Journal, task.JournalEntry{
 			At: time.Now().UTC(), Seq: len(it.Journal) + 1, Turn: st.turn,
@@ -1399,7 +1443,7 @@ func (st *taskState) recordIntent(call toolCall, hash string) error {
 		st.halted = true
 		return err
 	}
-	if err != nil {
+	if err != nil && !errors.Is(err, errCorrectionPending) {
 		st.halted = true
 	}
 	return err

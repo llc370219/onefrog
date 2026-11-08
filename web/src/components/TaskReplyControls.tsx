@@ -7,7 +7,8 @@ import ApprovalCard from './ApprovalCard';
 export function replyWaitingStatus(tasks: TaskView[]): string | undefined {
   const active = tasks.filter(taskIsActive);
   if (active.some(t => t.status === 'waiting_approval' || t.approvals?.some(a => a.status === 'pending'))) return '等待你批准一项操作';
-  if (active.some(t => t.status === 'waiting_user')) return '等待你的回复';
+  const waitingUser = active.find(t => t.status === 'waiting_user');
+  if (waitingUser) return waitingUser.pending?.card_message_id ? '等待你的回复' : '本轮未提供可回答的问题';
   if (active.length && active.every(t => t.status === 'paused')) return '已暂停';
 }
 

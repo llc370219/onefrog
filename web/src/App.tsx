@@ -445,8 +445,25 @@ export default function App() {
     }
     sendingRef.current=false;setSending(false);api.sessions().then(setSessions).catch(()=>{});
   }
-  /** Answers an ask_user card once; the answer becomes the next user message and resumes the turn. */
-  async function answerChoice(card: ChatLine, values: string[], custom: string) {
+  /** Send text into the exact active turn, never via the next-turn queue. */
+  async function correctTurn(taskID: string) {
+    if(sendingRef.current||uploadRef.current||loading||!draft.trim()||attachments.length)return;
+    const text = draft;
+    sendingRef.current=true;setSending(true);setPageError('');
+    try {
+      const updated = await api.guideTask(taskID, text, true);
+      mergeTask(updated);
+      setDraft(current=>current===text?'':current);
+      setNotice('纠正已送达当前轮，将在下一步生效');
+    } catch(err) {
+      const status=(err as {status?:number}|null)?.status;
+      setPageError(!status||status>=500 ? message(err)+'。无法确认是否已送达，请核对对话后再发送。' : message(err));
+    } finally {
+      sendingRef.current=false;setSending(false);
+    }
+  }
+  /** Answers an ask_user card once; the answer resumes the same turn. */
+  async function answerChoice(card: ChatLine, values: string[], custom: string, fromComposer = false) {
     if(sendingRef.current || uploadRef.current || loading || !card.id || !card.choice || card.choice.answer || !session) return;
     chatLoad.current++;
     const request = chatLoad.current;
@@ -463,6 +480,7 @@ export default function App() {
     // identical answer once on a lost response, never on a rejection.
     const result = await submitDurableTask(body);
     if(result.ok){
+      if(fromComposer)setDraft(current=>current===draft?'':current);
       if(request===chatLoad.current){sessionRef.current=result.task.session_id||sid;setSession(result.task.session_id||sid);}
       await adoptTask(result.task);
     } else if(request===chatLoad.current){
@@ -606,7 +624,7 @@ export default function App() {
     {pageError && <div className="global-error"><Notice error>{pageError}</Notice><IconButton label="关闭错误提示" onClick={() => setPageError('')}><X size={15}/></IconButton></div>}
     <div className={`view-container ${view === 'chat' ? 'chat-view' : ''}`}>
     {view === 'panel' && <Dashboard hosts={hosts} mods={mods} history={history} bots={bots} job={panelJob} tasks={panelTasks} taskBusy={taskBusy} sending={sending} onSelect={setSelected} onRun={runPanel} onAnswer={answerPanel} onProvide={answerPanelSecret} onModules={() => open('modules')} onSettings={openSettings} onServers={() => go('servers')} onBots={() => go('agents')} onHistory={openHistory} onAssets={() => {setActiveModule('assets'); go('modules');}} onOpenModule={(id,serverId) => {if(id==='services')openServices(serverId);else {setActiveModule(id); go('modules');}}} onTaskAction={taskAction} onTaskApproval={taskApproval}/>}
-    {view === 'chat' && <Chat onAddServer={()=>open('server')} controls={controls} onControls={setControls} settings={chatConfig} mode={chatMode} workspace={chatWorkspace} onOpenWorkspace={viewCode} projectTitle={projectTitle} attachments={attachments} onFiles={uploadFiles} onRemoveFile={id=>setAttachments(cur=>cur.filter(f=>f.id!==id))} uploading={uploading} activeBot={bots.find(b=>b.id===activeBot)} hosts={hosts} bots={bots} secrets={secrets} selected={selected} onSelect={setSelected} draft={draft} onDraft={setDraft} lines={lines} onSend={send} sending={sending||loading} submitting={sending} onNew={openGroupPicker} sessions={sessions} session={session} onSession={restoreChat} onDeleteSession={removeChat} onNewTopic={()=>newChat(activeBot)} onNotice={setNotice} onAnswer={answerChoice} onProvide={answerSecret} onGoServer={() => go('servers')} onGoAsset={openAssetForServer} onGoHistory={name => openHistory('all', name)} tasks={chatTasks} taskBusy={taskBusy} onTaskAction={taskAction} onTaskApproval={taskApproval}/>}
+    {view === 'chat' && <Chat onAddServer={()=>open('server')} controls={controls} onControls={setControls} settings={chatConfig} mode={chatMode} workspace={chatWorkspace} onOpenWorkspace={viewCode} projectTitle={projectTitle} attachments={attachments} onFiles={uploadFiles} onRemoveFile={id=>setAttachments(cur=>cur.filter(f=>f.id!==id))} uploading={uploading} activeBot={bots.find(b=>b.id===activeBot)} hosts={hosts} bots={bots} secrets={secrets} selected={selected} onSelect={setSelected} draft={draft} onDraft={setDraft} lines={lines} onSend={send} onCorrect={correctTurn} sending={sending||loading} submitting={sending} onNew={openGroupPicker} sessions={sessions} session={session} onSession={restoreChat} onDeleteSession={removeChat} onNewTopic={()=>newChat(activeBot)} onNotice={setNotice} onAnswer={answerChoice} onProvide={answerSecret} onGoServer={() => go('servers')} onGoAsset={openAssetForServer} onGoHistory={name => openHistory('all', name)} tasks={chatTasks} taskBusy={taskBusy} onTaskAction={taskAction} onTaskApproval={taskApproval}/>}
     {view === 'workspace' && <Workspace hosts={hosts} target={workspaceTarget} onTarget={setWorkspaceTarget} sessions={sessions} activeTask={chatWorkspace} onReturnToTask={()=>go('chat')} onNewTask={startCodeTask} onResume={openCodeTask} sending={sending||uploading} onAddServer={()=>open('server')}/>}
     {view === 'servers' && <Servers addedServer={addedServer} hosts={hosts} selected={selected} onSelect={setSelected} onAdd={() => open('server')} onTest={testServer} testing={testing} onChat={() => openChat()} onOpenServices={openServices} onOpenAsset={openAssetForServer} onOpenHistory={name => openHistory('all', name)} onChanged={load}/>}
     {view === 'agents' && <Bots bots={bots} onAdd={()=>open('agent')} onChanged={load} onChat={id=>{openBot(id);openChat();}}/>}

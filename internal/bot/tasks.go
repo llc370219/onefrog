@@ -92,6 +92,7 @@ func (r *Runner) Run(ctx context.Context) {
 		log.Printf("tasks: recovery: %v", err)
 	}
 	r.CleanupIncompleteAcceptance(time.Now().UTC())
+	r.repairUnanswerableWaits()
 	defer r.wg.Wait()
 	for {
 		// Order matters for liveness: a pass may make work dispatchable (a due
@@ -594,6 +595,11 @@ func (r *Runner) execute(ctx context.Context, id string) {
 			t.Pending = nil
 			return nil
 		}
+		if hasCorrection(*t) {
+			t.Status = task.StatusQueued
+			t.Step = 0
+			return nil
+		}
 		if !out.WindowFull {
 			if !out.Mutated {
 				// A plain conversation did all it needed without changing
@@ -602,13 +608,12 @@ func (r *Runner) execute(ctx context.Context, id string) {
 				t.Pending = nil
 				return nil
 			}
-			// Work was done but the model stopped without finish. Continue in
-			// another window a bounded number of times so the model can verify
-			// and finish; only then ask the operator.
+			// A verification failure is not a question the operator can answer.
 			t.Attempts++
 			if t.Attempts >= t.MaxAttempts {
-				t.Status = task.StatusWaitingUser
-				t.Pending = &task.Pending{Kind: task.PendingUser, JobRef: "多轮之后模型仍没有调用 finish，请确认是否完成"}
+				t.Status = task.StatusFailed
+				t.LastError = incompleteVerification
+				t.Pending = nil
 				return nil
 			}
 			t.Status = task.StatusQueued
@@ -1266,7 +1271,7 @@ func (r *Runner) Cancel(ctx context.Context, ownerID, id string) (task.Task, err
 
 // Guide appends an operator instruction without interrupting a running window.
 func (r *Runner) Guide(ctx context.Context, ownerID, id, content string) (task.Task, error) {
-	content = strings.TrimSpace(content)
+	content = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(content), "\x00"))
 	if content == "" {
 		return task.Task{}, errors.New("引导内容不能为空")
 	}
@@ -1276,6 +1281,9 @@ func (r *Runner) Guide(ctx context.Context, ownerID, id, content string) (task.T
 		}
 		if t.Terminal() {
 			return errors.New("任务已经结束")
+		}
+		if len(t.Guidance) >= task.MaxGuidance {
+			return errors.New("当前轮待处理的补充已满，请稍后再发")
 		}
 		t.Guidance = append(t.Guidance, clip(content, task.MaxLine))
 		return nil

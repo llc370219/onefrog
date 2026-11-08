@@ -199,6 +199,12 @@ function ChatFixture() {
       <h2>对话页 · 动画回复</h2>
       <p>真实 Chat 组件；等待动效显示在对话中，审批和停止回复仍可操作。</p>
       <button className="text-btn" type="button" onClick={() => {
+        const id = 'preview-question';
+        setTasks([{ ...parentTask, status: 'waiting_user', approvals: [], pending: { kind: 'user', card_message_id: id } }]);
+        setLines([...lines0(), { id, who: 'bot', text: '', choice: { prompt: '报错的模块叫什么？', options: [], allow_custom: true } }]);
+        setDraft('');
+      }}>模拟开放问题</button>
+      <button className="text-btn" type="button" onClick={() => {
         const pending = tasks.filter(t => !t.parent_id && ['running', 'queued', 'waiting_approval'].includes(t.status)).reverse();
         const [current, next] = pending;
         if (!current) return;
@@ -213,8 +219,19 @@ function ChatFixture() {
           mode="team" projectTitle="生产环境磁盘告警" onOpenWorkspace={() => {}} attachments={[]} onFiles={() => {}} onRemoveFile={() => {}} uploading={false}
           activeBot={bots[0]} hosts={hosts} bots={bots} secrets={[]} selected="srv-1" onSelect={() => {}}
           draft={draft} onDraft={setDraft} lines={lines} onSend={send} sending={false} onNew={() => {}}
+          onCorrect={id => {
+            if (!tasks.some(t => t.id === id && t.status === 'running')) return;
+            setLines(cur => [...cur, { who: 'user', text: draft.trim() }]);
+            setDraft('');
+            setNotice('纠正已送达当前轮（夹具）');
+          }}
           sessions={sessions} session="sess-1" onSession={() => {}} onDeleteSession={() => {}} onNewTopic={() => {}}
-          onNotice={setNotice} onAnswer={() => {}} onProvide={() => {}}
+          onNotice={setNotice} onAnswer={(line, values, custom) => {
+            patch(parentTask.id, t => ({ ...t, status: 'running', pending: undefined }));
+            setLines(cur => cur.map(l => l.id === line.id && l.choice ? { ...l, choice: { ...l.choice, answer: { values, custom } } } : l));
+            setDraft('');
+            setNotice('已回答当前轮（夹具）');
+          }} onProvide={() => {}}
           tasks={tasks} taskBusy={busy} onTaskAction={action}
           onTaskApproval={(id, approvalID, allow) => patch(id, t => ({ ...t, status: 'queued', pending: undefined, approvals: (t.approvals || []).map(a => a.id === approvalID ? { ...a, status: allow ? 'allowed' : 'denied' } : a) }))}
         />

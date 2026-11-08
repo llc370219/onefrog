@@ -10,7 +10,7 @@ import { BotAvatar } from '../components/BotAvatar';
 import { AvatarStack } from '../components/SecondaryNav';
 import { groupMembers, groupSessions } from '../lib/chatGroups';
 import { nearChatBottom } from '../lib/chatScroll';
-import { chatQueue } from '../lib/chatQueue';
+import { chatQueue, composerChoiceAnswer, pendingChatCard } from '../lib/chatQueue';
 import { taskBusyId } from '../lib/taskCardFormat';
 
 function when(value: string) {
@@ -43,6 +43,7 @@ export default function Chat({
   onDraft,
   lines,
   onSend,
+  onCorrect,
   sending,
   submitting,
   onNew,
@@ -84,6 +85,7 @@ export default function Chat({
   onDraft: (s: string) => void;
   lines: ChatLine[];
   onSend: () => void;
+  onCorrect?: (taskID: string) => void;
   sending: boolean;
   submitting?: boolean;
   onNew: () => void;
@@ -93,7 +95,7 @@ export default function Chat({
   onSession?: (s: ChatSession) => void;
   onDeleteSession?: (s: ChatSession) => void;
   onNotice: (s: string) => void;
-  onAnswer: (line: ChatLine, values: string[], custom: string) => void;
+  onAnswer: (line: ChatLine, values: string[], custom: string, fromComposer?: boolean) => void;
   onProvide: (line: ChatLine, value: string) => void;
   onGoServer?: () => void;
   onGoAsset?: (host: Host) => void;
@@ -106,7 +108,17 @@ export default function Chat({
   const scroll = useRef<HTMLDivElement>(null);
   const followBottom = useRef(true);
   const fileInput = useRef<HTMLInputElement>(null);
+  const question = useRef<HTMLElement>(null);
   const queue = chatQueue(tasks, lines);
+  const cardID = queue.current?.status === 'waiting_user' ? queue.current.pending?.card_message_id : undefined;
+  const card = pendingChatCard(queue.current, lines);
+  const choice = card?.choice;
+  const answer = choice ? composerChoiceAnswer(choice, draft) : undefined;
+  const canCorrect = Boolean(onCorrect && queue.current && (
+    queue.current.status === 'running' || (queue.current.status === 'queued' && queue.current.started_at && !queue.current.pending)
+  ));
+  const canSend = !sending && !uploading && Boolean(activeBot?.enabled && (draft.trim() || attachments.length));
+  const sendLabel = choice ? '回答当前问题' : queue.current ? '排到下一轮' : '发送指令';
   const replyPending = Boolean(submitting || queue.current);
   const replyError = replyPending || queue.latest?.user_message_id ? '' : replyFailure(queue.latest);
   const lastUser = lines.reduce((last, line, index) => line.who === 'user' ? index : last, -1);
@@ -128,10 +140,25 @@ export default function Chat({
     const container = scroll.current;
     if (container && followBottom.current) container.scrollTop = container.scrollHeight;
   });
-  function sendFromComposer() {
+  function sendFromComposer(nextTurn = false) {
     if (sending || uploading || !activeBot?.enabled || (!draft.trim() && !attachments.length)) return;
+    if (!nextTurn && choice && card) {
+      if (attachments.length || !answer) {
+        onNotice(attachments.length ? '当前问题只能用文字回答；附件可排到下一轮' : '请在问题卡中选择，或输入有效回答');
+        return;
+      }
+      followBottom.current = true;
+      onAnswer(card, answer.values, answer.custom, true);
+      return;
+    }
     followBottom.current = true;
     onSend();
+  }
+
+  function showQuestion() {
+    if (!scroll.current || !question.current) return;
+    followBottom.current = false;
+    scroll.current.scrollTop += question.current.getBoundingClientRect().top - scroll.current.getBoundingClientRect().top - 12;
   }
 
   function pendingMessage(task: TaskView, label: string, removable = false) {
@@ -260,7 +287,7 @@ export default function Chat({
           ) : (
             <div className="messages">
               {lines.map((line, i) => (
-                <article className={`message ${line.who}`} key={line.id || i}>
+                <article className={`message ${line.who}`} key={line.id || i} ref={cardID && line.id === cardID ? question : undefined}>
                   {line.who === 'user' ? (
                     <div className={line.fromBot ? 'user-message-content from-bot' : 'user-message-content'}>
                       {line.fromBot && <div className="from-bot-label"><Send size={12}/>来自 Bot {bots.find(b => b.id === line.fromBot)?.name || line.fromBot}</div>}
@@ -289,7 +316,7 @@ export default function Chat({
                         hosts={hosts}
                         choice={line.choice}
                         secret={line.secret}
-                        stale={i < lines.length - 1}
+                        stale={line.choice || line.secret ? !cardID || line.id !== cardID : i < lines.length - 1}
                         disabled={sending}
                         showCompletion={i < lastUser || (!replyPending && !replyError)}
                         animateFinal={i === lines.length - 1 && !line.pending}
@@ -310,7 +337,7 @@ export default function Chat({
                   </div>
                   {replyPending ? <>
                     <TaskReplyControls tasks={queue.currentTasks} bots={bots} busy={taskBusy} onAction={onTaskAction} onApproval={onTaskApproval}/>
-                    <TurnStream pending waitingStatus={replyWaitingStatus(queue.currentTasks)}/>
+                    <TurnStream pending waitingStatus={cardID && !card ? '未显示待答问题，可刷新对话或停止本轮' : replyWaitingStatus(queue.currentTasks)}/>
                   </> : <p className="operator-error" role="status">{replyError}</p>}
                 </div>
               </article>}
@@ -346,10 +373,14 @@ export default function Chat({
               sendFromComposer();
             }}
           >
+            {card && <div className="composer-reply-context">
+              <span>{choice ? '回答：' + choice.prompt : '请在问题卡中安全填写凭据'}</span>
+              <button className="text-btn" type="button" onClick={showQuestion}>查看问题</button>
+            </div>}
             <Attachments files={attachments} onRemove={onRemoveFile} disabled={sending || uploading}/>
             <textarea
               aria-label="任务指令"
-              placeholder={queue.current ? '继续发消息，当前回复结束后按顺序处理…' : '发消息，或上传图片、配置、日志…'}
+              placeholder={choice ? (choice.allow_custom ? '输入文字回答当前问题…' : '输入选项编号，或在问题卡中选择…') : queue.current ? '发消息，或纠正正在进行的回复…' : '发消息，或上传图片、配置、日志…'}
               value={draft}
               onChange={e => onDraft(e.target.value)}
               onPaste={e => {
@@ -388,12 +419,20 @@ export default function Chat({
               <span className="attachment-hint" title="最多 4 个附件；图片/PDF 每个 5 MB，UTF-8 文本每个 256 KB，合计 12 MB。">
                 {uploading ? '正在加密上传…' : attachments.length ? `${attachments.length}/4 个附件` : '图片 / PDF / 配置 / 日志'}
               </span>
-              <button className="send-btn" type="submit" aria-label="发送指令" disabled={(!draft.trim() && !attachments.length) || sending || uploading || !activeBot?.enabled} title={queue.current ? '发送并排队' : undefined}>
+              {canCorrect && <button type="button" className="text-btn" disabled={!canSend || !draft.trim() || !!attachments.length}
+                title="把文字交给当前轮，在下一步生效"
+                onClick={() => {
+                  followBottom.current = true;
+                  if (queue.current) onCorrect?.(queue.current.id);
+                }}>纠正当前轮</button>}
+              {choice && <button type="button" className="text-btn" disabled={!canSend}
+                onClick={() => sendFromComposer(true)}>排到下一轮</button>}
+              <button className="send-btn" type="submit" aria-label={sendLabel} disabled={!canSend || Boolean(choice && (!answer || attachments.length))} title={sendLabel}>
                 {sending ? <LoaderCircle size={18} className="spin"/> : <ArrowUp size={19}/>}
               </button>
             </div>
           </form>
-          <p className="composer-note"><LockKeyhole size={11}/>凭据通过加密卡片录入 · 高危操作在对话内确认 · Enter {queue.current ? '发送并排队' : '发送'}</p>
+          <p className="composer-note"><LockKeyhole size={11}/>凭据通过加密卡片录入 · 高危操作在对话内确认 · Enter {choice ? '回答当前问题' : queue.current ? '排到下一轮' : '发送'}</p>
         </div>
       </div>
       <aside className="context-panel">

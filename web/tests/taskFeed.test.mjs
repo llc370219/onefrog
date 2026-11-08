@@ -110,7 +110,11 @@ test('poll ticks never overlap',async()=>{
 });
 
 test('task keys and status text never invent progress',()=>{
-  assert.equal(taskKeyOf([task('a','running',{updated_at:'1'})]),'a:running:1');
+  // The key is the serialized task list: an activity update (not just
+  // status/updated_at) changes the key, so the transcript reloads.
+  const key=taskKeyOf([task('a','running',{updated_at:'1'})]);
+  assert.equal(key,JSON.stringify([task('a','running',{updated_at:'1'})]));
+  assert.notEqual(taskKeyOf([task('a','running',{updated_at:'1',activities:[{id:'x',name:'act',status:'running'}]})]),key);
   assert.match(taskStatusText({status:'queued'}),/排队/);
   assert.match(taskStatusText({status:'completed'}),/运行时确认/);
   assert.equal(taskStatusText({status:'failed'}),'任务失败');

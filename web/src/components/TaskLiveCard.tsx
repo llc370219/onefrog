@@ -101,7 +101,7 @@ export default function TaskLiveCard({
   task: TaskView;
   /** Resolved provider/model display name, when the caller knows it. */
   modelLabel?: string;
-  busy?: string;
+  busy?: string | string[];
   onAction: (id: string, action: 'pause' | 'resume' | 'cancel') => void;
   onGuide?: (id: string, content: string) => void;
   onApproval?: (taskID: string, approvalID: string, allow: boolean) => void;

@@ -192,3 +192,26 @@ test('busy key scoping: any in-flight action disables all controls of that task 
   // Prefix collisions cannot leak across ids.
   assert.equal(taskBusyId('t12:pause', 't1'), undefined);
 });
+
+test('busy collection: concurrent in-flight actions lock each task independently', () => {
+  // Two tasks busy at once: each card sees only its own entry.
+  assert.equal(taskBusyId(['t1:pause', 't2:guide'], 't1'), 't1');
+  assert.equal(taskBusyId(['t1:pause', 't2:guide'], 't2'), 't2');
+  assert.equal(taskBusyId(['t1:pause', 't2:guide'], 't3'), undefined);
+  // Completion clears only the finished entry.
+  assert.equal(taskBusyId(['t2:guide'], 't1'), undefined);
+  assert.equal(taskBusyId([], 't1'), undefined);
+  // Prefix collisions cannot leak across ids in the collection form.
+  assert.equal(taskBusyId(['t12:pause'], 't1'), undefined);
+  // The single-string form still works for existing callers.
+  assert.equal(taskBusyId('t1:pause', 't1'), 't1');
+});
+
+test('status lines for the pinned strip stay honest for waiting and parked tasks', () => {
+  assert.match(statusLine({status:'queued'}), /排队/);
+  assert.match(statusLine({status:'running'}), /正在执行/);
+  assert.equal(statusLine({status:'waiting_user'}), '等待你回答卡片后继续');
+  assert.equal(statusLine({status:'waiting_approval'}), '等待你批准一项操作');
+  assert.equal(statusLine({status:'waiting_job'}), '等待外部任务完成');
+  assert.match(statusLine({status:'paused'}), /已暂停/);
+});

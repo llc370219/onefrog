@@ -673,6 +673,16 @@ input:focus,select:focus,textarea:focus{border-color:color-mix(in srgb,var(--acc
 @media(max-width:760px){.task-live{padding:11px 12px}.task-live-model{max-width:55%}.task-live-workspace{max-width:38%}}
 @media(max-width:760px){.task-panel-stack{padding:12px 16px 0}}
 @media(max-width:600px){.task-card{padding:11px 12px}.task-card-head{flex-wrap:wrap}.task-card-head strong{flex-basis:100%;order:3;white-space:normal;overflow:visible}.task-steps{margin-left:auto}.task-guide{flex-wrap:wrap}.task-guide input{flex-basis:100%}}
+/* Pinned task strip above the composer: one honest status line per active
+   root task of this chat, with a direct stop. Theme variables only. */
+.composer-task-strip{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}
+.composer-task{display:flex;align-items:center;gap:8px;padding:7px 11px;border:1px solid var(--line);border-radius:10px;background:var(--s1);font-size:12px;color:var(--fg2);min-width:0}
+.composer-task .spin{color:var(--accent);flex-shrink:0}
+.composer-task-status{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg2)}
+.composer-task-stop{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border:1px solid var(--line);border-radius:8px;background:var(--field);color:var(--fg2);font-size:11.5px;cursor:pointer;flex-shrink:0}
+.composer-task-stop:hover:not(:disabled){color:var(--danger);border-color:color-mix(in srgb,var(--danger) 40%,transparent)}
+.composer-task-stop:disabled{opacity:.55;cursor:not-allowed}
+@media(max-width:600px){.composer-task{padding:6px 9px;gap:6px}.composer-task-status{font-size:11.5px}}
 /* Offline visual fixture (web/tests/runtime-preview.html). Every rule is scoped
    to .preview-* and inherits the theme variables, so nothing here leaks into the app. */
 .preview-shell{padding:16px;display:flex;flex-direction:column;gap:12px;min-height:100dvh;background:var(--canvas);color:var(--fg)}

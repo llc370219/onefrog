@@ -88,6 +88,12 @@ const queuedTask: TaskView = {
   model_label: 'GLM · glm-4.7',
 };
 
+const pausedTask: TaskView = {
+  id: 'task-paused', bot_id: 'main', session_id: 'sess-1', goal: '批量重启前先核对变更清单',
+  status: 'paused', total_steps: 2, max_steps: 32, created_at: at(15), updated_at: at(4),
+  model_label: 'GLM · glm-4.7',
+};
+
 // Older-backend fallback shape: none of the additive live fields are present.
 const legacyTask: TaskView = {
   id: 'task-legacy', bot_id: 'ops', session_id: 'sess-1', goal: '旧版后端任务（无实时字段）',
@@ -165,7 +171,7 @@ function TaskCardsFixture() {
 }
 
 function ChatFixture() {
-  const [tasks, setTasks] = useState<TaskView[]>([parentTask, childTask]);
+  const [tasks, setTasks] = useState<TaskView[]>([parentTask, childTask, pausedTask]);
   const [draft, setDraft] = useState('清理 /var/log 里 3 天前的旧日志，先只读确认。');
   const [lines, setLines] = useState<ChatLine[]>(lines0());
   const [busy, setBusy] = useState('');
@@ -191,7 +197,7 @@ function ChatFixture() {
   return (
     <section className="preview-section preview-chat">
       <h2>对话页 · 任务卡片与输入框</h2>
-      <p>真实 Chat 组件；任务卡片固定在对话顶部，任务执行中发送按钮禁用，可暂停/取消/补充引导。</p>
+      <p>真实 Chat 组件；任务卡片在消息之后，输入框上方固定显示每个活跃根任务的状态和「停止」按钮（含已暂停）；任务执行中回复不再显示「已完成」角标，只有运行时确认后才算完成。</p>
       <div className="preview-frame">
         <Chat
           onAddServer={() => {}} controls={controls} onControls={next => setState(next as typeof state)} settings={null}

@@ -88,8 +88,15 @@ export default function App() {
   // Every task of the operator (all sessions), so a child task running in
   // another session still shows its own approvals and Bot label.
   const [allTasks,setAllTasks] = useState<TaskView[]>([]);
-  const [taskBusy,setTaskBusy] = useState('');
-  const sessionRef = useRef(''); sessionRef.current = session;
+  // In-flight task controls, keyed per task (value 'id:action'). A ref is the
+  // synchronous guard, a state copy re-renders only the affected cards; other
+  // tasks' controls stay interactive while one is in flight.
+  const taskBusyRef = useRef<Map<string,string>>(new Map());
+  const [taskBusy,setTaskBusy] = useState<string[]>([]);
+  // Only written at the exact moments the open session changes (never synced
+  // from render state), so an async poll or late control response can always
+  // tell which chat it belongs to.
+  const sessionRef = useRef('');
   const sessionTasksRef = useRef<TaskView[]>([]); sessionTasksRef.current = sessionTasks;
   // Signature of the task list last polled; a change is when new transcript
   // rows may exist, so only then is the session read again.
@@ -181,6 +188,8 @@ export default function App() {
     return t.status==='waiting_user'?'等待你在下方卡片回答…':text;
   }
   function applyTasks(sid:string,items:TaskView[]){
+    // A task list of another session must never enter the open chat.
+    if(sid!==sessionRef.current)return;
     sessionTasksRef.current=items;
     taskKey.current=taskKeyOf(sid,items);
     setSessionTasks(items);
@@ -189,6 +198,9 @@ export default function App() {
   function adoptTask(task:TaskView){
     const sid=task.session_id||sessionRef.current;
     applyTasks(sid,[task,...sessionTasksRef.current.filter(t=>t.id!==task.id)]);
+    // Even a task of another session updates the global list so its card and
+    // approvals stay current while it runs elsewhere.
+    setAllTasks(cur => cur.some(t=>t.id===task.id) ? cur.map(t=>t.id===task.id?task:t) : [task,...cur]);
   }
   /** Applies one task returned by a control call to the visible list. */
   function mergeTask(task:TaskView){
@@ -314,14 +326,16 @@ export default function App() {
   function openBotByName(name: string) { const hit = bots.find(b => b.name === name || b.id === name); if (hit && hit.enabled) { openBot(hit.id); go('chat'); } else { go('agents'); } }
   function openChat(text?: string) {go('chat');setMobileNav(false);if(text) setDraft(text);}
   /** newChat(botID) opens a direct chat with that bot; newChat() opens a team chat led by the lead bot. */
-  function newChat(botID?:string){if(sendingRef.current||uploadRef.current)return;chatLoad.current++;localCardAnswers.current.clear();taskKey.current='';linesKey.current='';setChatMode(botID?'direct':'team');setActiveBot(botID||defaultBot(bots));setSession('');setSessionTasks([]);setProjectTitle('');setChatWorkspace(undefined);setLines([]);setDraft('');setSelected('');setAttachments([]);setControls({model:{provider_id:'',model:''},excluded:[],approval:'default'});setMobileNav(false);}
+  function newChat(botID?:string){if(sendingRef.current||uploadRef.current)return;chatLoad.current++;localCardAnswers.current.clear();taskKey.current='';linesKey.current='';sessionRef.current='';sessionTasksRef.current=[];setChatMode(botID?'direct':'team');setActiveBot(botID||defaultBot(bots));setSession('');setSessionTasks([]);setProjectTitle('');setChatWorkspace(undefined);setLines([]);setDraft('');setSelected('');setAttachments([]);setControls({model:{provider_id:'',model:''},excluded:[],approval:'default'});setMobileNav(false);}
   /** Clicking a bot reopens its latest one-to-one chat, so leaving and coming back keeps the history. */
   function openBot(id:string){const hit=latestDirect(sessions,id);if(hit)restoreChat(hit);else newChat(id);}
   /** A new group chat starts by asking which bots join; every enabled bot is ticked by default. */
   function openGroupPicker(){if(sendingRef.current||uploadRef.current)return;open('group');setGroupName('');setGroupPick(bots.filter(b=>b.enabled).map(b=>b.id));}
   function startGroup(){const lead=defaultBot(bots);const enabled=bots.filter(b=>b.enabled).map(b=>b.id);newChat();setProjectTitle(groupName.trim());setControls(c=>({...c,excluded:enabled.filter(id=>id!==lead&&!groupPick.includes(id))}));setDialog(null);if(view!=='chat')go('chat');}
-  async function removeChat(item:ChatSession){if(sendingRef.current||uploadRef.current)return;if(!window.confirm('删除对话「'+item.title+'」？会删除消息和项目工作记忆，不能恢复。'))return;try{await api.deleteSession(item.id);setSessions(cur=>cur.filter(s=>s.id!==item.id));if(session===item.id){chatLoad.current++;localCardAnswers.current.clear();taskKey.current='';linesKey.current='';setSession('');setSessionTasks([]);setProjectTitle('');setChatWorkspace(undefined);setLines([]);setDraft('');setAttachments([]);setSelected('');}setNotice('已删除对话');}catch(err){setPageError(message(err));}}
-  async function restoreChat(item:ChatSession){if(sendingRef.current||uploadRef.current)return;const request=++chatLoad.current;setLoading(true);try{const rows=await api.messages(item.id);if(request!==chatLoad.current)return;const mode=sessionMode(item);localCardAnswers.current.clear();taskKey.current='';linesKey.current=rows.length+':'+(rows[rows.length-1]?.id||'');setChatMode(mode);setActiveBot(item.bot_id);setChatWorkspace(item.options?.workspace);setSelected(item.options?.workspace?.server_id||'');setSession(item.id);setProjectTitle(mode==='team'?item.title:'');setLines(chatLines(rows));setDraft('');setAttachments([]);setControls({model:item.options?.model_route||{provider_id:'',model:''},excluded:mode==='direct'?[]:(item.options?.excluded_bot_ids||[]).filter(id=>bots.some(b=>b.id===id)),approval:item.options?.approval_mode==='rules'?'off':item.options?.approval_mode||'default',review:item.options?.approval_route});setMobileNav(false);}catch(e){setPageError(message(e));}finally{if(request===chatLoad.current)setLoading(false);}}
+  async function removeChat(item:ChatSession){if(sendingRef.current||uploadRef.current)return;if(!window.confirm('删除对话「'+item.title+'」？会删除消息和项目工作记忆，不能恢复。'))return;try{await api.deleteSession(item.id);setSessions(cur=>cur.filter(s=>s.id!==item.id));if(session===item.id){chatLoad.current++;localCardAnswers.current.clear();taskKey.current='';linesKey.current='';sessionRef.current='';sessionTasksRef.current=[];setSession('');setSessionTasks([]);setProjectTitle('');setChatWorkspace(undefined);setLines([]);setDraft('');setAttachments([]);setSelected('');}setNotice('已删除对话');}catch(err){setPageError(message(err));}}
+  async function restoreChat(item:ChatSession){if(sendingRef.current||uploadRef.current)return;const request=++chatLoad.current;const prevSession=sessionRef.current;// Switch identity and clear the task list before anything async can return.
+    sessionRef.current=item.id;sessionTasksRef.current=[];setSessionTasks([]);localCardAnswers.current.clear();taskKey.current='';linesKey.current='';setLoading(true);
+    try{const rows=await api.messages(item.id);if(request!==chatLoad.current)return;const mode=sessionMode(item);linesKey.current=rows.length+':'+(rows[rows.length-1]?.id||'');setChatMode(mode);setActiveBot(item.bot_id);setChatWorkspace(item.options?.workspace);setSelected(item.options?.workspace?.server_id||'');setSession(item.id);setProjectTitle(mode==='team'?item.title:'');setLines(chatLines(rows));setDraft('');setAttachments([]);setControls({model:item.options?.model_route||{provider_id:'',model:''},excluded:mode==='direct'?[]:(item.options?.excluded_bot_ids||[]).filter(id=>bots.some(b=>b.id===id)),approval:item.options?.approval_mode==='rules'?'off':item.options?.approval_mode||'default',review:item.options?.approval_route});setMobileNav(false);}catch(e){if(request===chatLoad.current){sessionRef.current=prevSession;sessionTasksRef.current=[];setSessionTasks([]);setPageError(message(e));}}finally{if(request===chatLoad.current)setLoading(false);}}
   /** Per-turn options shared by send and card answers; a direct chat never carries team scope. */
   const turnOptions=()=>({bot_id:activeBot,workspace:chatWorkspace,mode:chatMode,model_route:controls.model,excluded_bot_ids:chatMode==='direct'?[]:controls.excluded,approval_mode:controls.approval,approval_route:controls.approval==='model'?controls.review:undefined});
   function startCodeTask(target:WorkspaceTarget, task:string) {
@@ -346,43 +360,57 @@ export default function App() {
 
   /** Pauses, resumes or cancels a durable task; the runtime owns the actual work. */
   async function taskAction(id:string, action:'pause'|'resume'|'cancel') {
-    if(taskBusy) return;
-    setTaskBusy(id+':'+action);
+    if(taskBusyRef.current.has(id)) return;
+    taskBusyRef.current.set(id,id+':'+action);
+    setTaskBusy(cur => [...cur,id+':'+action]);
     try {
       const task = await api.taskAction(id,action);
       mergeTask(task);
       setNotice(action==='pause' ? '任务已暂停' : action==='resume' ? '任务已继续' : '任务已取消');
     } catch(err) { setPageError(message(err)); }
-    finally { setTaskBusy(''); }
+    finally {
+      // Clears only this task's entry: other in-flight controls stay busy.
+      taskBusyRef.current.delete(id);
+      setTaskBusy(cur => cur.filter(entry => entry !== id+':'+action));
+    }
   }
   /** Appends operator guidance; the task applies it at its next step. */
   async function taskGuide(id:string, content:string) {
-    if(taskBusy || !content.trim()) return;
-    setTaskBusy(id+':guide');
+    if(taskBusyRef.current.has(id) || !content.trim()) return;
+    taskBusyRef.current.set(id,id+':guide');
+    setTaskBusy(cur => [...cur,id+':guide']);
     try {
       const task = await api.guideTask(id,content.trim());
-      setSessionTasks(cur => cur.map(t => t.id===task.id ? task : t));
+      mergeTask(task);
       setNotice('补充引导已送达，任务会在下一步读取');
     } catch(err) { setPageError(message(err)); }
-    finally { setTaskBusy(''); }
+    finally {
+      taskBusyRef.current.delete(id);
+      setTaskBusy(cur => cur.filter(entry => entry !== id+':guide'));
+    }
   }
   /** Records a durable approval decision for a parked task. */
   async function taskApproval(id:string, approvalID:string, allow:boolean) {
-    if(taskBusy) return;
-    setTaskBusy(id+':'+approvalID);
+    if(taskBusyRef.current.has(id)) return;
+    taskBusyRef.current.set(id,id+':'+approvalID);
+    setTaskBusy(cur => [...cur,id+':'+approvalID]);
     try {
       const task = await api.decideTaskApproval(id,approvalID,allow,allow?'':'用户在任务卡片中拒绝');
       mergeTask(task);
       setNotice(allow ? '已批准，任务继续执行' : '已拒绝该操作');
     } catch(err) { setPageError(message(err)); }
-    finally { setTaskBusy(''); }
+    finally {
+      taskBusyRef.current.delete(id);
+      setTaskBusy(cur => cur.filter(entry => entry !== id+':'+approvalID));
+    }
   }
 
   async function send() {
     if(sendingRef.current || uploadRef.current || loading || (!draft.trim()&&!attachments.length)) return;
     if(!bots.some(b=>b.id===activeBot&&b.enabled)){setPageError('请先选取一个已启用的 Bot');return;}
-    if(sessionTasks.some(taskIsActive)){setPageError('这个对话还有任务在跑，等它结束，或先暂停、取消它');return;}
+    if(sessionTasks.some(t=>(!t.session_id||t.session_id===session)&&taskIsActive(t))){setPageError('这个对话还有任务在跑，等它结束，或先暂停、取消它');return;}
     chatLoad.current++;
+    const request = chatLoad.current;
     sendingRef.current = true;setSending(true);
     const text = draft.trim();const sentAttachments=[...attachments];
     const sid = session;
@@ -400,17 +428,25 @@ export default function App() {
     const result = await submitDurableTask(body);
     if(result.ok){
       const next = result.task.session_id || sid;
-      if(next)setSession(next);
-      await adoptTask(result.task);
-      if(sid&&sid===next)await loadTaskLines(next);
+      if(request===chatLoad.current){
+        // Still the same chat: enter the (possibly new) session before adopting.
+        if(next){sessionRef.current=next;setSession(next);}
+        await adoptTask(result.task);
+        if(sid&&sid===next)await loadTaskLines(next);
+      } else {
+        // The operator already moved to another chat: record globally only.
+        setAllTasks(cur => cur.some(t=>t.id===result.task.id) ? cur.map(t=>t.id===result.task.id?result.task:t) : [result.task,...cur]);
+      }
       if(result.attempts>1)setNotice('网络中断，但任务已创建，正在后台执行');
-    } else {
+    } else if(request===chatLoad.current){
       setLines(cur => cur.slice(0,-1));
       setDraft(text);setAttachments(sentAttachments);
       const detail=message(result.error);
       setPageError(result.uncertain
         ? detail+'。这次提交是否已被接收无法确认，刷新页面核对任务列表后再决定重发，避免重复执行。'
         : detail);
+    } else {
+      setPageError(message(result.error));
     }
     sendingRef.current=false;setSending(false);api.sessions().then(setSessions).catch(()=>{});
   }
@@ -418,6 +454,7 @@ export default function App() {
   async function answerChoice(card: ChatLine, values: string[], custom: string) {
     if(sendingRef.current || uploadRef.current || loading || !card.id || !card.choice || card.choice.answer || !session) return;
     chatLoad.current++;
+    const request = chatLoad.current;
     const sid = session, cardID = card.id;
     const answer:Choice['answer'] = {values,custom:custom.trim()||undefined};
     const mark = (value?:Choice['answer']) => setLines(cur => cur.map(l => l.id === cardID && l.choice ? {...l,choice:{...l.choice,answer:value}} : l));
@@ -431,21 +468,24 @@ export default function App() {
     // identical answer once on a lost response, never on a rejection.
     const result = await submitDurableTask(body);
     if(result.ok){
-      setSession(result.task.session_id||sid);
+      if(request===chatLoad.current){sessionRef.current=result.task.session_id||sid;setSession(result.task.session_id||sid);}
       await adoptTask(result.task);
-    } else {
+    } else if(request===chatLoad.current){
       localCardAnswers.current.delete(cardID);
       mark(undefined);
       const detail=message(result.error);
       setPageError(result.uncertain
         ? detail+'。这个回答是否已被接收无法确认，刷新页面核对任务和卡片状态后再作答。'
         : detail);
+    } else {
+      setPageError(message(result.error));
     }
     sendingRef.current=false;setSending(false);api.sessions().then(setSessions).catch(()=>{});
   }
   async function answerSecret(card: ChatLine, value: string) {
     if(sendingRef.current || uploadRef.current || loading || !card.id || !card.secret || card.secret.provided_at || !session) return;
     chatLoad.current++;
+    const request = chatLoad.current;
     const sid = session, cardID = card.id;
     const mark = (provided?: string) => setLines(cur => cur.map(l => l.id === cardID && l.secret ? {...l,secret:{...l.secret,provided_at:provided}} : l));
     const ack = new Date().toISOString();
@@ -458,15 +498,17 @@ export default function App() {
     const body:ChatRequest = {content:'',server_id:selected,session_id:sid,...turnOptions(),secret_answer:{message_id:cardID,value},client_request_id:requestID};
     const result = await submitDurableTask(body);
     if(result.ok){
-      setSession(result.task.session_id||sid);
+      if(request===chatLoad.current){sessionRef.current=result.task.session_id||sid;setSession(result.task.session_id||sid);}
       await adoptTask(result.task);
-    } else {
+    } else if(request===chatLoad.current){
       localCardAnswers.current.delete(cardID);
       mark(undefined);
       const detail=message(result.error);
       setPageError(result.uncertain
         ? detail+'。这项密钥是否已保存无法确认，刷新页面核对卡片状态后再提交。'
         : detail);
+    } else {
+      setPageError(message(result.error));
     }
     sendingRef.current=false;setSending(false);api.sessions().then(setSessions).catch(()=>{});
   }
@@ -547,7 +589,7 @@ export default function App() {
     setBusy(true);setFormError('');
     try {const res = await api.login(user,password);setUser(res.username);setProfile(res);setAuthed(true);if(res.must_change_credentials)return;setPassword('');await load();} catch(err) {setFormError(message(err));} finally {setBusy(false);}
   }
-  async function logout() {try {await api.logout();chatLoad.current++;localCardAnswers.current.clear();taskKey.current='';linesKey.current='';setDismissedTasks([]);setPanelTasks([]);setAllTasks([]);setAuthed(false);setLines([]);setSession('');setSessionTasks([]);setWorkspaceTarget(undefined);setChatWorkspace(undefined);setProjectTitle('');setPassword('');setNotice('');setDialog(null);setPanelJob(null);panelSession.current='';panelTask.current='';} catch(err) {setPageError(message(err));}}
+  async function logout() {try {await api.logout();chatLoad.current++;localCardAnswers.current.clear();taskKey.current='';linesKey.current='';sessionRef.current='';sessionTasksRef.current=[];setDismissedTasks([]);setPanelTasks([]);setAllTasks([]);setAuthed(false);setLines([]);setSession('');setSessionTasks([]);setWorkspaceTarget(undefined);setChatWorkspace(undefined);setProjectTitle('');setPassword('');setNotice('');setDialog(null);setPanelJob(null);panelSession.current='';panelTask.current='';} catch(err) {setPageError(message(err));}}
 
   if(authed === null) return <div className="boot-screen"><LoaderCircle className="spin" size={23}/><span>连接工作台…</span></div>;
   if(!authed) return <div className="login-screen"><ThemeToggle className="login-theme"/><div className="login-brand"><span className="brand-icon"><img src="/assets/onefrog-logo.png" alt=""/></span><strong>OneFrog<span>OPERATIONS CONSOLE</span></strong></div><form className="login-card" onSubmit={e => {e.preventDefault();login();}}><h1>进入你的运维工作台</h1><p>服务器、Bot 和密钥，一个地方管理。</p><Field label="账号"><input value={user} autoComplete="username" onChange={e => setUser(e.target.value)} required placeholder="管理员账号"/></Field><Field label="密码"><input type="password" value={password} autoComplete="current-password" onChange={e => setPassword(e.target.value)} required placeholder="输入登录密码"/></Field>{formError && <Notice error>{formError}</Notice>}<Button type="submit" variant="primary" busy={busy}>进入工作台<ArrowRight size={16}/></Button><small><LockKeyhole size={12}/>自托管 · 你的基础设施，由你掌控</small></form><footer>ONEFROG / OPERATIONS, SIMPLIFIED.</footer></div>;
@@ -561,9 +603,12 @@ export default function App() {
   // Tasks of this chat: the session's own tasks plus any child task whose
   // parent lives here (a delegated task may write into another session), so
   // its approvals are never hidden behind the open-session filter.
-  const ownIDs = new Set(sessionTasks.map(t => t.id));
+  // Only roots of the open session (plus their children, which may run in
+  // another session) are shown in this chat.
+  const roots = sessionTasks.filter(t => !t.session_id || t.session_id === session);
+  const ownIDs = new Set(roots.map(t => t.id));
   const children = allTasks.filter(t => t.parent_id && ownIDs.has(t.parent_id));
-  const merged = [...sessionTasks, ...children].filter((t,i,list) => list.findIndex(x=>x.id===t.id)===i);
+  const merged = [...roots, ...children].filter((t,i,list) => list.findIndex(x=>x.id===t.id)===i);
   const visibleFinished = merged.filter(t => !taskIsActive(t) && !dismissedTasks.includes(t.id)).slice(0,2);
   const chatTasks = merged.filter(t => taskIsActive(t) || visibleFinished.includes(t));
   function dismissTask(id:string){setDismissedTasks(cur => cur.includes(id) ? cur : [...cur,id]);}

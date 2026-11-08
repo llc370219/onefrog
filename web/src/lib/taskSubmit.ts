@@ -7,7 +7,7 @@ export function clientRequestID(): string {
 
 /** Render key of a task list: a poll that changes nothing must not touch state. */
 export function taskKeyOf(items: TaskView[]): string {
-  return items.map(t => t.id + ':' + t.status + ':' + t.updated_at).join('|');
+  return JSON.stringify(items);
 }
 
 /** Human readable one-liner for a task; it never invents progress the runtime did not report. */

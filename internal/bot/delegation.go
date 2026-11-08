@@ -117,13 +117,12 @@ func (st *taskState) delegate(ctx context.Context, a *Agent, speaker model.Bot, 
 			return nil, err
 		}
 		if child.Status == task.StatusPaused && child.AcceptancePending {
-			if _, err := st.book.Update(childID, func(t *task.Task) error {
-				if t.AcceptancePending && t.Status == task.StatusPaused {
-					t.AcceptancePending = false
-					t.Status = task.StatusQueued
-				}
-				return nil
-			}); err != nil {
+			// Atomic in the registry: the parent's waiting_job anchor is
+			// checked under the same lock that queues the child, so a Pause/
+			// Cancel that landed first refuses the activation instead of the
+			// stale window re-queueing a stopped child behind the operator's
+			// back.
+			if _, err := st.book.ActivateChild(childID); err != nil {
 				st.halted = true
 				return nil, err
 			}

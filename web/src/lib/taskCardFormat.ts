@@ -190,10 +190,13 @@ export function activityRowTime(a: TaskActivity, render: ActivityRender): string
 /**
  * Every mutating control of ONE task shares the same busy key prefix, so a
  * running pause also disables stop, guide and approvals of that task — while
- * other tasks stay interactive.
+ * other tasks stay interactive. Callers may pass one entry (`'id:action'`) or
+ * the whole collection of in-flight entries, so several tasks can be busy at
+ * the same time and each card only locks its own controls.
  */
-export function taskBusyId(busy: string | undefined, taskID: string): string | undefined {
-  return busy && busy.startsWith(taskID + ':') ? taskID : undefined;
+export function taskBusyId(busy: string | string[] | undefined, taskID: string): string | undefined {
+  const entries = typeof busy === 'string' ? [busy] : busy ?? [];
+  return entries.some(entry => entry.startsWith(taskID + ':')) ? taskID : undefined;
 }
 
 /** Status line under the goal; also the headline for non-running states. */

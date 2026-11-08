@@ -20,6 +20,7 @@ import (
 type taskRequest struct {
 	chatReq
 	ClientRequestID string `json:"client_request_id"`
+	OrderedChat     bool   `json:"ordered_chat"`
 }
 
 // TaskView is the only task shape the API returns. Checkpoint messages,
@@ -31,11 +32,13 @@ type TaskView struct {
 	ProjectID string `json:"project_id,omitempty"`
 	// ParentID links a child task to the task that delegated it, so the UI can
 	// show a child's approvals under its parent.
-	ParentID     string   `json:"parent_id,omitempty"`
-	ParentTurn   int      `json:"parent_turn,omitempty"`
-	ParentCallID string   `json:"parent_call_id,omitempty"`
-	Goal         string   `json:"goal"`
-	Plan         []string `json:"plan"`
+	ParentID        string             `json:"parent_id,omitempty"`
+	ParentTurn      int                `json:"parent_turn,omitempty"`
+	ParentCallID    string             `json:"parent_call_id,omitempty"`
+	Goal            string             `json:"goal"`
+	UserMessageID   string             `json:"user_message_id,omitempty"`
+	ChatAttachments []model.Attachment `json:"chat_attachments,omitempty"`
+	Plan            []string           `json:"plan"`
 	// PlanCompleted is the persisted count of leading plan steps actually
 	// finished (0..len(Plan)). The frontend renders the segmented progress
 	// strip from it; undefined/0 means nothing completed — never inferred.
@@ -100,6 +103,11 @@ func taskView(it task.Task) TaskView {
 		CreatedAt: it.CreatedAt, UpdatedAt: it.UpdatedAt,
 		Plan: append([]string{}, it.Plan...), PlanCompleted: it.PlanCompleted, Progress: append([]string{}, it.Progress...),
 		Next: clipText(it.Next, 2000), Approvals: []TaskApproval{},
+	}
+	v.UserMessageID, v.ChatAttachments = bot.ChatQueueMessage(it)
+	if v.UserMessageID != "" {
+		// This is also the queued chat bubble, so keep the full accepted text.
+		v.Goal = it.Goal
 	}
 	if !it.StartedAt.IsZero() {
 		s := it.StartedAt
@@ -320,6 +328,7 @@ func (s *Server) createTask(c *gin.Context) {
 		OwnerID: user.ID, BotID: req.BotID, SessionID: req.SessionID,
 		ClientRequestID: requestID, ServerID: req.ServerID, Content: req.Content,
 		Title: clipText(req.Content, 60), Options: req.Options,
+		OrderedChat: req.OrderedChat,
 	})
 	if err != nil {
 		if errors.Is(err, bot.ErrNoRunner) {
@@ -449,6 +458,9 @@ func (s *Server) resumeTask(c *gin.Context) {
 
 func (s *Server) cancelTask(c *gin.Context) {
 	s.taskAction(c, func(userID, id string) (task.Task, error) {
+		if c.Query("queued_only") == "true" {
+			return s.Tasks.WithdrawChat(userID, id)
+		}
 		return s.Tasks.Cancel(c.Request.Context(), userID, id)
 	})
 }

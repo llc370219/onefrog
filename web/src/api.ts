@@ -105,13 +105,13 @@ export type WorkspaceResult = {files?:string[];text?:string;revision?:string;tru
 /** GET /api/workspace/capabilities — local roots are operator-configured on the server; the browser never supplies paths. */
 export type WorkspaceCapabilities={local:{enabled:boolean;roots:string[];execution_environment:'native'|'container';command_execution:boolean}};
 export type ChatOptions={workspace?:WorkspaceTarget;approval_route?:ModelRoute;model_route?:ModelRoute;excluded_bot_ids?:string[];approval_mode?:string;attachment_ids?:string[];mode?:ChatMode};
-export type ChatRequest=ChatOptions&{content:string;project_title?:string;server_id?:string;bot_id?:string;session_id?:string;choice_answer?:ChoiceReply;secret_answer?:SecretReply;/** Stable id of one submission attempt, so a retried POST can be deduplicated by the runtime instead of running twice. */client_request_id?:string};
+export type ChatRequest=ChatOptions&{content:string;project_title?:string;server_id?:string;bot_id?:string;session_id?:string;choice_answer?:ChoiceReply;secret_answer?:SecretReply;/** Stable id of one submission attempt, so a retried POST can be deduplicated by the runtime instead of running twice. */client_request_id?:string;ordered_chat?:boolean};
 export type ChatResult={session_id:string;text:string;message_id?:string;choice?:Choice;secret_request?:SecretRequest;timeline?:TurnItem[];answered?:boolean};
 /** Durable task status. Only the safe server-side fields are modelled here. */
 export type TaskStatus='queued'|'running'|'waiting_user'|'waiting_approval'|'waiting_job'|'paused'|'completed'|'failed'|'cancelled'|'budget_exhausted';
 export type TaskPending={kind?:string;approval_id?:string};
 export type TaskApprovalMeta={id:string;command?:string;reasons?:string[];status:string;note?:string;created_at?:string;decided_at?:string};
-export type TaskView={id:string;bot_id:string;session_id:string;project_id?:string;/** Parent task of a delegated/child task; children may live in another session. */parent_id?:string;goal:string;plan?:string[];progress?:string[];next?:string;status:TaskStatus;total_steps?:number;max_steps?:number;created_at:string;updated_at:string;deadline?:string;result?:string;last_error?:string;pending?:TaskPending;approvals?:TaskApprovalMeta[];
+export type TaskView={id:string;bot_id:string;session_id:string;project_id?:string;/** Parent task of a delegated/child task; children may live in another session. */parent_id?:string;goal:string;user_message_id?:string;chat_attachments?:Attachment[];plan?:string[];progress?:string[];next?:string;status:TaskStatus;total_steps?:number;max_steps?:number;created_at:string;updated_at:string;deadline?:string;result?:string;last_error?:string;pending?:TaskPending;approvals?:TaskApprovalMeta[];
   /** Additive live-card fields; an older backend omits them and the UI falls back. */
   model_label?:string;workspace_label?:string;started_at?:string;finished_at?:string;activities?:TaskActivity[];
   /** Completed prefix of `plan` (0..plan.length). Undefined means 0/unknown — never fake completion. */
@@ -388,7 +388,9 @@ export const api = {
   async task(id: string): Promise<TaskView> { return call('/api/tasks/' + encodeURIComponent(id)); },
   /** POST /api/tasks answers 202 TaskView; the durable runtime keeps working after the request returns. */
   async createTask(body: ChatRequest): Promise<TaskView> { return call('/api/tasks', { method: 'POST', body: JSON.stringify(body) }); },
-  async taskAction(id: string, action: 'pause' | 'resume' | 'cancel'): Promise<TaskView> { return call('/api/tasks/' + encodeURIComponent(id) + '/' + action, { method: 'POST', body: '{}' }); },
+  async taskAction(id: string, action: 'pause' | 'resume' | 'cancel' | 'withdraw'): Promise<TaskView> {
+    return call('/api/tasks/' + encodeURIComponent(id) + '/' + (action === 'withdraw' ? 'cancel?queued_only=true' : action), { method: 'POST', body: '{}' });
+  },
   async guideTask(id: string, content: string): Promise<TaskView> { return call('/api/tasks/' + encodeURIComponent(id) + '/guidance', { method: 'POST', body: JSON.stringify({ content }) }); },
   async decideTaskApproval(id: string, approvalID: string, allow: boolean, reason?: string): Promise<TaskView> {
     return call('/api/tasks/' + encodeURIComponent(id) + '/approvals/' + encodeURIComponent(approvalID), { method: 'POST', body: JSON.stringify({ allow, reason }) });

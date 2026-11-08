@@ -641,6 +641,10 @@ func (a *Agent) sessionMessages(ctx context.Context, sessionID, system, speaker 
 	if err != nil {
 		return nil, err
 	}
+	return a.chatHistory(ctx, items, system, speaker)
+}
+
+func (a *Agent) chatHistory(ctx context.Context, items []model.Message, system, speaker string) ([]map[string]any, error) {
 	limit := a.execution().ContextMessages
 	if len(items) > limit {
 		items = items[len(items)-limit:]

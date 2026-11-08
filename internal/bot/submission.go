@@ -36,6 +36,9 @@ type SubmitRequest struct {
 	Content         string
 	Title           string
 	Options         Options
+	// OrderedChat accepts a user message into the conversation queue. Its
+	// transcript entry is opened by the runtime at the start of its turn.
+	OrderedChat bool
 	// Purpose/Hop/Untrusted are persisted on the task row at creation. They are
 	// written once by the runtime inside the AcceptancePending create, so the
 	// dispatcher never sees a task whose provenance is still being written.
@@ -105,10 +108,10 @@ func (a *Agent) SubmitTask(ctx context.Context, req SubmitRequest) (task.Task, e
 		return task.Task{}, errors.New("不能更改任务所属项目，请新建任务")
 	}
 	opt.TaskID = ""
-	// Freeze the accepted conversation now: the system prompt, the history as
-	// it exists today, and this request's goal. A later message in the session
-	// never becomes part of this task.
-	messages, err := a.AcceptMessages(ctx, sess, sess.BotID, req.ServerID, req.Content, refs, opt)
+	// Ordinary tasks freeze their history on acceptance. Ordered chat turns
+	// freeze the system and exact input now, then read the preceding replies
+	// when they reach the front of the queue.
+	messages, err := a.acceptMessages(ctx, sess, sess.BotID, req.ServerID, req.Content, refs, opt, !req.OrderedChat)
 	if err != nil {
 		return task.Task{}, err
 	}
@@ -118,12 +121,21 @@ func (a *Agent) SubmitTask(ctx context.Context, req SubmitRequest) (task.Task, e
 			return a.AddTaskGoalRefs(ctx, sessionID, req.Content, refs)
 		}
 	}
+	var chatQueue chatQueueOptions
+	if req.OrderedChat {
+		if req.Ready != nil || req.Purpose != "" {
+			return task.Task{}, errors.New("后台任务不能加入聊天消息队列")
+		}
+		chatQueue = chatQueueOptions{OrderedChat: true, Attachments: refs}
+		appendGoal = nil
+	}
 	return a.TasksRunner.AcceptTask(ctx, CreateRequest{
 		OwnerID: req.OwnerID, BotID: sess.BotID, SessionID: sess.ID,
 		ProjectID: project, ServerID: req.ServerID, Content: req.Content,
 		ClientRequestID: req.ClientRequestID, Messages: messages,
 		Purpose: req.Purpose, Hop: req.Hop, Untrusted: req.Untrusted,
 		AppendGoal: appendGoal,
+		ChatQueue:  chatQueue,
 	}, opt)
 }
 
@@ -220,6 +232,9 @@ func explicitConflict(existing task.Task, req SubmitRequest) (bool, error) {
 		return true, nil
 	}
 	if existing.Goal != strings.TrimSpace(req.Content) {
+		return true, nil
+	}
+	if chatQueueOptionsOf(existing).OrderedChat != req.OrderedChat {
 		return true, nil
 	}
 	if v := strings.TrimSpace(req.BotID); v != "" && v != existing.BotID {

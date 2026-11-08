@@ -233,9 +233,11 @@ export default function App() {
     const key=taskKeyOf(sid,items);
     const changed=key!==taskKey.current;
     if(changed)applyTasks(sid,items);
-    // New assistant text and question cards only reach the transcript
-    // after the task writes them, so read the session, never the stream.
-    if((changed||items.some(taskIsActive))&&!sendingRef.current&&isCurrent())await loadTaskLines(sid);
+    // Completion is recorded before writeFinal appends the assistant reply.
+    // A one-shot read on the terminal transition can miss that write; keep
+    // checking the transcript. loadTaskLines skips unchanged rows by key, so
+    // this polling never repaints or re-scrolls a reader of older messages.
+    if(!sendingRef.current&&isCurrent())await loadTaskLines(sid);
   },[authed,profile.must_change_credentials,view,session]);
   // Global task list: a child task can run in another session, so approvals
   // and Bot labels are read across sessions, not only for the open chat.

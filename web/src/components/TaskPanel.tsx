@@ -1,8 +1,10 @@
+import { useState } from 'react';
 import { ChevronRight, LoaderCircle, ShieldAlert } from 'lucide-react';
 import { taskIsActive, type BotRow, type SettingsState, type TaskApprovalMeta, type TaskView } from '../api';
 import { Button } from './ui';
 import Markdown from './Markdown';
 import TaskLiveCard from './TaskLiveCard';
+import { statusLine } from '../lib/taskCardFormat';
 
 /** Provider/model display name for a bot, from its effective route. Empty when unknown. */
 export function modelLabelOf(bot: BotRow | undefined, settings: SettingsState | null | undefined): string {
@@ -28,6 +30,7 @@ export default function TaskPanel({
   onGuide,
   onApproval,
   onDismiss,
+  chat = false,
 }: {
   tasks: TaskView[];
   bots: BotRow[];
@@ -40,15 +43,17 @@ export default function TaskPanel({
   onGuide: (id: string, content: string) => void;
   onApproval: (taskID: string, approvalID: string, allow: boolean) => void;
   onDismiss?: (id: string) => void;
+  /** Chat keeps task progress separate from the final assistant reply. */
+  chat?: boolean;
 }) {
   if (!tasks.length) return null;
   return (
     <div className="task-panel-stack" aria-label="当前任务">
-      {tasks.map(task => <TaskCard key={task.id} task={task} parent={parentOf?.(task)} bots={bots} busy={busy} settings={settings} onAction={onAction} onGuide={onGuide} onApproval={onApproval} onDismiss={onDismiss}/>)}
+      {tasks.map(task => <TaskCard key={task.id} task={task} parent={parentOf?.(task)} bots={bots} busy={busy} settings={settings} onAction={onAction} onGuide={onGuide} onApproval={onApproval} onDismiss={onDismiss} chat={chat}/>)}
     </div>
   );
 }
-function TaskCard({ task, parent, bots, busy, settings, onAction, onGuide, onApproval, onDismiss }: {
+function TaskCard({ task, parent, bots, busy, settings, onAction, onGuide, onApproval, onDismiss, chat }: {
   task: TaskView;
   parent?: TaskView;
   bots: BotRow[];
@@ -58,13 +63,25 @@ function TaskCard({ task, parent, bots, busy, settings, onAction, onGuide, onApp
   onGuide: (id: string, content: string) => void;
   onApproval: (taskID: string, approvalID: string, allow: boolean) => void;
   onDismiss?: (id: string) => void;
+  chat: boolean;
 }) {
+  const [collapsed, setCollapsed] = useState(false);
   const active = taskIsActive(task);
   const bot = bots.find(b => b.id === task.bot_id);
   const parentBot = parent ? bots.find(b => b.id === parent.bot_id) : undefined;
   const pendingApprovals = (task.approvals || []).filter(a => a.status === 'pending');
   const decidedApprovals = (task.approvals || []).filter(a => a.status !== 'pending');
   const working = task.status === 'running' || task.status === 'queued';
+  if (chat && collapsed) {
+    const needsAction = task.status === 'waiting_user' || task.status === 'waiting_approval' || pendingApprovals.length > 0;
+    return (
+      <section className="task-live collapsed" aria-label={'任务：' + task.goal}>
+        <button className="task-live-reopen" type="button" aria-expanded={false} onClick={() => setCollapsed(false)}>
+          <span>进度已收起 · {statusLine(task)}{needsAction ? ' · 展开处理' : ''}</span><span>展开进度 <ChevronRight size={13}/></span>
+        </button>
+      </section>
+    );
+  }
 
   // The live card IS the card: goal headline, status/activity row, real
   // activities, pause/stop and the expandable details. Bot, parent relation
@@ -77,6 +94,7 @@ function TaskCard({ task, parent, bots, busy, settings, onAction, onGuide, onApp
       onAction={onAction}
       onGuide={onGuide}
       onApproval={onApproval}
+      onCollapse={chat ? () => setCollapsed(true) : undefined}
     >
       <div className="task-card-meta task-live-context">
         {bot ? <span className="task-bot">{parent ? '子任务 · ' : ''}执行 Bot：{bot.name || task.bot_id}</span> : <span className="task-bot">{parent ? '子任务 · ' : ''}执行 Bot：{task.bot_id}</span>}
@@ -101,7 +119,7 @@ function TaskCard({ task, parent, bots, busy, settings, onAction, onGuide, onApp
       {/* Buttons for pending approvals live directly on the compact card; the
           expanded section only adds the full context (reasons, history). */}
       {pendingApprovals.map(meta => <TaskApproval key={meta.id} meta={meta}/>)}
-      {!active && task.result && (
+      {!chat && !active && task.result && (
         <div className="task-result"><div className="assistant-text markdown"><Markdown text={task.result}/></div></div>
       )}
       {decidedApprovals.length > 0 && (
@@ -114,7 +132,7 @@ function TaskCard({ task, parent, bots, busy, settings, onAction, onGuide, onApp
           </ul>
         </details>
       )}
-      {!active && onDismiss && (
+      {!chat && !active && onDismiss && (
         <div className="task-actions">
           <Button className="small" variant="ghost" onClick={() => onDismiss(task.id)}>收起这张任务卡</Button>
         </div>

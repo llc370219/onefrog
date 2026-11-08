@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  Brain, ChevronRight, CircleCheck, CircleAlert, CircleDashed,
+  Brain, ChevronRight, ChevronUp, CircleCheck, CircleAlert, CircleDashed,
   FileCode2, Globe, Pause, Play, Search, Server, Square,
   Terminal, User, Wrench, LoaderCircle,
 } from 'lucide-react';
@@ -96,6 +96,7 @@ export default function TaskLiveCard({
   onAction,
   onGuide,
   onApproval,
+  onCollapse,
   children,
 }: {
   task: TaskView;
@@ -105,6 +106,7 @@ export default function TaskLiveCard({
   onAction: (id: string, action: 'pause' | 'resume' | 'cancel') => void;
   onGuide?: (id: string, content: string) => void;
   onApproval?: (taskID: string, approvalID: string, allow: boolean) => void;
+  onCollapse?: () => void;
   /** Expanded body (plan, progress, approvals, result) from the host panel. */
   children?: React.ReactNode;
 }) {
@@ -139,7 +141,9 @@ export default function TaskLiveCard({
 
   return (
     <section className={`task-live ${paused ? 'paused' : ''}`} aria-label={`任务：${goal}`}>
-      <div className="task-live-goal" title={goal}>{goal}</div>
+      <div className="task-live-head"><div className="task-live-goal" title={goal}>{goal}</div>
+        {onCollapse && <button type="button" className="text-btn task-live-collapse" aria-label={'收起任务进度：' + goal} onClick={onCollapse}><ChevronUp size={14}/></button>}
+      </div>
       <div className="task-live-row main">
         <StatusIcon status={task.status}/>
         <span className="task-live-activity" title={headline}>{headline}</span>

@@ -1,15 +1,18 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowUp, Blocks, BookOpen, CodeXml, CalendarClock, Code2, HardDrive, History, Inbox, KeyRound, LoaderCircle, LockKeyhole, Plus, Server, ShieldCheck, Sparkles, Paperclip, Send, Square, Trash2, Users, Wallet } from 'lucide-react';
 import { api, taskIsActive, type BotMemory, type ProjectNote, type BotRow, type ChatLine, type ChatMode, type ChatSession, type Host, type Attachment, type SecretRow, type SettingsState, type TaskView, type WorkspaceTarget } from '../api';
 import ChatControls, { type ChatControlState } from '../components/ChatControls';
 import Attachments from '../components/Attachments';
 import TurnStream from '../components/TurnStream';
 import TaskPanel from '../components/TaskPanel';
+import ChatTaskStatus from '../components/ChatTaskStatus';
 import { Button, IconButton, Modal, Status } from '../components/ui';
 import { BotAvatar } from '../components/BotAvatar';
 import { AvatarStack } from '../components/SecondaryNav';
 import { groupMembers, groupSessions } from '../lib/chatGroups';
 import { statusLine, taskBusyId } from '../lib/taskCardFormat';
+import { cardTasks, chatTaskClockActive, compactTasks, presentChatTasks } from '../lib/chatTaskPresentation';
+import { nearChatBottom } from '../lib/chatScroll';
 
 function when(value: string) {
   const d = new Date(value);
@@ -105,16 +108,52 @@ export default function Chat({
   onTaskDismiss?: (id: string) => void;
   onTaskParent?: (task: TaskView) => TaskView | undefined;
 }) {
-  const end = useRef<HTMLDivElement>(null);
+  const scroll = useRef<HTMLDivElement>(null);
+  const followBottom = useRef(true);
   const fileInput = useRef<HTMLInputElement>(null);
   const taskRunning = tasks.some(taskIsActive);
   // Roots of THIS chat that are still active (incl. paused): the pinned strip
   // above the composer keeps the interrupt discoverable even when many child
   // cards push the TaskPanel out of the visible scroll area.
   const activeRoots = tasks.filter(t => taskIsActive(t) && !t.parent_id);
+  // Not every turn deserves the big live card: short single replies collapse to
+  // one status line, while long, multi-step, delegated or operator-blocked work
+  // keeps the card. The decision is pure (chatTaskPresentation) so it is tested
+  // outside React; a clock runs only while a task can still cross the threshold.
+  const [now, setNow] = useState(() => Date.now());
+  const taskClock = tasks.some(chatTaskClockActive);
   useEffect(() => {
-    end.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
-  }, [lines, tasks]);
+    if (!taskClock) return;
+    const handle = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(handle);
+  }, [taskClock]);
+  const taskEntries = presentChatTasks(tasks, now);
+  const taskCards = cardTasks(taskEntries);
+  const taskRows = compactTasks(taskEntries);
+  const conversationKey = session || `new:${mode}:${activeBot?.id || ''}`;
+  const previousConversation = useRef<string | undefined>(undefined);
+  // A different conversation starts at its latest message. Polls and card
+  // updates in the same conversation must respect a reader who scrolled up.
+  useLayoutEffect(() => {
+    const previous = previousConversation.current;
+    previousConversation.current = conversationKey;
+    // The first send promotes a new chat from a temporary key to its durable
+    // session id. It is the same conversation, so preserve a manual scroll.
+    if (previous?.startsWith('new:') && session) return;
+    followBottom.current = true;
+    const container = scroll.current;
+    if (container) container.scrollTop = container.scrollHeight;
+  }, [conversationKey]);
+  useLayoutEffect(() => {
+    const container = scroll.current;
+    if (container && followBottom.current) container.scrollTop = container.scrollHeight;
+  });
+  function sendFromComposer() {
+    // A rejected send (e.g. a task is already running) must not take a
+    // reader away from history on the next render.
+    if (!sending && !uploading && !taskRunning && activeBot?.enabled && (draft.trim() || attachments.length)) followBottom.current = true;
+    onSend();
+  }
 
   const [memoryState, setMemoryState] = useState<{ bot: string; rows: BotMemory[] } | null>(null);
   const memoryBot = mode === 'direct' ? activeBot?.id || '' : '';
@@ -206,7 +245,9 @@ export default function Chat({
             </div>}
         </header>
         {workspace && <div className="chat-workspace-path mono" title={workspace.root}>{current?.name || workspace.server_id} · {workspace.root}</div>}
-        <div className="chat-scroll">
+        <div className="chat-scroll" ref={scroll} onScroll={() => {
+          if (scroll.current) followBottom.current = nearChatBottom(scroll.current);
+        }}>
           {!lines.length ? (
             <div className="chat-welcome">
               {mode === 'direct' && activeBot ? <BotAvatar bots={bots} id={activeBot.id} className="welcome-icon"/> : <div className="welcome-icon welcome-group"><AvatarStack bots={bots} members={members} max={5}/></div>}
@@ -266,8 +307,8 @@ export default function Chat({
               ))}
             </div>
           )}
-          <TaskPanel tasks={tasks} bots={bots} parentOf={onTaskParent} busy={taskBusy} settings={settings} onAction={onTaskAction} onGuide={onTaskGuide} onApproval={onTaskApproval} onDismiss={onTaskDismiss}/>
-          <div ref={end}/>
+          <ChatTaskStatus entries={taskRows}/>
+          <TaskPanel tasks={taskCards} bots={bots} parentOf={onTaskParent} busy={taskBusy} settings={settings} onAction={onTaskAction} onGuide={onTaskGuide} onApproval={onTaskApproval} onDismiss={onTaskDismiss} chat/>
         </div>
         <div className="composer-area">
           {(sending || activeRoots.length > 0) && (
@@ -318,7 +359,7 @@ export default function Chat({
             }}
             onSubmit={e => {
               e.preventDefault();
-              onSend();
+              sendFromComposer();
             }}
           >
             <Attachments files={attachments} onRemove={onRemoveFile} disabled={sending || uploading}/>
@@ -337,7 +378,7 @@ export default function Chat({
               onKeyDown={e => {
                 if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault();
-                  onSend();
+                  sendFromComposer();
                 }
               }}
               rows={3}

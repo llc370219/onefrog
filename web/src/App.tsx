@@ -102,7 +102,6 @@ export default function App() {
   // rows may exist, so only then is the session read again.
   const taskKey = useRef('');
   // Terminal tasks stay visible with their real result/error until dismissed.
-  const [dismissedTasks,setDismissedTasks] = useState<string[]>([]);
   // Answers typed into a choice/secret card, re-applied if a poll reloads the
   // transcript before the server has stored the answer.
   const localCardAnswers = useRef<Map<string,{choice?:Choice['answer'];secret?:string}>>(new Map());
@@ -204,6 +203,7 @@ export default function App() {
   }
   /** Applies one task returned by a control call to the visible list. */
   function mergeTask(task:TaskView){
+    if(task.id===panelTask.current)setPanelTasks([task]);
     const sid=task.session_id||sessionRef.current;
     const cur=sessionTasksRef.current;
     applyTasks(sid,cur.some(t=>t.id===task.id)?cur.map(t=>t.id===task.id?task:t):[task,...cur]);
@@ -376,21 +376,6 @@ export default function App() {
       setTaskBusy(cur => cur.filter(entry => entry !== id+':'+action));
     }
   }
-  /** Appends operator guidance; the task applies it at its next step. */
-  async function taskGuide(id:string, content:string) {
-    if(taskBusyRef.current.has(id) || !content.trim()) return;
-    taskBusyRef.current.set(id,id+':guide');
-    setTaskBusy(cur => [...cur,id+':guide']);
-    try {
-      const task = await api.guideTask(id,content.trim());
-      mergeTask(task);
-      setNotice('补充引导已送达，任务会在下一步读取');
-    } catch(err) { setPageError(message(err)); }
-    finally {
-      taskBusyRef.current.delete(id);
-      setTaskBusy(cur => cur.filter(entry => entry !== id+':guide'));
-    }
-  }
   /** Records a durable approval decision for a parked task. */
   async function taskApproval(id:string, approvalID:string, allow:boolean) {
     if(taskBusyRef.current.has(id)) return;
@@ -410,7 +395,7 @@ export default function App() {
   async function send() {
     if(sendingRef.current || uploadRef.current || loading || (!draft.trim()&&!attachments.length)) return;
     if(!bots.some(b=>b.id===activeBot&&b.enabled)){setPageError('请先选取一个已启用的 Bot');return;}
-    if(sessionTasks.some(t=>(!t.session_id||t.session_id===session)&&taskIsActive(t))){setPageError('这个对话还有任务在跑，等它结束，或先暂停、取消它');return;}
+    if(sessionTasks.some(t=>(!t.session_id||t.session_id===session)&&taskIsActive(t))){setPageError('这个对话正在回复，请等它结束或先停止回复');return;}
     chatLoad.current++;
     const request = chatLoad.current;
     sendingRef.current = true;setSending(true);
@@ -591,7 +576,7 @@ export default function App() {
     setBusy(true);setFormError('');
     try {const res = await api.login(user,password);setUser(res.username);setProfile(res);setAuthed(true);if(res.must_change_credentials)return;setPassword('');await load();} catch(err) {setFormError(message(err));} finally {setBusy(false);}
   }
-  async function logout() {try {await api.logout();chatLoad.current++;localCardAnswers.current.clear();taskKey.current='';linesKey.current='';sessionRef.current='';sessionTasksRef.current=[];setDismissedTasks([]);setPanelTasks([]);setAllTasks([]);setAuthed(false);setLines([]);setSession('');setSessionTasks([]);setWorkspaceTarget(undefined);setChatWorkspace(undefined);setProjectTitle('');setPassword('');setNotice('');setDialog(null);setPanelJob(null);panelSession.current='';panelTask.current='';} catch(err) {setPageError(message(err));}}
+  async function logout() {try {await api.logout();chatLoad.current++;localCardAnswers.current.clear();taskKey.current='';linesKey.current='';sessionRef.current='';sessionTasksRef.current=[];setPanelTasks([]);setAllTasks([]);setAuthed(false);setLines([]);setSession('');setSessionTasks([]);setWorkspaceTarget(undefined);setChatWorkspace(undefined);setProjectTitle('');setPassword('');setNotice('');setDialog(null);setPanelJob(null);panelSession.current='';panelTask.current='';} catch(err) {setPageError(message(err));}}
 
   if(authed === null) return <div className="boot-screen"><LoaderCircle className="spin" size={23}/><span>连接工作台…</span></div>;
   if(!authed) return <div className="login-screen"><ThemeToggle className="login-theme"/><div className="login-brand"><span className="brand-icon"><img src="/assets/onefrog-logo.png" alt=""/></span><strong>OneFrog<span>OPERATIONS CONSOLE</span></strong></div><form className="login-card" onSubmit={e => {e.preventDefault();login();}}><h1>进入你的运维工作台</h1><p>服务器、Bot 和密钥，一个地方管理。</p><Field label="账号"><input value={user} autoComplete="username" onChange={e => setUser(e.target.value)} required placeholder="管理员账号"/></Field><Field label="密码"><input type="password" value={password} autoComplete="current-password" onChange={e => setPassword(e.target.value)} required placeholder="输入登录密码"/></Field>{formError && <Notice error>{formError}</Notice>}<Button type="submit" variant="primary" busy={busy}>进入工作台<ArrowRight size={16}/></Button><small><LockKeyhole size={12}/>自托管 · 你的基础设施，由你掌控</small></form><footer>ONEFROG / OPERATIONS, SIMPLIFIED.</footer></div>;
@@ -600,20 +585,11 @@ export default function App() {
   if(profile.approval_choice_required) return <ApprovalChoice onDone={async mode => {setProfile({...profile,approval_choice_required:false});setChatConfig(c=>c?{...c,approval:{...c.approval,mode}}:c);await load();}} onLogout={logout}/>;
 
   const currentLabel = navigation.find(n => n.id === view)?.label;
-  // Keep an active task visible while it runs, and the newest finished one
-  // until its transcript refresh has shown the result, then get out of the way.
-  // Tasks of this chat: the session's own tasks plus any child task whose
-  // parent lives here (a delegated task may write into another session), so
-  // its approvals are never hidden behind the open-session filter.
-  // Only roots of the open session (plus their children, which may run in
-  // another session) are shown in this chat.
+  // Include delegated children so approvals in other sessions stay actionable.
   const roots = sessionTasks.filter(t => !t.session_id || t.session_id === session);
   const ownIDs = new Set(roots.map(t => t.id));
   const children = allTasks.filter(t => t.parent_id && ownIDs.has(t.parent_id));
-  const merged = [...roots, ...children].filter((t,i,list) => list.findIndex(x=>x.id===t.id)===i);
-  const visibleFinished = merged.filter(t => !taskIsActive(t) && !dismissedTasks.includes(t.id)).slice(0,2);
-  const chatTasks = merged.filter(t => taskIsActive(t) || visibleFinished.includes(t));
-  function dismissTask(id:string){setDismissedTasks(cur => cur.includes(id) ? cur : [...cur,id]);}
+  const chatTasks = [...roots, ...children.filter(t => !ownIDs.has(t.id))];
   return <div className="app-shell">
     {mobileNav && <div className="nav-backdrop" onClick={() => setMobileNav(false)}/>}
     <div className={`navigation-shell ${mobileNav?'open':''}`} inert={Boolean(dialog)||(compact&&!mobileNav)}><aside className="sidebar"><a className="brand" href="#panel" onClick={e=>{e.preventDefault();go('panel');}}><span className="brand-icon"><img src="/assets/onefrog-logo.png" alt=""/></span><strong>OneFrog<span>YOUR CONTROL SPACE</span>{updateStatus?.current && <em className="brand-version">{updateStatus.current}</em>}</strong></a><nav aria-label="主导航">{navigation.map(n=><button key={n.id} title={n.label} className={`nav-item ${view===n.id?'active':''} ${n.id==='modules'||n.id==='servers'?'nav-separated':''}`} onClick={()=>go(n.id)} aria-current={view===n.id?'page':undefined}><n.icon size={18} strokeWidth={1.6}/><span>{n.label}</span>{(n.id==='chat'||n.id==='modules')&&<ChevronRight size={13} className="nav-chevron"/>}</button>)}</nav><div className="sidebar-bottom"><button className="nav-item" onClick={openSettings} title="设置"><Settings size={18} strokeWidth={1.6}/><span>设置</span></button><div className="account"><button className="account-edit" title="个人账号" onClick={()=>open('account')}><Avatar profile={profile}/><span><strong>{profile.display_name||profile.username}</strong><small>个人账号</small></span></button><IconButton label="退出登录" onClick={logout} disabled={sending}><LogOut size={16}/></IconButton></div></div></aside>
@@ -621,8 +597,8 @@ export default function App() {
     <main className="app-main" inert={Boolean(dialog) || mobileNav}><UpdateBanner status={updateStatus}/><div className="topbar"><IconButton label="展开导航" className="mobile-menu" onClick={() => setMobileNav(true)}><Menu size={20}/></IconButton><span className="breadcrumb">OneFrog<ChevronRight size={13}/><strong>{currentLabel}</strong></span><div className="topbar-right"><span className="sync-time">{updated ? `更新于 ${updated}` : '尚未同步'}</span><ThemeToggle/><IconButton label="刷新数据" onClick={load} disabled={loading}><RefreshCw size={15} className={loading ? 'spin' : ''}/></IconButton><span className="topbar-divider"/><span className="connection"><span className={`live-dot ${pageError ? 'warn' : ''}`}/>{pageError ? '同步异常' : 'API 已连接'}</span></div></div>
     {pageError && <div className="global-error"><Notice error>{pageError}</Notice><IconButton label="关闭错误提示" onClick={() => setPageError('')}><X size={15}/></IconButton></div>}
     <div className={`view-container ${view === 'chat' ? 'chat-view' : ''}`}>
-    {view === 'panel' && <Dashboard hosts={hosts} mods={mods} history={history} bots={bots} job={panelJob} settings={chatConfig} tasks={panelTasks.filter(t=>taskIsActive(t)||!dismissedTasks.includes(t.id)).slice(0,2)} taskBusy={taskBusy} sending={sending} onSelect={setSelected} onRun={runPanel} onAnswer={answerPanel} onProvide={answerPanelSecret} onModules={() => open('modules')} onSettings={openSettings} onServers={() => go('servers')} onBots={() => go('agents')} onHistory={openHistory} onAssets={() => {setActiveModule('assets'); go('modules');}} onOpenModule={(id,serverId) => {if(id==='services')openServices(serverId);else {setActiveModule(id); go('modules');}}} onTaskAction={taskAction} onTaskGuide={taskGuide} onTaskApproval={taskApproval} onTaskDismiss={dismissTask}/>}
-    {view === 'chat' && <Chat onAddServer={()=>open('server')} controls={controls} onControls={setControls} settings={chatConfig} mode={chatMode} workspace={chatWorkspace} onOpenWorkspace={viewCode} projectTitle={projectTitle} attachments={attachments} onFiles={uploadFiles} onRemoveFile={id=>setAttachments(cur=>cur.filter(f=>f.id!==id))} uploading={uploading} activeBot={bots.find(b=>b.id===activeBot)} hosts={hosts} bots={bots} secrets={secrets} selected={selected} onSelect={setSelected} draft={draft} onDraft={setDraft} lines={lines} onSend={send} sending={sending||loading} onNew={openGroupPicker} sessions={sessions} session={session} onSession={restoreChat} onDeleteSession={removeChat} onNewTopic={()=>newChat(activeBot)} onNotice={setNotice} onAnswer={answerChoice} onProvide={answerSecret} onGoServer={() => go('servers')} onGoAsset={openAssetForServer} onGoHistory={name => openHistory('all', name)} tasks={chatTasks} taskBusy={taskBusy} onTaskAction={taskAction} onTaskGuide={taskGuide} onTaskApproval={taskApproval} onTaskDismiss={dismissTask} onTaskParent={task => {const parentID=task.parent_id;if(!parentID)return undefined;return allTasks.find(t=>t.id===parentID)||sessionTasks.find(t=>t.id===parentID);}}/>}
+    {view === 'panel' && <Dashboard hosts={hosts} mods={mods} history={history} bots={bots} job={panelJob} tasks={panelTasks} taskBusy={taskBusy} sending={sending} onSelect={setSelected} onRun={runPanel} onAnswer={answerPanel} onProvide={answerPanelSecret} onModules={() => open('modules')} onSettings={openSettings} onServers={() => go('servers')} onBots={() => go('agents')} onHistory={openHistory} onAssets={() => {setActiveModule('assets'); go('modules');}} onOpenModule={(id,serverId) => {if(id==='services')openServices(serverId);else {setActiveModule(id); go('modules');}}} onTaskAction={taskAction} onTaskApproval={taskApproval}/>}
+    {view === 'chat' && <Chat onAddServer={()=>open('server')} controls={controls} onControls={setControls} settings={chatConfig} mode={chatMode} workspace={chatWorkspace} onOpenWorkspace={viewCode} projectTitle={projectTitle} attachments={attachments} onFiles={uploadFiles} onRemoveFile={id=>setAttachments(cur=>cur.filter(f=>f.id!==id))} uploading={uploading} activeBot={bots.find(b=>b.id===activeBot)} hosts={hosts} bots={bots} secrets={secrets} selected={selected} onSelect={setSelected} draft={draft} onDraft={setDraft} lines={lines} onSend={send} sending={sending||loading} submitting={sending} onNew={openGroupPicker} sessions={sessions} session={session} onSession={restoreChat} onDeleteSession={removeChat} onNewTopic={()=>newChat(activeBot)} onNotice={setNotice} onAnswer={answerChoice} onProvide={answerSecret} onGoServer={() => go('servers')} onGoAsset={openAssetForServer} onGoHistory={name => openHistory('all', name)} tasks={chatTasks} taskBusy={taskBusy} onTaskAction={taskAction} onTaskApproval={taskApproval}/>}
     {view === 'workspace' && <Workspace hosts={hosts} target={workspaceTarget} onTarget={setWorkspaceTarget} sessions={sessions} activeTask={chatWorkspace} onReturnToTask={()=>go('chat')} onNewTask={startCodeTask} onResume={openCodeTask} sending={sending||uploading} onAddServer={()=>open('server')}/>}
     {view === 'servers' && <Servers addedServer={addedServer} hosts={hosts} selected={selected} onSelect={setSelected} onAdd={() => open('server')} onTest={testServer} testing={testing} onChat={() => openChat()} onOpenServices={openServices} onOpenAsset={openAssetForServer} onOpenHistory={name => openHistory('all', name)} onChanged={load}/>}
     {view === 'agents' && <Bots bots={bots} onAdd={()=>open('agent')} onChanged={load} onChat={id=>{openBot(id);openChat();}}/>}

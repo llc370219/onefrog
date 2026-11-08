@@ -1,4 +1,6 @@
-import type { ChatStep, Choice, Host, SecretRequest, TurnItem } from '../api';
+import type { ReactNode } from 'react';
+import { taskIsActive, type ChatStep, type Choice, type Host, type SecretRequest, type TaskView, type TurnItem } from '../api';
+import { replyFailure, replyWaitingStatus } from './TaskReplyControls';
 import TurnStream from './TurnStream';
 
 export type PanelJob = {
@@ -20,27 +22,37 @@ export type PanelJob = {
 };
 
 /** Results from server-card actions only; the dashboard has no chat launcher. */
-export default function PanelTaskResult({ hosts, sending, job, onAnswer, onProvide }: {
+export default function PanelTaskResult({ hosts, sending, job, task, onAnswer, onProvide, children }: {
   hosts: Host[];
   sending: boolean;
   job: PanelJob | null;
+  task?: TaskView;
   onAnswer: (values: string[], custom: string) => void;
   onProvide: (value: string) => void;
+  children?: ReactNode;
 }) {
-  if (!job || !(job.pending || job.error || job.text || job.timeline?.length || job.choice || job.secret)) return null;
+  if (!job) return null;
+  const pending = task ? taskIsActive(task) : job.pending;
+  const error = job.error || replyFailure(task);
+  const text = task?.status === 'completed' ? task.result || job.text : job.text;
+  if (!(pending || error || text || job.timeline?.length || job.choice || job.secret)) return null;
   return <section className="panel-operator" aria-label="任务执行结果" aria-live="polite">
-    {job.error ? <p className="operator-error">{job.error}</p> : <TurnStream
+    {children}
+    {error && <p className="operator-error">{error}</p>}
+    {(pending || text || job.timeline?.length || job.choice || job.secret) ? <TurnStream
       timeline={job.timeline || []}
-      text={job.text}
-      pending={job.pending}
+      text={text}
+      pending={pending}
       activeStatus={job.activeStatus}
+      waitingStatus={task ? replyWaitingStatus([task]) : undefined}
       hosts={hosts}
       choice={job.choice}
       secret={job.secret}
-      disabled={sending || job.pending}
-      animateFinal={!job.pending}
+      disabled={sending || (pending && task?.status !== 'waiting_user')}
+      animateFinal={!pending}
+      showCompletion={!error}
       onAnswerChoice={onAnswer}
       onProvideSecret={onProvide}
-    />}
+    /> : null}
   </section>;
 }

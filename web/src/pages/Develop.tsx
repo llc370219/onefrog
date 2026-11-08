@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Blocks, Bot, Code2, Eraser, ExternalLink, Plus, Sparkles, Trash2 } from 'lucide-react';
 import { api, taskIsActive, type BotRow, type ChatRequest, type Choice, type DevModuleRow, type Mod, type SettingsState, type TaskView, type TurnItem } from '../api';
 import CustomModuleFrame from '../components/CustomModuleFrame';
-import TaskPanel from '../components/TaskPanel';
+import TaskReplyControls, { replyFailure, replyWaitingStatus } from '../components/TaskReplyControls';
 import TurnStream from '../components/TurnStream';
 import { chatLines, type MessageRow } from '../lib/chatLines';
 import { clientRequestID, createTask, lifecycleFlag, taskStatusText, useTaskPoll } from '../lib/taskFeed';
@@ -185,6 +185,7 @@ export default function Develop({
   const [error, setError] = useState('');
   const [prompt, setPrompt] = useState('');
   const [task, setTask] = useState<TaskView | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [taskBusy, setTaskBusy] = useState('');
   const [activeStatus, setActiveStatus] = useState('');
   const [timeline, setTimeline] = useState<TurnItem[]>([]);
@@ -207,7 +208,9 @@ export default function Develop({
   }, [alive]);
   // The build is a durable task: the buttons stay disabled while it runs, and a
   // reload or a dropped connection resumes from the task, not from a socket.
-  const building = Boolean(task && taskIsActive(task));
+  const building = submitting || Boolean(task && taskIsActive(task));
+  const resultText = task?.status === 'completed' ? task.result || replyText : replyText;
+  const buildError = submitting ? '' : replyFailure(task || undefined);
 
   const [modalMode, setModalMode] = useState<'create' | 'edit' | null>(null);
   const [editId, setEditId] = useState('');
@@ -307,6 +310,9 @@ export default function Develop({
   async function runBuild(text: string) {
     const trimmed = text.trim();
     if (!trimmed || building || !ready.ok) return;
+    setSubmitting(true);
+    taskRef.current = null;
+    setTask(null);
     setActiveStatus('正在构思与编写模块…');
     setError('');
     setReplyText('');
@@ -322,6 +328,7 @@ export default function Develop({
     // One submission call: at most two POSTs with the same client_request_id.
     const result = await createTask(body);
     if (!alive.current) return;
+    setSubmitting(false);
     if (result.ok) {
       adopt(result.task);
       setPrompt('');
@@ -380,16 +387,6 @@ export default function Develop({
       setTaskBusy('');
     }
   }
-  async function taskGuide(id: string, content: string) {
-    setTaskBusy(id + ':guide');
-    try {
-      applyTask(await api.guideTask(id, content));
-    } catch (err) {
-      setError(errText(err));
-    } finally {
-      setTaskBusy('');
-    }
-  }
   async function taskApproval(id: string, approvalID: string, allow: boolean) {
     setTaskBusy(id + ':' + approvalID);
     try {
@@ -399,14 +396,6 @@ export default function Develop({
     } finally {
       setTaskBusy('');
     }
-  }
-  function dismissTask() {
-    taskRef.current = null;
-    setTask(null);
-    setActiveStatus('');
-    setReplyText('');
-    setChoice(null);
-    setTimeline([]);
   }
   function submitPrompt(e: FormEvent) {
     e.preventDefault();
@@ -534,37 +523,28 @@ export default function Develop({
             </form>
           </>
         )}
-        {task && (
-          <TaskPanel
-            tasks={[task]}
-            bots={bots}
-            busy={taskBusy}
-            settings={settings}
-            onAction={taskAction}
-            onGuide={taskGuide}
-            onApproval={taskApproval}
-            onDismiss={dismissTask}
-          />
-        )}
-        {(building || timeline.length > 0 || replyText || choice) && (
+        {(building || timeline.length > 0 || resultText || choice) && (
           <div className="operator-result" aria-live="polite">
+            {task && <TaskReplyControls tasks={[task]} bots={bots} busy={taskBusy} onAction={taskAction} onApproval={taskApproval}/>}
             <TurnStream
               timeline={timeline}
-              text={replyText}
+              text={resultText}
               pending={building}
               activeStatus={activeStatus}
+              waitingStatus={task ? replyWaitingStatus([task]) : undefined}
               choice={choice?.card}
               // A waiting_user task still needs its card answered; only a task
               // that is busy on its own must lock the card.
               disabled={building && task?.status !== 'waiting_user'}
               animateFinal={!building}
+              showCompletion={!buildError}
               onAnswerChoice={answerBuildChoice}
             />
           </div>
         )}
       </section>
 
-      {error && <Notice error>{error}</Notice>}
+      {(error || buildError) && <Notice error>{error || buildError}</Notice>}
 
       <div className="section-label">
         <span><span className="live-dot"/>已创建的自定义模块 <small>{rows.length} 个</small></span>

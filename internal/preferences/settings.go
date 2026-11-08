@@ -100,6 +100,7 @@ type State struct {
 	// Empty follows OF_CHANNEL from the installer.
 	UpdateChannel string `json:"update_channel,omitempty"`
 }
+
 type Input struct {
 	DisabledBots []string         `json:"disabled_bots"`
 	Providers    []ProviderInput  `json:"providers"`
@@ -182,6 +183,10 @@ func (m *Manager) Save(in Input) (State, error) {
 	if disabled == nil {
 		disabled = m.data.State.DisabledBots
 	}
+	// The native local workspace allowlist is ENV-ONLY operator policy
+	// (OF_LOCAL_WORKSPACE_ROOTS / OF_LOCAL_COMMAND_EXECUTION). It is loaded at
+	// boot and can never be widened from the settings API, the model or a task:
+	// settings saves simply do not carry it.
 	next := diskState{State: State{DisabledBots: disabled, Default: in.Default, Worker: in.Worker, BotRoutes: in.BotRoutes, Approval: in.Approval, Execution: in.Execution, Providers: []Provider{}, UpdateCheckDisabled: m.data.State.UpdateCheckDisabled, UpdateChannel: m.data.State.UpdateChannel}, Keys: map[string]string{}}
 	seen := map[string]bool{}
 	for _, req := range in.Providers {

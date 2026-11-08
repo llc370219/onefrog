@@ -99,12 +99,30 @@ export type UsageRow=TokenUsage&{bot_id:string;purpose:string;provider_id:string
 export type Attachment={id:string;name:string;mime:string;size:number};
 /** direct: one-to-one chat with a single bot and its own memory. team (default): the lead bot pulls other bots in. */
 export type ChatMode='direct'|'team';
-export type WorkspaceTarget = {server_id:string;root:string};
+export type WorkspaceTarget = {server_id:string;root:string;/** Additive workspace kind; an older backend only knows SSH targets. */kind?:'ssh'|'local'};
 export type WorkspaceRequest = {action:'list'|'status'|'diff'|'read'|'write';path?:string;revision?:string;content?:string};
 export type WorkspaceResult = {files?:string[];text?:string;revision?:string;truncated?:boolean};
+/** GET /api/workspace/capabilities — local roots are operator-configured on the server; the browser never supplies paths. */
+export type WorkspaceCapabilities={local:{enabled:boolean;roots:string[];execution_environment:'native'|'container';command_execution:boolean}};
 export type ChatOptions={workspace?:WorkspaceTarget;approval_route?:ModelRoute;model_route?:ModelRoute;excluded_bot_ids?:string[];approval_mode?:string;attachment_ids?:string[];mode?:ChatMode};
-export type ChatRequest=ChatOptions&{content:string;project_title?:string;server_id?:string;bot_id?:string;session_id?:string;choice_answer?:ChoiceReply;secret_answer?:SecretReply};
+export type ChatRequest=ChatOptions&{content:string;project_title?:string;server_id?:string;bot_id?:string;session_id?:string;choice_answer?:ChoiceReply;secret_answer?:SecretReply;/** Stable id of one submission attempt, so a retried POST can be deduplicated by the runtime instead of running twice. */client_request_id?:string};
 export type ChatResult={session_id:string;text:string;message_id?:string;choice?:Choice;secret_request?:SecretRequest;timeline?:TurnItem[];answered?:boolean};
+/** Durable task status. Only the safe server-side fields are modelled here. */
+export type TaskStatus='queued'|'running'|'waiting_user'|'waiting_approval'|'waiting_job'|'paused'|'completed'|'failed'|'cancelled'|'budget_exhausted';
+export type TaskPending={kind?:string;approval_id?:string};
+export type TaskApprovalMeta={id:string;command?:string;reasons?:string[];status:string;note?:string;created_at?:string;decided_at?:string};
+export type TaskView={id:string;bot_id:string;session_id:string;project_id?:string;/** Parent task of a delegated/child task; children may live in another session. */parent_id?:string;goal:string;plan?:string[];progress?:string[];next?:string;status:TaskStatus;total_steps?:number;max_steps?:number;created_at:string;updated_at:string;deadline?:string;result?:string;last_error?:string;pending?:TaskPending;approvals?:TaskApprovalMeta[];
+  /** Additive live-card fields; an older backend omits them and the UI falls back. */
+  model_label?:string;workspace_label?:string;started_at?:string;finished_at?:string;activities?:TaskActivity[];
+  /** Completed prefix of `plan` (0..plan.length). Undefined means 0/unknown — never fake completion. */
+  plan_completed?:number};
+/** One real tool activity of a durable task. Only a safe generic label and the actual
+ *  timing leave the runtime — never raw arguments, commands or file contents. */
+export type TaskActivity={id:string;name:string;label:string;status:'running'|'completed'|'failed'|'interrupted';started_at:string;finished_at?:string;duration_ms?:number};
+/** True while the task can still run or is parked on an operator answer. */
+export function taskIsActive(t:Pick<TaskView,'status'>):boolean{
+  return t.status==='queued'||t.status==='running'||t.status==='waiting_user'||t.status==='waiting_approval'||t.status==='waiting_job'||t.status==='paused';
+}
 export type BotRow = { id:string;name:string;description:string;system_prompt?:string;enabled:boolean;model_route:ModelRoute;effective_route:ModelRoute;usage:TokenUsage;memory_count?:number };
 export type ProjectNote = { id:string;title:string;body:string;source:string;updated_at:string };
 export type BotMemory = { id:string;bot_id:string;title:string;body:string;source:string;created_at:string;updated_at:string };
@@ -198,7 +216,7 @@ export type ServiceWatch = {interval_seconds: number; servers: Record<string, Wa
 export type AutomationKind = 'interval' | 'daily' | 'weekly' | 'once';
 export type AutomationSchedule = {kind: AutomationKind; minutes?: number; time?: string; weekday?: number; at?: string};
 export type AutomationMode = '' | 'smart' | 'model' | 'plan';
-export type Automation = {id: string; name: string; prompt: string; bot_id: string; server_id: string; schedule: AutomationSchedule; approval_mode: AutomationMode; enabled: boolean; owner_id: string; next_run_at?: string; last_run_at?: string; last_status?: 'running' | 'success' | 'failed'; last_error?: string; last_summary?: string; session_id?: string; created_at: string; updated_at: string};
+export type Automation = {id: string; name: string; prompt: string; bot_id: string; server_id: string; schedule: AutomationSchedule; approval_mode: AutomationMode; enabled: boolean; owner_id: string; next_run_at?: string; last_run_at?: string; last_status?: 'running' | 'success' | 'failed' | 'waiting'; last_error?: string; last_summary?: string; session_id?: string; task_id?: string; created_at: string; updated_at: string};
 export type AutomationInput = Pick<Automation, 'name' | 'prompt' | 'bot_id' | 'server_id' | 'schedule' | 'approval_mode' | 'enabled'>;
 
 export const api = {
@@ -235,6 +253,14 @@ export const api = {
   async probeProvince(id:string,province:string,pingIntervalSeconds=60):Promise<{message:string}>{return call('/api/servers/'+encodeURIComponent(id)+'/probe/province',{method:'POST',body:JSON.stringify({province,ping_interval_seconds:pingIntervalSeconds})});},
   async profile(body:{username:string;display_name:string;avatar:string;current_password:string;new_password:string}):Promise<Profile>{return call("/api/auth/profile",{method:"PUT",body:JSON.stringify(body)});},
   async workspace(target:WorkspaceTarget, request:WorkspaceRequest):Promise<WorkspaceResult>{return call('/api/workspace',{method:'POST',body:JSON.stringify({target,...request})});},
+  /** Operator-provided local workspace capability. A 404 from an older backend resolves to disabled. */
+  async workspaceCapabilities():Promise<WorkspaceCapabilities>{
+    try { return await call('/api/workspace/capabilities'); }
+    catch (err) {
+      if ((err as {status?:unknown})?.status === 404) return { local:{enabled:false,roots:[],execution_environment:'native',command_execution:false} };
+      throw err;
+    }
+  },
   async sessions():Promise<ChatSession[]>{return (await call("/api/sessions"))||[];},
   async messages(id:string):Promise<{id:string;role:string;content:string;from_bot?:string;attachments?:Attachment[];choice?:Choice;secret_request?:SecretRequest;timeline?:TurnItem[]}[]>{return (await call("/api/sessions/"+encodeURIComponent(id)+"/messages"))||[];},
   async deleteSession(id:string){return call("/api/sessions/"+encodeURIComponent(id),{method:"DELETE"});},
@@ -356,148 +382,26 @@ export const api = {
   async bots(): Promise<BotRow[]> {
     return (await call("/api/bots")) as BotRow[];
   },
-  async chat(body: ChatRequest) {
-    return call("/api/chat", { method: "POST", body: JSON.stringify(body) }) as Promise<ChatReply>;
+  async tasks(sessionID?: string): Promise<TaskView[]> {
+    return (await call('/api/tasks' + (sessionID ? '?session_id=' + encodeURIComponent(sessionID) : '')))?.items || [];
   },
-  chatLive(body: ChatRequest, handlers: ((step: ChatStep) => void) | LiveChatHandlers) {
-    return liveChat(body, typeof handlers === "function" ? { onStep: handlers } : handlers);
+  async task(id: string): Promise<TaskView> { return call('/api/tasks/' + encodeURIComponent(id)); },
+  /** POST /api/tasks answers 202 TaskView; the durable runtime keeps working after the request returns. */
+  async createTask(body: ChatRequest): Promise<TaskView> { return call('/api/tasks', { method: 'POST', body: JSON.stringify(body) }); },
+  async taskAction(id: string, action: 'pause' | 'resume' | 'cancel'): Promise<TaskView> { return call('/api/tasks/' + encodeURIComponent(id) + '/' + action, { method: 'POST', body: '{}' }); },
+  async guideTask(id: string, content: string): Promise<TaskView> { return call('/api/tasks/' + encodeURIComponent(id) + '/guidance', { method: 'POST', body: JSON.stringify({ content }) }); },
+  async decideTaskApproval(id: string, approvalID: string, allow: boolean, reason?: string): Promise<TaskView> {
+    return call('/api/tasks/' + encodeURIComponent(id) + '/approvals/' + encodeURIComponent(approvalID), { method: 'POST', body: JSON.stringify({ allow, reason }) });
   },
 };
 
 export type ApprovalDecision = { allow: boolean; always?: boolean };
-export type LiveChatHandlers = {
-  onStep?: (step: ChatStep) => void;
-  onSay?: (bot: string, content: string) => void;
-  onApproval?: (req: ApprovalPrompt) => Promise<ApprovalDecision>;
-  onApprovalResolved?: (card: ApprovalCardData) => void;
-  onApprovalTimeout?: (id: string) => void;
-};
-type ChatReply = ChatResult & {
-  steps?: {
-    kind?: string;
-    bot?: string;
-    target?: string;
-    task?: string;
-    command?: string;
-    server_id?: string;
-    ok?: boolean;
-    output?: string;
-  }[];
-};
-
-function toStep(raw: NonNullable<ChatReply["steps"]>[number]): ChatStep {
-  if (raw.kind === "delegate" || raw.kind === "message") {
-    return { kind: raw.kind, bot: raw.bot, target: raw.target, task: raw.task };
-  }
-  return { kind: "tool", bot: raw.bot, server: raw.server_id, command: raw.command, ok: raw.ok, output: raw.output };
-}
-
 /** One server-side rule hit from the command classifier. */
 export type RiskFinding = { category: string; label: string; detail: string };
 /** A command the agent wants to run that needs the operator's decision (smart or manual approval mode). */
 export type ApprovalPrompt = { id: string; single_use?: boolean; bot: string; bot_name?: string; server_id: string; server_name: string; command: string; warning?: string; mode?: string; risk?: 'low'|'medium'|'high'; reasons?: string[]; findings?: RiskFinding[]; model_risk?: string; model_reason?: string; untrusted?: string; timeout_seconds: number };
 /** Approval modes. "" = not chosen yet (behaves like smart). */
 export type ApprovalMode = ''|'off'|'smart'|'manual'|'model'|'plan';
-let approvalHandler: ((req: ApprovalPrompt) => Promise<boolean>) | null = null;
-/** Registers the UI that asks the operator to allow or deny a command. */
-export function setApprovalHandler(fn: ((req: ApprovalPrompt) => Promise<boolean>) | null) { approvalHandler = fn; }
-
-function liveChat(body: ChatRequest, handlers: LiveChatHandlers) {
-  return new Promise<ChatResult>((resolve, reject) => {
-    let opened = false;
-    let settled = false;
-    let session = "";
-    let text = "";
-    let extra: Omit<ChatResult, "session_id" | "text"> = {};
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(proto + "://" + location.host + "/ws/chat");
-    let timer = 0;
-    const arm = (ms: number) => { window.clearTimeout(timer); timer = window.setTimeout(() => fail(new Error("模型没有在时间内返回")), ms); };
-    const fail = (err: Error) => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timer);
-      ws.close();
-      if (!opened) {
-        api.chat(body).then((res) => {
-          for (const step of res.steps || []) handlers.onStep?.(toStep(step));
-          resolve({ session_id: res.session_id, text: res.text, message_id: res.message_id, choice: res.choice || undefined, secret_request: res.secret_request || undefined, timeline: res.timeline, answered: res.answered });
-        }, reject);
-        return;
-      }
-      reject(err);
-    };
-    const ok = () => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timer);
-      ws.close();
-      resolve({ session_id: session, text, ...extra });
-    };
-    arm(180000);
-    ws.onopen = () => {
-      opened = true;
-      ws.send(JSON.stringify(body));
-    };
-    ws.onerror = () => fail(new Error("连接中断"));
-    ws.onclose = () => { if (!settled) fail(new Error("连接已关闭，请检查操作记录后重试")); };
-    ws.onmessage = (ev) => {
-      let msg;
-      try { msg = JSON.parse(String(ev.data)); } catch { fail(new Error("收到无效的服务响应")); return; }
-      if (msg.type === "approval_request") {
-        const req = msg as ApprovalPrompt;
-        arm((req.timeout_seconds || 300) * 1000 + 180000);
-        const ask: Promise<ApprovalDecision> = handlers.onApproval
-          ? handlers.onApproval(req)
-          : approvalHandler
-          ? approvalHandler(req).then((allow) => ({ allow }))
-          : Promise.resolve({ allow: window.confirm("允许执行以下命令？\n" + req.command + ((req.reasons || []).length ? "\n⚠ " + (req.reasons || []).join("\n⚠ ") : req.warning ? "\n⚠ " + req.warning : "")) });
-        ask.then(
-          (dec) => {
-            if (!settled) {
-              ws.send(JSON.stringify({ type: "approval", id: req.id, allow: dec.allow, reason: dec.always ? "always" : "" }));
-              arm(180000);
-            }
-          },
-          () => { if (!settled) ws.send(JSON.stringify({ type: "approval", id: req.id, allow: false })); }
-        );
-        return;
-      }
-      if (msg.type === "approval_timeout") {
-        handlers.onApprovalTimeout?.(msg.id);
-        if (approvalHandler) approvalTimeout(msg.id);
-        return;
-      }
-      if (msg.type === "say") {
-        handlers.onSay?.(msg.bot || "", msg.content || "");
-        return;
-      }
-      if (msg.type === "approval_resolved" && msg.approval) {
-        handlers.onApprovalResolved?.(msg.approval as ApprovalCardData);
-        return;
-      }
-      if (msg.type === "session") session = msg.session_id || "";
-      if (msg.type === "delegate" || msg.type === "message" || msg.type === "tool") handlers.onStep?.(toStep({
-        kind: msg.type,
-        bot: msg.bot,
-        target: msg.target,
-        task: msg.task,
-        command: msg.command,
-        server_id: msg.server_id,
-        ok: msg.ok,
-        output: msg.output,
-      }));
-      if (msg.type === "assistant") { text = msg.content || ""; extra = { message_id: msg.message_id || undefined, choice: msg.choice || undefined, secret_request: msg.secret_request || undefined, timeline: msg.timeline || undefined, answered: !!msg.answered }; }
-      if (msg.type === "error") fail(new Error(msg.message || "发送失败"));
-      if (msg.type === "done") ok();
-    };
-  });
-}
-
-let approvalTimeoutHandler: ((id: string) => void) | null = null;
-function approvalTimeout(id: string) { approvalTimeoutHandler?.(id); }
-/** Called when the server gave up waiting for a decision. */
-export function setApprovalTimeoutHandler(fn: ((id: string) => void) | null) { approvalTimeoutHandler = fn; }
 
 export type ServerTestResult = { ok: boolean; status: "online" | "offline" | "host_key_unknown" | "host_key_mismatch" | string; detail: string; fingerprint?: string; stored_fingerprint?: string };
 
@@ -512,7 +416,7 @@ export type SettingsState = {
  approval:{mode:ApprovalMode;route:ModelRoute;instructions:string};
  execution:{timeout_seconds:number;command_timeout_seconds:number;max_steps:number;context_messages:number};
 };
-export type ApprovalRow = {id:string;created_at:string;bot_name:string;server_name:string;command:string;status:string;review:{allow:boolean;reason:string;risk:string;model:string;provider_id:string;mode:string;findings?:RiskFinding[];model_reason?:string;untrusted?:string}};
+export type ApprovalRow = {id:string;created_at:string;bot_name:string;server_name:string;command:string;status:string;review:{allow:boolean;reason:string;risk:string;model:string;provider_id:string;mode:string;findings?:RiskFinding[];model_reason?:string;untrusted?:string;/** An ask that is still waiting, not a completed denial. */pending?:boolean;/** Forward-compatible explicit allow/deny/ask from the API. */decision?:'allow'|'deny'|'ask'|string}};
 
 export type PingMetric={method?:'tcp'|'icmp';measured_at?:string;next_check_at?:string;name:string;target:string;latency_ms:number|null;loss_percent:number|null;samples:number};
 export type ProbeSample={received_at:string;hostname:string;os:string;arch:string;cpu_model:string;cpu_cores:number;cpu_percent:number;memory_used:number;memory_total:number;swap_used:number;swap_total:number;disk_used:number;disk_total:number;rx_bytes:number;tx_bytes:number;rx_rate:number;tx_rate:number;uptime_seconds:number;load:number[];tcp_connections:number;processes:number;pings:PingMetric[]};

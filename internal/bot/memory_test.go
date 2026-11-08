@@ -41,13 +41,17 @@ func TestRecallIsolatesWorkersAndRedactsVault(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	seen := agent.recallCall(ctx, leader, recallArgs("{\"bot_id\":\"巡检\"}"))
-	if !strings.Contains(seen, "库密码") || !strings.Contains(seen, "***") || strings.Contains(seen, vault) {
-		t.Fatal(seen)
+	// The leader may not read a worker's private memory; it must go through a
+	// delegation or handoff. Titles and bodies stay private.
+	for _, raw := range []string{"{\"bot_id\":\"巡检\"}", "{\"bot_id\":\"check\"}"} {
+		seen := agent.recallCall(ctx, leader, recallArgs(raw))
+		if !strings.Contains(seen, "只能读取自己的记忆") || strings.Contains(seen, "库密码") || strings.Contains(seen, vault) {
+			t.Fatal(seen)
+		}
 	}
-	byID := agent.recallCall(ctx, leader, recallArgs("{\"bot_id\":\"check\"}"))
-	if !strings.Contains(byID, "***") || strings.Contains(byID, vault) {
-		t.Fatal(byID)
+	own := agent.recallCall(ctx, leader, recallArgs(""))
+	if !strings.Contains(own, "只有主控看") || strings.Contains(own, "库密码") {
+		t.Fatal(own)
 	}
 
 	workerCtx := context.WithValue(ctx, usageKey{}, usageActor{Purpose: "worker"})
@@ -55,7 +59,7 @@ func TestRecallIsolatesWorkersAndRedactsVault(t *testing.T) {
 	if !strings.Contains(denied, "只能读取自己的记忆") || strings.Contains(denied, "只有主控看") {
 		t.Fatal(denied)
 	}
-	own := agent.recallCall(workerCtx, worker, recallArgs(""))
+	own = agent.recallCall(workerCtx, worker, recallArgs(""))
 	if !strings.Contains(own, "***") || strings.Contains(own, vault) || strings.Contains(own, "只有主控看") {
 		t.Fatal(own)
 	}

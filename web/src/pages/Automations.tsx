@@ -1,12 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CalendarClock, MessageSquare, Pencil, Play, Plus, Trash2 } from 'lucide-react';
-import { api, type Automation, type AutomationInput, type AutomationKind, type AutomationMode, type BotRow, type Host } from '../api';
+import { api, type Automation, type AutomationInput, type AutomationKind, type AutomationMode, type BotRow, type Host, type TaskView } from '../api';
 import { Button, Empty, Field, Modal, Notice, PageHeading } from '../components/ui';
+import { taskStatusText, useTaskPoll } from '../lib/taskFeed';
 
 const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 const kinds: { id: AutomationKind; label: string }[] = [{ id: 'daily', label: '每天' }, { id: 'weekly', label: '每周' }, { id: 'interval', label: '固定间隔' }, { id: 'once', label: '只运行一次' }];
 const modes: { id: AutomationMode; label: string }[] = [{ id: '', label: '跟随设置（关闭审批时改用智能审批）' }, { id: 'smart', label: '智能审批 · 有风险的命令不执行' }, { id: 'plan', label: '仅规划 · 不执行命令' }];
-const statusNames: Record<string, [string, string]> = { running: ['运行中', 'warn'], success: ['上次成功', 'ok'], failed: ['上次失败', 'danger'] };
+/**
+ * `waiting` means the run is parked, not finished: the runtime reports it while
+ * it waits for an operator. The exact reason comes from the linked task, so the
+ * label never claims an approval when the task is waiting for an answer.
+ */
+const statusNames: Record<string, [string, string]> = { running: ['运行中', 'warn'], waiting: ['等待你处理', 'warn'], success: ['上次成功', 'ok'], failed: ['上次失败', 'danger'] };
+const waitingText = (task?: TaskView) => {
+  if (!task) return '等待你处理（还没完成）';
+  switch (task.pending?.kind) {
+    case 'approval': return '等待你批准一项操作（还没完成）';
+    case 'user': return '等待你回答问题（还没完成）';
+    case 'job': return '等待外部任务完成（还没完成）';
+    default: return '等待你处理（还没完成）';
+  }
+};
 const errText = (e: unknown, fallback: string) => e instanceof Error ? e.message : fallback;
 const fmt = (time?: string) => time ? new Date(time).toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) : '—';
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -36,7 +51,7 @@ export function AutomationGlance({ onOpen }: { onOpen: () => void }) {
   const next = on.filter(a => a.next_run_at).sort((a, b) => a.next_run_at!.localeCompare(b.next_run_at!))[0];
   return <div className="asset-glance">
     <div><span>已启用</span><strong>{on.length}<small className="muted"> / {rows.length}</small></strong></div>
-    <div><span>运行中</span><strong>{rows.filter(a => a.last_status === 'running').length}</strong></div>
+    <div><span>运行中</span><strong>{rows.filter(a => a.last_status === 'running').length}{rows.some(a => a.last_status === 'waiting') && <small className="muted"> · 待处理 {rows.filter(a => a.last_status === 'waiting').length}</small>}</strong></div>
     <div><span>上次失败</span><strong className={rows.some(a => a.last_status === 'failed') ? 'danger' : ''}>{rows.filter(a => a.last_status === 'failed').length}</strong></div>
     <div><span>下一次</span><strong className="mono">{next ? fmt(next.next_run_at) : '—'}</strong></div>
     <p className="develop-glance-foot"><span>{next ? next.name + ' · ' + scheduleText(next.schedule) : rows.length ? '没有待运行的自动化' : '还没有自动化，可以让 Bot 每天定时巡检。'}</span><button className="text-btn" onClick={onOpen}>管理自动化</button></p>
@@ -69,6 +84,9 @@ export default function Automations({ bots, hosts, onOpenSession }: { bots: BotR
   const [saving, setSaving] = useState(false);
   const [working, setWorking] = useState('');
   const [removing, setRemoving] = useState<Automation | null>(null);
+  // Linked durable tasks of runs that are still active, so a `waiting` run
+  // shows the real reason and the operator can open it to approve or answer.
+  const [tasks, setTasks] = useState<Record<string, TaskView>>({});
   const mounted = useRef(true);
   const enabledBots = bots.filter(b => b.enabled);
   const firstBot = (enabledBots.find(b => b.id === 'main') || enabledBots[0])?.id || '';
@@ -76,7 +94,18 @@ export default function Automations({ bots, hosts, onOpenSession }: { bots: BotR
     try { const list = await api.automations(); if (mounted.current) { setItems(list); setError(''); } }
     catch (e) { if (mounted.current) setError(errText(e, '读取自动化失败')); }
   }, []);
-  const anyRunning = !!items?.some(a => a.last_status === 'running');
+  const anyRunning = !!items?.some(a => a.last_status === 'running' || a.last_status === 'waiting');
+  const linked = (items || []).filter(a => a.task_id && (a.last_status === 'running' || a.last_status === 'waiting'));
+  const linkedKey = linked.map(a => a.task_id + ':' + a.last_status).join('|');
+  useTaskPoll(linked.length > 0, 5000, async isCurrent => {
+    const rows = await Promise.all(linked.map(async a => {
+      try { return [a.task_id!, await api.task(a.task_id!)] as const; } catch { return null; }
+    }));
+    if (!isCurrent()) return;
+    const next: Record<string, TaskView> = {};
+    for (const row of rows) if (row) next[row[0]] = row[1];
+    setTasks(next);
+  }, [linkedKey]);
   useEffect(() => { mounted.current = true; void load(); return () => { mounted.current = false; }; }, [load]);
   // Poll fast while a run is in progress so its result shows up promptly.
   useEffect(() => {
@@ -114,7 +143,7 @@ export default function Automations({ bots, hosts, onOpenSession }: { bots: BotR
   const list = items || [];
   return <div className="page automations-page"><PageHeading title="自动化" note="让 Bot 按计划在后台执行任务，结果写入对话和变更记录。" actions={<Button variant="primary" disabled={!enabledBots.length} onClick={openNew}><Plus size={14}/>新建自动化</Button>}/>
     {error && <Notice error>{error}</Notice>}
-    <p className="automation-note"><CalendarClock size={13}/>后台运行时没有人审批：需要确认的命令会被拒绝，Bot 只能操作这里指定的服务器。时间按 OneFrog 服务器所在时区计算。</p>
+    <p className="automation-note"><CalendarClock size={13}/>后台运行时不会自动放行：需要确认的操作会挂起等待你审批，命令不会执行，任务可以审批后继续。Bot 只能操作这里指定的服务器。时间按 OneFrog 服务器所在时区计算。</p>
     {items === null ? <Empty title="正在读取自动化"/> : !list.length ? <Empty title="还没有自动化" body="例如每天早上让 Bot 检查磁盘和服务状态，或每小时巡检一次日志里的错误。" action={enabledBots.length ? <Button variant="primary" onClick={openNew}><Plus size={14}/>新建自动化</Button> : undefined}/> :
       <div className="automation-list">{list.map(a => {
         const st = a.last_status ? statusNames[a.last_status] : undefined;
@@ -126,15 +155,25 @@ export default function Automations({ bots, hosts, onOpenSession }: { bots: BotR
           </header>
           <p className="automation-prompt">{a.prompt}</p>
           <div className="automation-meta">
-            {st ? <span className={`status ${st[1]}`}><i/>{st[0]}</span> : <span className="status muted"><i/>尚未运行</span>}
+            {a.last_status === 'waiting'
+              ? <span className={`status ${st?.[1] || 'warn'}`}><i/>{waitingText(tasks[a.task_id || ''])}</span>
+              : st ? <span className={`status ${st[1]}`}><i/>{st[0]}</span> : <span className="status muted"><i/>尚未运行</span>}
             <span>下次 <strong className="mono">{a.enabled && a.next_run_at ? fmt(a.next_run_at) : a.enabled ? '—' : '已暂停'}</strong></span>
             <span>上次 <strong className="mono">{fmt(a.last_run_at)}</strong></span>
           </div>
           {a.last_status === 'failed' && a.last_error && <p className="automation-result danger">{a.last_error}</p>}
-          {a.last_status !== 'failed' && a.last_summary && <p className="automation-result">{a.last_summary}</p>}
+          {a.last_status === 'waiting' && <p className="automation-result">{a.task_id && tasks[a.task_id] ? taskStatusText(tasks[a.task_id]) : '这次运行还没结束，等待你处理；打开任务可以查看进度并批准或回答。'}</p>}
+          {a.last_status !== 'failed' && a.last_status !== 'waiting' && a.last_summary && <p className="automation-result">{a.last_summary}</p>}
           <footer className="automation-actions">
             <Button busy={busy || a.last_status === 'running'} disabled={!!working} onClick={() => void act(a, async () => replace(await api.runAutomation(a.id)))}><Play size={13}/>立即运行</Button>
-            {a.session_id && <Button onClick={() => onOpenSession(a.session_id!, a.bot_id)}><MessageSquare size={13}/>查看对话</Button>}
+            {(() => {
+              // The task is the source of truth; the session id may only exist
+              // on the task until the run writes its first message.
+              const sid = a.task_id ? tasks[a.task_id]?.session_id || a.session_id : a.session_id;
+              if (!sid) return null;
+              const waiting = a.last_status === 'waiting';
+              return <Button onClick={() => onOpenSession(sid, a.bot_id)}><MessageSquare size={13}/>{waiting ? '查看并处理任务' : '查看对话'}</Button>;
+            })()}
             <Button variant="ghost" onClick={() => openEdit(a)}><Pencil size={13}/>编辑</Button>
             <Button variant="ghost" disabled={!!working} onClick={() => { setFormError(''); setRemoving(a); }}><Trash2 size={13}/>删除</Button>
           </footer>

@@ -142,7 +142,7 @@ func TestModuleBuilderMigrationAndDevelopLifecycle(t *testing.T) {
 	updCall := toolCall{}
 	updCall.Function.Name = "develop_module"
 	updCall.Function.Arguments = `{"action":"update","id":"打卡","html":"<div>v2</div>"}`
-	if out := agent.execCall(deniedCtx, devBot, credentials{}, "", updCall, false, nil); !strings.Contains(out, "没有修改模块") {
+	if out := agent.execCall(deniedCtx, devBot, credentials{}, "", updCall, false, nil); !strings.Contains(out, "没有修改模块") && !strings.Contains(out, "暂不修改") {
 		t.Fatalf("expected denial, got %q", out)
 	}
 	approvedCtx := context.WithValue(ctx, optionsKey{}, Options{

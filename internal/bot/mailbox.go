@@ -2,7 +2,10 @@ package bot
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
@@ -111,24 +114,62 @@ func (a *Agent) sendMessage(ctx context.Context, speaker model.Bot, serverID str
 		return "对方收件箱不可用"
 	}
 	body := "[来自 " + speaker.Name + "（id=" + speaker.ID + "）] " + a.redact(ctx, msg)
+	opt := options(ctx)
+	job := mailJob{
+		agent:    a,
+		botID:    target.ID,
+		serverID: serverID,
+		hop:      hop(ctx) + 1,
+		ownerID:  opt.OwnerID,
+		mode:     opt.ApprovalMode,
+		route:    opt.ApprovalRoute,
+		excluded: append([]string(nil), opt.ExcludedBotIDs...),
+		// The note is another bot's words, not the user's: the inbox task that
+		// handles it stays untrusted at one hop deeper.
+		untrusted: true,
+		session:   sess.ID,
+		content:   body,
+		requestID: mailRequestID(ctx, speaker.ID, target.ID, call, body),
+	}
+	if a.TasksRunner != nil && a.TasksRunner.Book != nil {
+		// Durable delivery commits the note before it is reported as delivered:
+		// acceptance writes it to the inbox transcript and the runner executes
+		// it asynchronously. A crash after this return cannot lose the note, and
+		// an in-memory queue is never the record of an accepted message.
+		if !a.submitInbox(job) {
+			return "对方收件箱暂时不可用，消息没有送达。稍后重试或改用派工。"
+		}
+		tr.emit(Step{Kind: "message", Bot: speaker.Name, Target: target.Name, Task: msg})
+		return "已送达 " + target.Name + " 的收件箱，对方会在后台处理。不要等待，继续完成你自己的事。"
+	}
+	// Inline fallback (no durable runner): store the note now and hand it to the
+	// volatile queue.
 	if _, err := a.Store.AddMessage(ctx, model.Message{SessionID: sess.ID, Role: "user", FromBot: speaker.ID, Content: body}); err != nil {
 		return "对方收件箱不可用"
 	}
 	tr.emit(Step{Kind: "message", Bot: speaker.Name, Target: target.Name, Task: msg})
 	if a.Mail != nil {
-		opt := options(ctx)
-		a.Mail.enqueue(mailJob{
-			agent:    a,
-			botID:    target.ID,
-			serverID: serverID,
-			hop:      hop(ctx) + 1,
-			ownerID:  opt.OwnerID,
-			mode:     opt.ApprovalMode,
-			route:    opt.ApprovalRoute,
-			excluded: append([]string(nil), opt.ExcludedBotIDs...),
-		})
+		a.Mail.enqueue(job)
 	}
 	return "已送达 " + target.Name + " 的收件箱，对方会在后台处理。不要等待，继续完成你自己的事。"
+}
+
+// mailRequestID is the stable identity of one bot message. Inside a durable
+// task it is derived from the originating task, turn, call and argument hash,
+// so a resumed window reuses the same inbox task instead of sending a second
+// copy. Outside a task it is derived from the originating session and call.
+func mailRequestID(ctx context.Context, speakerID, targetID string, call toolCall, body string) string {
+	hash := argsHash(call)
+	if st := taskFrom(ctx); st != nil {
+		sum := sha256.Sum256([]byte("mail\x00" + st.id + "\x00" + fmt.Sprint(st.turn) + "\x00" + call.ID + "\x00" + hash))
+		return "mail-" + hex.EncodeToString(sum[:10])
+	}
+	session := taskSession(ctx)
+	if session == "" {
+		session = speakerID
+	}
+	sum := sha256.Sum256([]byte("mail\x00" + session + "\x00" + call.ID + "\x00" + hash + "\x00" + body))
+	return "mail-" + hex.EncodeToString(sum[:10])
 }
 
 type mailJob struct {
@@ -140,6 +181,16 @@ type mailJob struct {
 	mode     string
 	route    *preferences.Route
 	excluded []string
+	// untrusted marks a note written by another bot, so the inbox task keeps
+	// the prompt-injection guard across a restart. session/content are the note
+	// already stored in the inbox; a durable submission freezes them exactly as
+	// the synchronous turn would have.
+	untrusted bool
+	session   string
+	content   string
+	// requestID makes the submission idempotent: the same note never creates a
+	// second inbox task, even if the wake is retried.
+	requestID string
 }
 
 // Mailbox runs background inbox turns, at most one at a time per bot.
@@ -192,9 +243,75 @@ func (m *Mailbox) drain(botID string) {
 	}
 }
 
-// wake runs one background turn in the target bot's inbox. Nobody is watching
-// it, so there is no Approver: commands that need confirmation are refused.
+// wake hands one inbox note to the durable task runner, or runs it inline when
+// no runner is wired. Nobody is watching either path, so there is never an
+// Approver: a command that needs confirmation is refused, and the task keeps
+// the "inbox" purpose so ask_user and delegation stay denied.
 func (a *Agent) wake(job mailJob) {
+	if a.submitInbox(job) {
+		return
+	}
+	a.wakeInline(job)
+}
+
+// submitInbox accepts the note as a durable task. It returns false when no
+// runner is available, so the caller falls back to the inline turn.
+func (a *Agent) submitInbox(job mailJob) bool {
+	if a.TasksRunner == nil || a.TasksRunner.Book == nil {
+		return false
+	}
+	content := strings.TrimSpace(job.content)
+	requestID := strings.TrimSpace(job.requestID)
+	if requestID == "" {
+		requestID = inboxRequestID(job.session, job.content)
+	}
+	owner := strings.TrimSpace(job.ownerID)
+	if owner == "" {
+		// The operator who owns the panel is the owner of background work. With
+		// no owner a durable task cannot be attributed, so use the inline path.
+		return false
+	}
+	opt := Options{
+		OwnerID: job.ownerID, ExcludedBotIDs: job.excluded,
+		ApprovalMode: job.mode, ApprovalRoute: job.route, RestrictServers: true,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), inboxTimeout)
+	defer cancel()
+	ctx = context.WithValue(ctx, optionsKey{}, opt)
+	ctx = withTaint(ctx)
+	ctx = withGrants(ctx)
+	ctx = usageContext(ctx, job.botID, "inbox", "")
+	// A background turn is never "off": refuse-at-risk would silently approve.
+	if a.approvalMode(ctx) == preferences.ModeOff {
+		opt.ApprovalMode = preferences.ModeSmart
+	}
+	_, err := a.SubmitTask(ctx, SubmitRequest{
+		OwnerID: job.ownerID, BotID: job.botID, SessionID: job.session,
+		ClientRequestID: requestID, ServerID: job.serverID, Content: content,
+		Title: "收件箱", Options: opt,
+		// Purpose is persisted at creation, so a restart keeps the narrower
+		// inbox capability. The note came from another bot: untrusted, one hop
+		// deeper than the sender.
+		Purpose: "inbox", Hop: job.hop, Untrusted: job.untrusted,
+	})
+	if err != nil {
+		log.Printf("inbox %s: durable submit: %v", job.botID, err)
+		return false
+	}
+	return true
+}
+
+// inboxRequestID is the stable id of one inbox note. The note body and its
+// session identify it, so a retried delivery cannot create a second task.
+func inboxRequestID(session, content string) string {
+	sum := sha256.Sum256([]byte("inbox\x00" + session + "\x00" + content))
+	return "inbox-" + hex.EncodeToString(sum[:16])
+}
+
+// wakeInline runs one background turn in the target bot's inbox. Nobody is
+// watching it, so there is no Approver: commands that need confirmation are
+// refused. It is only used when no durable runner is wired.
+func (a *Agent) wakeInline(job mailJob) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("inbox %s: panic: %v", job.botID, r)

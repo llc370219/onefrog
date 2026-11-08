@@ -1,13 +1,27 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Blocks, Bot, Code2, Eraser, ExternalLink, Plus, Sparkles, Trash2 } from 'lucide-react';
-import { api, type ApprovalDecision, type BotRow, type Choice, type DevModuleRow, type Mod, type SettingsState, type TurnItem } from '../api';
-import { approvalRuleKey } from '../components/ApprovalCard';
+import { api, taskIsActive, type BotRow, type ChatRequest, type Choice, type DevModuleRow, type Mod, type SettingsState, type TaskView, type TurnItem } from '../api';
 import CustomModuleFrame from '../components/CustomModuleFrame';
+import TaskPanel from '../components/TaskPanel';
 import TurnStream from '../components/TurnStream';
+import { chatLines, type MessageRow } from '../lib/chatLines';
+import { clientRequestID, createTask, lifecycleFlag, taskStatusText, useTaskPoll } from '../lib/taskFeed';
 import { Button, Empty, Field, Modal, Notice, PageHeading } from '../components/ui';
 
 const errText = (err: unknown) => (err instanceof Error ? err.message : '操作失败，请重试');
 const fmtTime = (iso?: string) => (iso ? new Date(iso).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '暂无记录');
+
+/**
+ * The build session id is remembered so a page refresh can find the durable
+ * task the runtime is still running. It is an opaque id, never a secret.
+ */
+const SESSION_KEY = 'onefrog-develop-session';
+function readStoredSession() {
+  try { return localStorage.getItem(SESSION_KEY) || ''; } catch { return ''; }
+}
+function storeSession(id: string) {
+  try { if (id) localStorage.setItem(SESSION_KEY, id); } catch { /* storage blocked: the build still runs */ }
+}
 
 const quickPrompts = [
   { label: '打卡记述卡片', prompt: '创建一个打卡模块，功能简单：一张卡片点击即可打卡记录时间，支持填写简短记述备注，并列出最近打卡记录。' },
@@ -170,14 +184,30 @@ export default function Develop({
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState('');
   const [prompt, setPrompt] = useState('');
-  const [building, setBuilding] = useState(false);
+  const [task, setTask] = useState<TaskView | null>(null);
+  const [taskBusy, setTaskBusy] = useState('');
   const [activeStatus, setActiveStatus] = useState('');
   const [timeline, setTimeline] = useState<TurnItem[]>([]);
   const [replyText, setReplyText] = useState('');
   const [choice, setChoice] = useState<{ messageId: string; card: Choice } | null>(null);
   const sessionRef = useRef('');
-  const allowRulesRef = useRef<Set<string>>(new Set());
-  const resolversRef = useRef<Map<string, (dec: ApprovalDecision) => void>>(new Map());
+  // Messages already in the session when this build started; the stream view
+  // only shows what this build wrote, not earlier module work.
+  const baseline = useRef(0);
+  const taskRef = useRef<TaskView | null>(null);
+  const finished = useRef('');
+  // Lifecycle flag: setup sets it true, cleanup false. A StrictMode remount
+  // (cleanup then setup again) must leave it true, or every submit is dropped.
+  const aliveRef = useRef<ReturnType<typeof lifecycleFlag> | null>(null);
+  if (!aliveRef.current) aliveRef.current = lifecycleFlag();
+  const alive = aliveRef.current;
+  useEffect(() => {
+    alive.enter();
+    return () => alive.exit();
+  }, [alive]);
+  // The build is a durable task: the buttons stay disabled while it runs, and a
+  // reload or a dropped connection resumes from the task, not from a socket.
+  const building = Boolean(task && taskIsActive(task));
 
   const [modalMode, setModalMode] = useState<'create' | 'edit' | null>(null);
   const [editId, setEditId] = useState('');
@@ -203,163 +233,181 @@ export default function Develop({
 
   useEffect(() => { void reload(); }, [reload]);
 
-  function decideApproval(id: string, dec: ApprovalDecision) {
-    const fn = resolversRef.current.get(id);
-    if (!fn) return;
-    resolversRef.current.delete(id);
-    setTimeline(cur => cur.map(item => {
-      if (item.kind === 'approval_pending' && item.pending_req?.id === id) {
-        const req = item.pending_req;
-        if (dec.allow && dec.always && !req.untrusted) {
-          allowRulesRef.current.add(approvalRuleKey(req.server_id, req.command));
-        }
-        return {
-          kind: 'approval',
-          approval: {
-            id: req.id,
-            bot_name: req.bot_name || req.bot,
-            server_id: req.server_id,
-            server_name: req.server_name,
-            command: req.command,
-            risk: req.risk,
-            reasons: req.reasons,
-            model_reason: req.model_reason,
-            untrusted: req.untrusted,
-            status: dec.allow ? (dec.always ? 'always' : 'approved') : 'denied',
-          },
-        };
-      }
-      return item;
-    }));
-    setActiveStatus(dec.allow ? '已批准，正在继续执行…' : '已拒绝，正在整理结果…');
-    fn(dec);
+  // Reconnect: a refresh loses the component state but not the durable task, so
+  // the remembered build session is asked for its tasks and the newest one is
+  // adopted. The runtime owns the work, so the build simply continues.
+  useEffect(() => {
+    const sid = readStoredSession();
+    if (!sid) return;
+    let active = true;
+    (async () => {
+      try {
+        const items = await api.tasks(sid);
+        if (!active) return;
+        // Only a build that is still running is restored; finished builds stay
+        // in the chat transcript instead of reappearing on every visit.
+        const next = items.find(taskIsActive);
+        if (!next) return;
+        sessionRef.current = next.session_id || sid;
+        taskRef.current = next;
+        setTask(next);
+        setActiveStatus(taskStatusText(next));
+        // After a refresh the whole session belongs to this build, so the
+        // transcript starts from the beginning instead of a lost baseline.
+        baseline.current = 0;
+        const rows = await api.messages(sessionRef.current).catch(() => null);
+        if (active && rows) applyBuildLines(rows);
+      } catch { /* the build page still works; the next submit creates a task */ }
+    })();
+    return () => { active = false; };
+  }, []);
+
+  /**
+   * Reads the build transcript the runtime wrote. Nothing is invented here: the
+   * assistant text, question card and step timeline are the stored messages of
+   * the session this task owns.
+   */
+  function applyBuildLines(rows: MessageRow[]) {
+    // Only what this build added: earlier module work stays out of the panel.
+    const fresh = rows.slice(baseline.current);
+    const lines = chatLines(fresh);
+    const botLines = lines.filter(l => l.who === 'bot');
+    const last = botLines[botLines.length - 1];
+    const timelineItems = fresh.flatMap(r => r.timeline || []);
+    setTimeline(timelineItems);
+    setReplyText(last?.text || '');
+    setChoice(last?.choice && last.id && !last.choice.answer ? { messageId: last.id, card: last.choice } : null);
   }
 
-  async function runStream(reqBody: Parameters<typeof api.chatLive>[0]) {
-    const localItems: TurnItem[] = [];
-    const sync = () => setTimeline([...localItems]);
-    return api.chatLive({ ...reqBody, mode: 'direct' }, {
-      onSay: (bot, content) => {
-        if (content.trim()) {
-          localItems.push({ kind: 'say', bot, text: content.trim() });
-          setActiveStatus('正在继续编写模块…');
-          sync();
-        }
-      },
-      onApproval: req => {
-        const key = approvalRuleKey(req.server_id, req.command);
-        if (!req.untrusted && allowRulesRef.current.has(key)) {
-          return Promise.resolve({ allow: true, always: true });
-        }
-        localItems.push({ kind: 'approval_pending', pending_req: req });
-        setActiveStatus('等待你在卡片确认…');
-        sync();
-        return new Promise<ApprovalDecision>(resolve => {
-          resolversRef.current.set(req.id, dec => {
-            const idx = localItems.findIndex(x => x.kind === 'approval_pending' && x.pending_req?.id === req.id);
-            if (idx >= 0) {
-              localItems[idx] = {
-                kind: 'approval',
-                approval: {
-                  id: req.id,
-                  bot_name: req.bot_name || req.bot,
-                  server_id: req.server_id,
-                  server_name: req.server_name,
-                  command: req.command,
-                  risk: req.risk,
-                  reasons: req.reasons,
-                  model_reason: req.model_reason,
-                  untrusted: req.untrusted,
-                  status: dec.allow ? (dec.always ? 'always' : 'approved') : 'denied',
-                },
-              };
-              sync();
-            }
-            resolve(dec);
-          });
-        });
-      },
-      onApprovalResolved: card => {
-        const idx = localItems.findIndex(
-          x => (x.kind === 'approval' && x.approval?.id === card.id) || (x.kind === 'approval_pending' && x.pending_req?.id === card.id)
-        );
-        if (idx >= 0) localItems[idx] = { kind: 'approval', approval: card };
-        else localItems.push({ kind: 'approval', approval: card });
-        sync();
-      },
-      onApprovalTimeout: id => {
-        const fn = resolversRef.current.get(id);
-        if (fn) { resolversRef.current.delete(id); fn({ allow: false }); }
-      },
-      onStep: step => {
-        if (step.kind === 'delegate') {
-          localItems.push({ kind: 'delegate', bot: step.bot, target: step.target, task: step.task });
-          setActiveStatus('已派给「' + (step.target || '协作 Bot') + '」处理…');
-        } else if (step.kind === 'message') {
-          localItems.push({ kind: 'message', bot: step.bot, target: step.target, task: step.task });
-          setActiveStatus('已给「' + (step.target || 'Bot') + '」发消息，正在继续…');
-        } else {
-          localItems.push({ kind: 'step', bot: step.bot, command: step.command, server_id: step.server, ok: step.ok, output: step.output });
-          setActiveStatus('已完成：' + (step.command || '模块构建') + '，正在收尾…');
-        }
-        sync();
-      },
-    });
-  }
+  // Only an unfinished build needs polling; the tick that observes a terminal
+  // state applies it, so the loop stops instead of re-reading a dead task.
+  useTaskPoll(Boolean(task && taskIsActive(task)), 3000, async isCurrent => {
+    const id = taskRef.current?.id;
+    if (!id) return;
+    const next = await api.task(id);
+    // The page may have switched sessions, dismissed the card or unmounted
+    // while this read was in flight; a stale view must not be applied.
+    if (!isCurrent() || taskRef.current?.id !== id) return;
+    taskRef.current = next;
+    setTask(next);
+    setActiveStatus(taskStatusText(next));
+    const sessionID = next.session_id || sessionRef.current;
+    const rows = sessionID ? await api.messages(sessionID).catch(() => null) : null;
+    if (!isCurrent() || taskRef.current?.id !== id) return;
+    if (rows) applyBuildLines(rows);
+    // A finished build is announced once, then the module list is refreshed.
+    if (!taskIsActive(next) && finished.current !== next.id + next.status) {
+      finished.current = next.id + next.status;
+      await reload();
+      if (!isCurrent()) return;
+      await onChanged();
+    }
+  }, [task?.id]);
 
   async function runBuild(text: string) {
     const trimmed = text.trim();
     if (!trimmed || building || !ready.ok) return;
-    setBuilding(true);
     setActiveStatus('正在构思与编写模块…');
     setError('');
     setReplyText('');
     setChoice(null);
     setTimeline([]);
-    try {
-      const res = await runStream({ content: trimmed, session_id: sessionRef.current, bot_id: ready.botId, approval_mode: 'default' });
-      sessionRef.current = res.session_id || sessionRef.current;
-      if (res.timeline?.length) setTimeline(res.timeline);
-      setReplyText(res.text);
-      if (res.choice && res.message_id) {
-        setChoice({ messageId: res.message_id, card: res.choice });
-      }
+    // The build is a durable task, so a dropped connection or a page refresh
+    // resumes it instead of losing the work the operator just asked for.
+    const body: ChatRequest = { content: trimmed, session_id: sessionRef.current, bot_id: ready.botId, mode: 'direct', approval_mode: 'default', client_request_id: clientRequestID() };
+    // Count the messages already stored, so the panel only shows this build.
+    const before = sessionRef.current ? await api.messages(sessionRef.current).catch(() => []) : [];
+    if (!alive.current) return;
+    baseline.current = before.length;
+    // One submission call: at most two POSTs with the same client_request_id.
+    const result = await createTask(body);
+    if (!alive.current) return;
+    if (result.ok) {
+      adopt(result.task);
       setPrompt('');
-      await reload();
-      await onChanged();
-    } catch (err) {
-      setError(errText(err));
-    } finally {
-      setBuilding(false);
+    } else {
+      setError(errText(result.error));
     }
   }
 
   async function answerBuildChoice(values: string[], custom: string) {
-    if (!choice || building || !sessionRef.current) return;
-    setBuilding(true);
+    // Answering the exact card the runtime is waiting on is allowed even though
+    // the task is active: `waiting_user` is precisely the state that needs it.
+    if (!choice || choice.card.answer || !sessionRef.current) return;
+    if (taskRef.current?.status !== 'waiting_user' && building) return;
     setActiveStatus('收到选择，正在继续构建…');
     const cardID = choice.messageId;
     setChoice({ ...choice, card: { ...choice.card, answer: { values, custom: custom.trim() || undefined } } });
-    try {
-      const res = await runStream({
-        content: '',
-        session_id: sessionRef.current,
-        bot_id: ready.botId,
-        approval_mode: 'default',
-        choice_answer: { message_id: cardID, values, custom: custom.trim() || undefined },
-      });
-      if (res.timeline?.length) setTimeline(res.timeline);
-      setReplyText(res.text);
-      setChoice(res.choice && res.message_id ? { messageId: res.message_id, card: res.choice } : null);
-      await reload();
-      await onChanged();
-    } catch (err) {
-      setError(errText(err));
-    } finally {
-      setBuilding(false);
+    const body: ChatRequest = {
+      content: '',
+      session_id: sessionRef.current,
+      bot_id: ready.botId,
+      mode: 'direct',
+      approval_mode: 'default',
+      choice_answer: { message_id: cardID, values, custom: custom.trim() || undefined },
+      client_request_id: clientRequestID(),
+    };
+    // The answer resumes the same task; the response is that task's view.
+    const result = await createTask(body);
+    if (!alive.current) return;
+    if (result.ok) {
+      adopt(result.task);
+    } else {
+      setError(errText(result.error));
+      setChoice(choice);
     }
   }
 
+  /** Adopts a task returned by a submission: same task, same session. */
+  function adopt(next: TaskView) {
+    sessionRef.current = next.session_id || sessionRef.current;
+    storeSession(sessionRef.current);
+    applyTask(next);
+  }
+  /** Applies a task returned by a control call without waiting for the next poll. */
+  function applyTask(next: TaskView) {
+    taskRef.current = next;
+    setTask(next);
+    setActiveStatus(taskStatusText(next));
+  }
+  async function taskAction(id: string, action: 'pause' | 'resume' | 'cancel') {
+    setTaskBusy(id + ':' + action);
+    try {
+      applyTask(await api.taskAction(id, action));
+    } catch (err) {
+      setError(errText(err));
+    } finally {
+      setTaskBusy('');
+    }
+  }
+  async function taskGuide(id: string, content: string) {
+    setTaskBusy(id + ':guide');
+    try {
+      applyTask(await api.guideTask(id, content));
+    } catch (err) {
+      setError(errText(err));
+    } finally {
+      setTaskBusy('');
+    }
+  }
+  async function taskApproval(id: string, approvalID: string, allow: boolean) {
+    setTaskBusy(id + ':' + approvalID);
+    try {
+      applyTask(await api.decideTaskApproval(id, approvalID, allow));
+    } catch (err) {
+      setError(errText(err));
+    } finally {
+      setTaskBusy('');
+    }
+  }
+  function dismissTask() {
+    taskRef.current = null;
+    setTask(null);
+    setActiveStatus('');
+    setReplyText('');
+    setChoice(null);
+    setTimeline([]);
+  }
   function submitPrompt(e: FormEvent) {
     e.preventDefault();
     void runBuild(prompt);
@@ -486,6 +534,18 @@ export default function Develop({
             </form>
           </>
         )}
+        {task && (
+          <TaskPanel
+            tasks={[task]}
+            bots={bots}
+            busy={taskBusy}
+            settings={settings}
+            onAction={taskAction}
+            onGuide={taskGuide}
+            onApproval={taskApproval}
+            onDismiss={dismissTask}
+          />
+        )}
         {(building || timeline.length > 0 || replyText || choice) && (
           <div className="operator-result" aria-live="polite">
             <TurnStream
@@ -494,9 +554,10 @@ export default function Develop({
               pending={building}
               activeStatus={activeStatus}
               choice={choice?.card}
-              disabled={building}
+              // A waiting_user task still needs its card answered; only a task
+              // that is busy on its own must lock the card.
+              disabled={building && task?.status !== 'waiting_user'}
               animateFinal={!building}
-              onDecideApproval={decideApproval}
               onAnswerChoice={answerBuildChoice}
             />
           </div>

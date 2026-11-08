@@ -26,9 +26,25 @@ const MaxFile = 256 << 10
 type Target struct {
 	ServerID string `json:"server_id"`
 	Root     string `json:"root"`
+	// Kind selects the workspace type: "ssh" (default, backward compatible)
+	// or "local" (native, operator-allowlisted root on the OneFrog server
+	// itself). For local, ServerID is always "local".
+	Kind string `json:"kind,omitempty"`
 }
 
+// IsLocal reports whether the target is a native local workspace.
+func (t Target) IsLocal() bool { return t.Kind == "local" }
+
 func (t Target) Validate() error {
+	if t.Kind == "local" {
+		if t.ServerID != "local" {
+			return errors.New("本地工作区的 server_id 必须是 local")
+		}
+		if len(t.Root) > 1024 || !path.IsAbs(t.Root) || t.Root == "/" || path.Clean(t.Root) != t.Root || strings.ContainsFunc(t.Root, unicode.IsControl) {
+			return errors.New("本地工作区需要允许列表内的绝对路径")
+		}
+		return nil
+	}
 	if t.ServerID == "" || len(t.ServerID) > 100 || strings.ContainsFunc(t.ServerID, unicode.IsControl) {
 		return errors.New("请选择工作区所在的服务器")
 	}

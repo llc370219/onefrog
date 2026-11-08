@@ -70,7 +70,7 @@ export default function SecondaryNav({ view, bots, sessions, mods, activeBot, se
         );
       })}
       {!filteredBots.length && <p className="directory-empty">{query ? '没有匹配的 Bot' : '还没有 Bot'}</p>}
-      <div className="directory-section-title conversation-section"><span>群聊</span><small>{filteredGroups.length}</small></div>
+      <div className="directory-section-title conversation-section"><span>隔离项目</span><small>{filteredGroups.length}</small></div>
       {filteredGroups.map(s => {
         const members = s.options?.workspace ? bots.filter(b => b.id === s.bot_id) : groupMembers(bots, s.bot_id, s.options?.excluded_bot_ids);
         return (
@@ -79,11 +79,11 @@ export default function SecondaryNav({ view, bots, sessions, mods, activeBot, se
               <strong>{s.title}</strong>
               <span><AvatarStack bots={bots} members={members}/><small>{members.length} 个 Bot</small><time>{when(s.updated_at)}</time></span>
             </button>
-            <IconButton label={`删除群聊 ${s.title}`} disabled={disabled} onClick={() => onDelete(s)}><Trash2 size={13}/></IconButton>
+            <IconButton label={`删除隔离项目 ${s.title}`} disabled={disabled} onClick={() => onDelete(s)}><Trash2 size={13}/></IconButton>
           </div>
         );
       })}
-      {!filteredGroups.length && <p className="directory-empty">{query ? '没有匹配的群聊' : '点上方「新建群聊」拉几个 Bot 一起协作。'}</p>}
+      {!filteredGroups.length && <p className="directory-empty">{query ? '没有匹配的隔离项目' : '点上方「新建隔离项目」拉几个 Bot 一起协作。'}</p>}
     </>
   );
 
@@ -102,13 +102,13 @@ export default function SecondaryNav({ view, bots, sessions, mods, activeBot, se
     <aside className="secondary-nav" aria-label={view === 'chat' ? 'AI 助理二级目录' : '模块二级目录'}>
       <header><div><h2>{view === 'chat' ? 'AI 助理' : '模块'}</h2></div><IconButton label="收起二级目录" onClick={onClose}><ArrowLeft size={16}/></IconButton></header>
       {view === 'chat' && (
-        <button className={`new-conversation ${mode === 'team' && !session ? 'selected' : ''}`} onClick={onNew} disabled={disabled} title="选几个 Bot 建一个群聊">
-          <Users size={16}/><span>新建群聊<small>选几个 Bot 一起协作</small></span><Plus size={14}/>
+        <button className={`new-conversation ${mode === 'team' && !session ? 'selected' : ''}`} onClick={onNew} disabled={disabled} title="选几个 Bot 建一个隔离项目">
+          <Users size={16}/><span>新建隔离项目<small>选几个 Bot 一起协作</small></span><Plus size={14}/>
         </button>
       )}
-      <label className="directory-search"><Search size={15}/><input aria-label={view === 'chat' ? '搜索 Bot 和群聊' : '搜索模块'} placeholder={view === 'chat' ? '搜索 Bot 和群聊' : '搜索模块'} value={query} onChange={e => setQuery(e.target.value)}/></label>
+      <label className="directory-search"><Search size={15}/><input aria-label={view === 'chat' ? '搜索 Bot 和隔离项目' : '搜索模块'} placeholder={view === 'chat' ? '搜索 Bot 和隔离项目' : '搜索模块'} value={query} onChange={e => setQuery(e.target.value)}/></label>
       <div className="directory-scroll">{view === 'chat' ? chat : modules}</div>
-      <footer>{view === 'chat' ? '点 Bot 进入单聊，历史会保留；新建群聊可拉多个 Bot 协作。' : '点开模块进入对应面板，或在自定义模块中创建新功能。'}</footer>
+      <footer>{view === 'chat' ? '点 Bot 进入单聊，历史会保留；新建隔离项目可拉多个 Bot 协作。' : '点开模块进入对应面板，或在自定义模块中创建新功能。'}</footer>
     </aside>
   );
 }

@@ -23,12 +23,18 @@ type Review struct {
 	ProviderID string `json:"provider_id"`
 	Model      string `json:"model"`
 	Mode       string `json:"mode"`
+	// Pending marks an ask that could not be answered yet: the call did not
+	// run and must not be recorded as a completed denial.
+	Pending bool `json:"pending,omitempty"`
 	// Smart-approval details, kept in the audit history.
 	Findings    []audit.Finding `json:"findings,omitempty"`
 	ModelRisk   string          `json:"model_risk,omitempty"`
 	ModelReason string          `json:"model_reason,omitempty"`
 	Untrusted   string          `json:"untrusted,omitempty"`
 }
+
+// approvalTimeout bounds the independent approval model call.
+const approvalTimeout = 25 * time.Second
 
 func (a *Agent) credentialsFor(ctx context.Context, b model.Bot, worker bool) (model.Bot, credentials, error) {
 	if a.Settings != nil {
@@ -129,16 +135,14 @@ func (a *Agent) assess(ctx context.Context, command, modelRisk, modelReason stri
 }
 
 // askOperator shows the approval card and waits for the operator. Without an
-// interactive transport the command is refused, never silently allowed.
+// interactive transport the call is parked (pending), never silently allowed
+// and never recorded as a completed denial.
 func (a *Agent) askOperator(ctx context.Context, botID string, rec store.ServerRec, command, mode string, g riskGate) Review {
 	review := Review{Mode: mode, Risk: g.Level, Findings: g.Findings, ModelRisk: g.ModelRisk, ModelReason: g.ModelReason, Untrusted: g.Untrusted}
 	approver := options(ctx).Approver
 	if approver == nil {
-		if mode == preferences.ModeManual {
-			review.Reason = "需要人工确认：请在网页的实时对话中操作（当前连接无法弹出确认）"
-		} else {
-			review.Reason = "这条命令有风险，需要用户确认，但当前连接无法弹出确认；请在网页的实时对话中操作"
-		}
+		review.Pending = true
+		review.Reason = "等待用户审批：当前连接无法弹出确认，未执行"
 		a.recordReview(ctx, botID, rec.ID, command, review)
 		return review
 	}
@@ -152,7 +156,29 @@ func (a *Agent) askOperator(ctx context.Context, botID string, rec store.ServerR
 	if len(g.Findings) > 0 {
 		req.Warning = g.Findings[0].Label + "：" + g.Findings[0].Detail
 	}
+	if consumePermit(ctx, req) {
+		// The operator already allowed exactly this call: do not ask again.
+		review.Allow = true
+		review.Reason = "用户已批准本次操作"
+		a.recordReview(ctx, botID, rec.ID, command, review)
+		return review
+	}
 	allow, reason := approver(ctx, req)
+	if !allow && (reason == askSentinel || strings.HasPrefix(reason, askSentinel) || reason == pendingSentinel) {
+		// The durable approver parked the call: not executed, not denied.
+		review.Pending = true
+		review.Reason = "等待用户审批：操作已挂起，未执行"
+		if tr := traceFrom(ctx); tr != nil {
+			tr.emit(Step{Kind: "approval", Bot: req.BotName, Approval: &model.ApprovalCard{
+				ID: req.ID, BotName: req.BotName, ServerID: req.ServerID, ServerName: req.ServerName,
+				Command: a.redact(ctx, req.Command), Mode: req.Mode, Risk: req.Risk,
+				Reasons: a.redactReasons(ctx, req.Reasons), ModelReason: a.redact(ctx, req.ModelReason),
+				Untrusted: a.redact(ctx, req.Untrusted), Status: "pending",
+			}})
+		}
+		a.recordReview(ctx, botID, rec.ID, command, review)
+		return review
+	}
 	if g.SingleUse && reason == "always" {
 		reason = "用户已批准本次操作"
 	}
@@ -187,10 +213,6 @@ func (a *Agent) askOperator(ctx context.Context, botID string, rec store.ServerR
 		}
 	}
 	if tr := traceFrom(ctx); tr != nil {
-		redactedReasons := make([]string, 0, len(req.Reasons))
-		for _, r := range req.Reasons {
-			redactedReasons = append(redactedReasons, a.redact(ctx, r))
-		}
 		card := &model.ApprovalCard{
 			ID:          req.ID,
 			BotName:     req.BotName,
@@ -199,7 +221,7 @@ func (a *Agent) askOperator(ctx context.Context, botID string, rec store.ServerR
 			Command:     a.redact(ctx, req.Command),
 			Mode:        req.Mode,
 			Risk:        req.Risk,
-			Reasons:     redactedReasons,
+			Reasons:     a.redactReasons(ctx, req.Reasons),
 			ModelReason: a.redact(ctx, req.ModelReason),
 			Untrusted:   a.redact(ctx, req.Untrusted),
 			Status:      cardStatus,
@@ -211,66 +233,25 @@ func (a *Agent) askOperator(ctx context.Context, botID string, rec store.ServerR
 	return review
 }
 
-// approve handles the advanced "model" and "plan" modes.
-func (a *Agent) approve(ctx context.Context, botID, serverID, command string, g riskGate) Review {
-	review := Review{Mode: a.approvalMode(ctx), Risk: g.Level, Findings: g.Findings, ModelRisk: g.ModelRisk, ModelReason: g.ModelReason}
-	if a.Settings == nil {
-		review.Reason = "未配置审批"
-		a.recordReview(ctx, botID, serverID, command, review)
-		return review
+func (a *Agent) redactReasons(ctx context.Context, reasons []string) []string {
+	out := make([]string, 0, len(reasons))
+	for _, r := range reasons {
+		out = append(out, a.redact(ctx, r))
 	}
-	state := a.Settings.Snapshot()
-	if route := options(ctx).ApprovalRoute; route != nil && review.Mode == preferences.ModeModel {
-		state.Approval.Route = *route
-	}
-	switch review.Mode {
-	case preferences.ModePlan:
-		review.Reason = "仅规划模式，不执行远程命令"
-	case preferences.ModeModel:
-		review.ProviderID = state.Approval.Route.ProviderID
-		review.Model = state.Approval.Route.Model
-		p, err := a.Settings.Provider(review.ProviderID)
-		if err != nil {
-			review.Reason = "审批渠道不可用"
-			break
-		}
-		key := ""
-		if !strings.HasPrefix(p.AuthKind, "oauth-") {
-			key, err = a.Settings.Key(p.ID)
-		}
-		if err != nil {
-			review.Reason = "审批密钥无法解密"
-			break
-		}
-		request, _ := ctx.Value(taskKey{}).(string)
-		payload, _ := json.Marshal(map[string]any{"user_request": a.redact(ctx, request), "server_id": serverID, "command": a.redact(ctx, command), "rule_check": g.Reasons})
-		system := promptReviewer
-		if state.Approval.Instructions != "" {
-			system += "\n用户额外限制：" + a.redact(ctx, state.Approval.Instructions)
-		}
-		checkCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
-		checkCtx = usageContext(checkCtx, botID, "approval", p.ID)
-		msg, err := a.chat(checkCtx, p.BaseURL, review.Model, key, []map[string]any{{"role": "system", "content": system}, {"role": "user", "content": string(payload)}}, nil)
-		cancel()
-		if err != nil {
-			review.Reason = "审批模型调用失败，已停止执行"
-			break
-		}
-		parsed, err := parseReview(msg.Content)
-		if err != nil {
-			review.Reason = "审批结果无效，已停止执行"
-			break
-		}
-		review.Allow = parsed.Allow
-		review.Risk = parsed.Risk
-		review.Reason = a.redact(ctx, clip(parsed.Reason, 300))
-	default:
-		review.Reason = "未知审批模式，已停止执行"
-	}
-	a.recordReview(ctx, botID, serverID, command, review)
-	return review
+	return out
 }
-func parseReview(text string) (Review, error) {
+
+// reviewVerdict is the independent approval model's answer. Risk is evidence
+// only: an allow with a high risk level is still an allow.
+type reviewVerdict struct {
+	Decision string // allow, deny, ask
+	Risk     string
+	Reason   string
+}
+
+// parseReview accepts the three-state decision and the legacy bool form.
+// Anything it cannot parse is an error, which the caller turns into an ask.
+func parseReview(text string) (reviewVerdict, error) {
 	text = strings.TrimSpace(text)
 	if strings.HasPrefix(text, "```") {
 		lines := strings.Split(text, "\n")
@@ -279,20 +260,46 @@ func parseReview(text string) (Review, error) {
 		}
 	}
 	var raw struct {
-		Allow  *bool  `json:"allow"`
-		Risk   string `json:"risk"`
-		Reason string `json:"reason"`
+		Decision *string `json:"decision"`
+		Allow    *bool   `json:"allow"`
+		Risk     string  `json:"risk"`
+		Reason   string  `json:"reason"`
 	}
-	if json.Unmarshal([]byte(text), &raw) != nil || raw.Allow == nil || strings.TrimSpace(raw.Reason) == "" || (raw.Risk != "low" && raw.Risk != "medium" && raw.Risk != "high") {
-		return Review{}, errors.New("invalid verdict")
+	if json.Unmarshal([]byte(text), &raw) != nil || strings.TrimSpace(raw.Reason) == "" {
+		return reviewVerdict{}, errors.New("invalid verdict")
 	}
-	return Review{Allow: *raw.Allow && raw.Risk != "high", Risk: raw.Risk, Reason: raw.Reason}, nil
+	decision := ""
+	if raw.Decision != nil {
+		decision = strings.ToLower(strings.TrimSpace(*raw.Decision))
+	} else if raw.Allow != nil {
+		// Legacy bool models: allow=true is an allow even when risk is high.
+		if *raw.Allow {
+			decision = "allow"
+		} else {
+			decision = "deny"
+		}
+	}
+	switch decision {
+	case "allow", "deny", "ask":
+	default:
+		return reviewVerdict{}, errors.New("invalid decision")
+	}
+	risk := strings.ToLower(strings.TrimSpace(raw.Risk))
+	if risk == "" {
+		risk = "medium"
+	}
+	if _, ok := riskRank[risk]; !ok {
+		return reviewVerdict{}, errors.New("invalid risk")
+	}
+	return reviewVerdict{Decision: decision, Risk: risk, Reason: raw.Reason}, nil
 }
 func (a *Agent) recordReview(ctx context.Context, botID, serverID, command string, review Review) {
 	command = a.redact(ctx, command)
 	raw, _ := json.Marshal(review)
 	status := "approval_denied"
-	if review.Allow {
+	if review.Pending {
+		status = "approval_pending"
+	} else if review.Allow {
 		status = "approval_allowed"
 	}
 	_, _ = a.Store.AddHistory(ctx, store.HistoryRec{History: model.History{BotID: botID, ServerID: serverID, Action: "审批：" + command, Command: command, Status: status}, Snapshot: string(raw)})

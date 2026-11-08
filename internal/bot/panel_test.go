@@ -491,8 +491,8 @@ func TestUnselectedServerAndVaultNeedAGate(t *testing.T) {
 	call := callPanel(panelArgs(map[string]any{"server_id": "web", "command": "df -h", "risk": "low", "reason": "check"}))
 	call.Function.Name = "run_command"
 	ev := agent.runTool(ctx, "main", "", call)
-	if ev.OK || !strings.Contains(ev.Output, "未手动选择") {
-		t.Fatal(ev.Output)
+	if ev.OK || !(strings.Contains(ev.Output, "未手动选择") || strings.Contains(ev.Output, "不是本轮手动选中")) {
+		t.Fatalf("ev=%+v output=%q mode=%q", ev, ev.Output, agent.approvalMode(ctx))
 	}
 	saved, _ := mem.GetServer(ctx, "web")
 	if saved.Status == "online" {

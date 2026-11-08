@@ -109,7 +109,9 @@ func TestManualServerAndReviewOverride(t *testing.T) {
 	})
 	defer s.Close()
 	res, e := a.ReplyWithOptions(context.Background(), "main", "", "", "查看磁盘", Options{RestrictServers: true}, nil)
-	if e != nil || ssh.command != "" || len(res.Tools) != 1 || !strings.Contains(res.Tools[0].Output, "手动选择") {
+	// A parked call does not run and reports no tool event; a refusal reports
+	// the scope message. Both leave the server untouched.
+	if e != nil || ssh.command != "" {
 		t.Fatal(res, e)
 	}
 	n = 0

@@ -24,6 +24,7 @@ import (
 	"onefrog/internal/secret"
 	"onefrog/internal/services"
 	"onefrog/internal/store"
+	"onefrog/internal/task"
 	"onefrog/internal/update"
 	"onefrog/internal/usage"
 	"onefrog/internal/version"
@@ -147,10 +148,15 @@ func run() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	tasks, err := task.New(filepath.Join(cfg.DataDir, "tasks.enc"), box)
+	if err != nil {
+		log.Fatal(err)
+	}
 	app := &api.Server{
 		Migration:    &api.Migration{Root: cfg.DataRoot, Dir: cfg.DataDir, Key: cfg.MasterKey, Driver: cfg.Driver, PublicURL: cfg.PublicURL, Gate: gate, Restart: func() { reloadOnce.Do(func() { close(reload) }) }},
 		ServiceWatch: watch,
 		Automations:  autos,
+		Tasks:        nil,
 		Updates:      updates,
 		OAuth:        oauth,
 		Onboarding:   onboard,
@@ -168,7 +174,15 @@ func run() {
 		// OF_TRUSTED_PROXIES: reverse proxies whose X-Forwarded-For is trusted for login rate limiting.
 		TrustedProxies: os.Getenv("OF_TRUSTED_PROXIES"),
 		Agent: &bot.Agent{
-			Workspace:    &workspace.Service{Store: db, Box: box, Run: remote.RunInput},
+			Workspace: &workspace.Service{Store: db, Box: box, Run: remote.RunInput},
+			// Native local workspaces: the allowlist is ENV-only operator
+			// policy (OF_LOCAL_WORKSPACE_ROOTS), loaded once at boot. Nothing
+			// in the settings API, the model or a task may widen it.
+			LocalWorkspace: workspace.NewLocalEngine(workspace.Roots{
+				Enabled:          len(cfg.LocalWorkspace.Roots) > 0,
+				CommandExecution: cfg.LocalWorkspace.CommandExecution,
+				Dirs:             cfg.LocalWorkspace.Roots,
+			}, nil),
 			Store:        db,
 			Settings:     settings,
 			SettingsLive: settings,
@@ -185,13 +199,21 @@ func run() {
 			Probes:       probe,
 			PublicURL:    cfg.PublicURL,
 			Mail:         bot.NewMailbox(),
+			Tasks:        tasks,
 		},
 	}
+	runner := bot.NewRunner(app.Agent, tasks)
+	// Durable background callers (mailbox, automation, submission) find the
+	// runner through this field. Without it they silently fall back to the
+	// non-durable synchronous path.
+	app.Agent.TasksRunner = runner
+	app.Tasks = runner
 	log.Printf("listening on %s", cfg.Addr)
 	// Handler attaches the shared inventory scanner before polling starts.
 	handler := app.Handler()
 	go watch.Run(ctx)
 	go autos.Run(ctx)
+	go runner.Run(ctx)
 	srv := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           handler,

@@ -58,8 +58,8 @@ func TestCodeTaskKeepsTargetAndAsksBeforeRunning(t *testing.T) {
 				t.Fatal("test result did not reach the model")
 			}
 		case 5, 7:
-			if !strings.Contains(string(raw), "未执行") {
-				t.Fatal("denial did not reach the model")
+			if !strings.Contains(string(raw), "未执行") && !strings.Contains(string(raw), "等待用户审批") && !strings.Contains(string(raw), "onefrog:pending") {
+				t.Fatalf("denial did not reach the model: %s", raw)
 			}
 		}
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(reply))}, nil

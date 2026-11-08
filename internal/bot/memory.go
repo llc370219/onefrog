@@ -10,6 +10,12 @@ import (
 )
 
 func (a *Agent) Remember(ctx context.Context, botID, title, body, source string) (model.BotMemory, error) {
+	// A project turn owns an isolated, project-wide memory. Private bot memory
+	// is out of scope there: not readable and not writable, even through a
+	// direct call such as the memory API.
+	if projectID(ctx) != "" {
+		return model.BotMemory{}, errString("隔离项目只读写项目记忆，不写入 Bot 私有记忆")
+	}
 	title = a.redact(ctx, title)
 	body = a.redact(ctx, body)
 	if strings.Contains(title, "敏感内容检查失败") || strings.Contains(body, "敏感内容检查失败") {
@@ -63,14 +69,16 @@ func (a *Agent) recallCall(ctx context.Context, speaker model.Bot, call toolCall
 			return "没有这个 Bot"
 		}
 		if found.ID != speaker.ID {
-			if isWorker(ctx) {
+			// No role may read another bot's private memory directly. The
+			// leader is not an exception: conclusions cross bots through an
+			// explicit delegation or message handoff, never a shared pool.
+			switch {
+			case isWorker(ctx):
 				return "协作 Bot 只能读取自己的记忆。需要别人的结论时，写进交给主控的结论。"
-			}
-			if isDirect(ctx) {
+			case isDirect(ctx):
 				return "独立对话只能读取自己的记忆。需要别人的结论时，用 ask_agent 问它。"
-			}
-			if !a.allowedBot(ctx, found.ID) {
-				return "该 Bot 已停用或被排除"
+			default:
+				return "只能读取自己的记忆。其他 Bot 的私有记忆需要它通过派工或消息交接给你。"
 			}
 		}
 		target = found
@@ -79,6 +87,11 @@ func (a *Agent) recallCall(ctx context.Context, speaker model.Bot, call toolCall
 }
 
 func (a *Agent) formatMemories(ctx context.Context, bot model.Bot) string {
+	// Defense in depth: a project turn never falls back to private notes, even
+	// if a future caller reaches this helper directly.
+	if projectID(ctx) != "" {
+		return a.projectMemory(ctx, 20)
+	}
 	items, err := a.Store.ListBotMemories(ctx, bot.ID)
 	if err != nil {
 		return "读取记忆失败"
@@ -103,6 +116,12 @@ func (a *Agent) formatMemories(ctx context.Context, bot model.Bot) string {
 }
 
 func (a *Agent) writeOwnMemory(b *strings.Builder, ctx context.Context, bot model.Bot) {
+	// Defense in depth: in a project turn the only visible notes are project
+	// notes, never this bot's private memory.
+	if projectID(ctx) != "" {
+		b.WriteString(a.projectMemory(ctx, 8) + "\n")
+		return
+	}
 	items, err := a.Store.ListBotMemories(ctx, bot.ID)
 	if err != nil || len(items) == 0 {
 		b.WriteString("你还没有自己的记忆。查到会反复用到的结论时调用 remember。\n")
@@ -123,40 +142,17 @@ func (a *Agent) writePeerMemory(b *strings.Builder, ctx context.Context, self st
 	if projectID(ctx) != "" {
 		return
 	}
-	bots, err := a.Store.ListBots(ctx)
-	if err != nil {
-		return
-	}
-	wrote := false
-	for _, item := range bots {
-		if item.ID == self || !a.allowedBot(ctx, item.ID) {
-			continue
-		}
-		if !wrote {
-			b.WriteString("各 Bot 最近记住的标题（正文用 recall，bot_id 填名称或 id）：\n")
-			wrote = true
-		}
-		items, err := a.Store.ListBotMemories(ctx, item.ID)
-		if err != nil || len(items) == 0 {
-			fmt.Fprintf(b, "- %s：尚无记忆\n", item.Name)
-			continue
-		}
-		titles := make([]string, 0, 5)
-		for i, mem := range items {
-			if i == 5 {
-				break
-			}
-			titles = append(titles, mem.Title)
-		}
-		fmt.Fprintf(b, "- %s：%s\n", item.Name, strings.Join(titles, "；"))
-	}
+	// Peer private memory, including note titles, is never inlined. A bot can
+	// only learn another bot's conclusions when that bot hands them over
+	// through ask_agent or message_agent.
+	b.WriteString("看不到其他 Bot 的私有记忆或笔记标题。需要它们的结论时，用 ask_agent 派工或 message_agent 交接；不要把别人的记忆当成共享池。\n")
 }
 
 var rememberTool = map[string]any{
 	"type": "function",
 	"function": map[string]any{
 		"name":        "remember",
-		"description": "把一条结论写入当前工作范围的记忆：群聊记入项目，单聊记入自己的记忆。同一标题会覆盖旧内容。不要写入密码、私钥或 API Key。",
+		"description": "把一条结论写入当前工作范围的记忆：隔离项目记入项目记忆，单聊记入自己的私有记忆。隔离项目不读写任何 Bot 私有记忆。同一标题会覆盖旧内容。不要写入密码、私钥或 API Key。",
 		"parameters": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -172,11 +168,11 @@ var recallTool = map[string]any{
 	"type": "function",
 	"function": map[string]any{
 		"name":        "recall",
-		"description": "读取当前工作范围的记忆。群聊只读本项目记忆，忽略 bot_id；单聊默认读自己的记忆。",
+		"description": "读取当前工作范围的记忆。隔离项目只读本项目记忆，忽略 bot_id，也不读写 Bot 私有记忆；单聊只读自己的私有记忆，不能读其他 Bot。",
 		"parameters": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"bot_id": map[string]string{"type": "string", "description": "可选。Bot 的 id 或名称。留空表示自己"},
+				"bot_id": map[string]string{"type": "string", "description": "已废弃，只能留空。其他 Bot 的私有记忆不可读"},
 			},
 		},
 	},

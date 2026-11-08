@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"onefrog/internal/attachment"
@@ -12,6 +13,27 @@ import (
 	"onefrog/internal/workspace"
 	"strings"
 )
+
+// normalizeMode treats an empty mode and "team" as the same scope, so a session
+// cannot be switched between direct and team by omitting the field.
+func normalizeMode(mode string) string {
+	if mode == "" {
+		return "team"
+	}
+	return mode
+}
+
+// sessionOwner reads the owner marker saved next to a session's chat options.
+// A legacy session has none and is unowned until the first task claims it.
+func sessionOwner(raw json.RawMessage) string {
+	var saved struct {
+		OwnerID string `json:"owner_id"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &saved) != nil {
+		return ""
+	}
+	return strings.TrimSpace(saved.OwnerID)
+}
 
 type Options struct {
 	Workspace      *workspace.Target  `json:"workspace,omitempty"`
@@ -34,7 +56,119 @@ type Options struct {
 	// Approver asks a human to allow one command (smart or manual mode). It is
 	// set by interactive transports such as the WebSocket chat.
 	Approver Approver `json:"-"`
+	// TaskID/ProjectTitle are internal: a durable task runs with its stored
+	// session and never writes a new project title.
+	TaskID string `json:"-"`
 }
+
+// currentCallKey names the tool call being executed, and approvedCallKey names
+// the single call whose approval the operator already gave. An approver may
+// allow only when the two match, so a delegated or nested call in the same
+// window (connect_server's follow-up command, ask_agent's worker, a re-issued
+// command) still needs its own decision. It is not a global "approved" flag.
+type currentCallKey struct{}
+
+// callIdentity is the immutable identity of the call currently being
+// authorized. Handlers that only receive a display label compare against it,
+// so a nested call that reuses a call id with another tool or arguments cannot
+// inherit the grant.
+type callIdentity struct {
+	CallID string
+	Tool   string
+	Hash   string
+}
+
+type callIdentityKey struct{}
+
+func withCallIdentity(ctx context.Context, id callIdentity) context.Context {
+	return context.WithValue(ctx, callIdentityKey{}, id)
+}
+
+func callIdentityOf(ctx context.Context) (callIdentity, bool) {
+	id, ok := ctx.Value(callIdentityKey{}).(callIdentity)
+	return id, ok
+}
+
+type approvedCallKey struct{}
+
+func withCurrentCall(ctx context.Context, callID string) context.Context {
+	return context.WithValue(ctx, currentCallKey{}, callID)
+}
+
+func withApprovedCall(ctx context.Context, callID string) context.Context {
+	return context.WithValue(ctx, approvedCallKey{}, callID)
+}
+
+// callAlreadyApproved reports whether the call now being authorized is exactly
+// the one the operator approved for this window.
+func callAlreadyApproved(ctx context.Context) bool {
+	cur, _ := ctx.Value(currentCallKey{}).(string)
+	ok, _ := ctx.Value(approvedCallKey{}).(string)
+	return cur != "" && cur == ok
+}
+
+// hookMark records the one call whose shared authorization already ran. It is
+// bound to the speaker, the effective target, the tool, the call id and the
+// argument hash, so a delegated or nested call never inherits the permit.
+type hookMark struct {
+	BotID    string
+	ServerID string
+	Tool     string
+	CallID   string
+	Hash     string
+}
+
+type hookMarkKey struct{}
+
+func withHookMark(ctx context.Context, mark hookMark) context.Context {
+	return context.WithValue(ctx, hookMarkKey{}, mark)
+}
+
+// hookMarked reports whether the mark covers this call. Every identity field
+// must be present and match: speaker, effective target, tool, call id and
+// argument hash. An incomplete mark never matches, so a mark built without the
+// target or tool cannot authorize anything.
+func (m hookMark) marked(botID, serverID string, call toolCall) bool {
+	if m.BotID == "" || m.ServerID == "" || m.Tool == "" || m.CallID == "" || m.Hash == "" {
+		return false
+	}
+	if serverID == "" {
+		return false
+	}
+	return m.BotID == botID &&
+		m.ServerID == serverID &&
+		m.Tool == call.Function.Name &&
+		m.CallID == call.ID &&
+		m.Hash == argsHash(call)
+}
+
+// hookAlreadyRan reports whether the shared authorization already ran for this
+// call, using the effective target recorded in the mark itself.
+func hookAlreadyRan(ctx context.Context, botID string, call toolCall) bool {
+	mark, ok := ctx.Value(hookMarkKey{}).(hookMark)
+	if !ok {
+		return false
+	}
+	return mark.marked(botID, mark.ServerID, call)
+}
+
+// hookAlreadyRanFor is the strict form: the caller must state the effective
+// target it is about to use.
+func hookAlreadyRanFor(ctx context.Context, botID, serverID string, call toolCall) bool {
+	mark, ok := ctx.Value(hookMarkKey{}).(hookMark)
+	if !ok {
+		return false
+	}
+	return mark.marked(botID, serverID, call)
+}
+
+// pendingSentinel is the prefix the shared authorization hook returns when the
+// call is parked for the operator: the call has not run.
+const pendingSentinel = "onefrog:pending"
+
+// askSentinel is the reason prefix a durable approver returns when the
+// operator asked to decide later. The call must then be parked, never run.
+const askSentinel = "task:ask"
 
 // ApprovalRequest is shown to the operator before a command runs.
 type ApprovalRequest struct {
@@ -60,7 +194,18 @@ type ApprovalRequest struct {
 	Untrusted   string          `json:"untrusted,omitempty"`
 }
 
-// Approver returns whether the operator allowed the command.
+// Decision is the operator's answer to one approval card. Ask means "park the
+// task and wait"; the call is not executed until a decision is recorded.
+type Decision struct {
+	Allow bool
+	Ask   bool
+	// Always allows the same kind of action for the rest of this task.
+	Always bool
+	Reason string
+}
+
+// Approver returns whether the operator allowed the command. A nil Approver
+// means nobody is watching: risky calls are refused, never silently allowed.
 type Approver func(ctx context.Context, req ApprovalRequest) (allow bool, reason string)
 type optionsKey struct{}
 type usageKey struct{}
@@ -103,45 +248,64 @@ func (a *Agent) ReplyWithOptions(ctx context.Context, botID, serverID, sessionID
 		copy.Settings = a.Settings.Frozen()
 		a = &copy
 	}
+	opt, refs, err := a.Preflight(ctx, opt)
+	if err != nil {
+		return Result{}, err
+	}
+	if (opt.ChoiceAnswer != nil || opt.SecretAnswer != nil) && len(refs) > 0 {
+		return Result{}, errors.New("回答卡片时不能附带附件")
+	}
+	if strings.TrimSpace(content) == "" && len(refs) > 0 {
+		content = "请分析这些附件。"
+	}
+	ctx = context.WithValue(ctx, optionsKey{}, opt)
+	return a.replyTurn(ctx, botID, serverID, sessionID, content, refs, sink)
+}
+
+// Preflight validates and normalizes a turn's per-chat options exactly as the
+// interactive chat does: model route, approval mode, excluded bots, mode,
+// attachment ownership and total size. Both the ordinary turn and a durable
+// task use it, so the background path cannot skip a check.
+func (a *Agent) Preflight(ctx context.Context, opt Options) (Options, []model.Attachment, error) {
 	if opt.ModelRoute != nil && opt.ModelRoute.ProviderID == "" && opt.ModelRoute.Model == "" {
 		opt.ModelRoute = nil
 	}
 	if opt.ModelRoute != nil {
 		if a.Settings == nil {
-			return Result{}, errors.New("请先配置模型渠道")
+			return opt, nil, errors.New("请先配置模型渠道")
 		}
 		if err := a.Settings.ValidateSelectable(*opt.ModelRoute); err != nil {
-			return Result{}, err
+			return opt, nil, err
 		}
 	}
 	if opt.ApprovalMode != "default" {
 		mode, ok := preferences.NormalizeMode(opt.ApprovalMode)
 		if !ok {
-			return Result{}, errors.New("审核方式无效")
+			return opt, nil, errors.New("审核方式无效")
 		}
 		opt.ApprovalMode = mode
 	}
 	if opt.ApprovalMode == "model" {
 		if a.Settings == nil {
-			return Result{}, errors.New("请先在设置中配置审批模型")
+			return opt, nil, errors.New("请先在设置中配置审批模型")
 		}
 		r := a.Settings.Snapshot().Approval.Route
 		if opt.ApprovalRoute != nil {
 			r = *opt.ApprovalRoute
 			if err := a.Settings.ValidateSelectable(r); err != nil {
-				return Result{}, err
+				return opt, nil, err
 			}
 		}
 		if r.ProviderID == "" || r.Model == "" {
-			return Result{}, errors.New("请先在设置中选择独立审批模型")
+			return opt, nil, errors.New("请先在设置中选择独立审批模型")
 		}
 		if _, err := a.Settings.Provider(r.ProviderID); err != nil {
-			return Result{}, errors.New("审批渠道不可用")
+			return opt, nil, errors.New("审批渠道不可用")
 		}
 	}
 	for _, id := range opt.ExcludedBotIDs {
 		if _, err := a.Store.GetBot(ctx, id); err != nil {
-			return Result{}, errors.New("排除的 Bot 不存在，请刷新")
+			return opt, nil, errors.New("排除的 Bot 不存在，请刷新")
 		}
 	}
 	switch opt.Mode {
@@ -150,12 +314,11 @@ func (a *Agent) ReplyWithOptions(ctx context.Context, botID, serverID, sessionID
 	case "direct":
 		opt.ExcludedBotIDs = nil
 	default:
-		return Result{}, errors.New("对话模式无效")
+		return opt, nil, errors.New("对话模式无效")
 	}
 	if len(opt.AttachmentIDs) > attachment.MaxFiles {
-		return Result{}, errors.New("每轮最多 4 个附件")
+		return opt, nil, errors.New("每轮最多 4 个附件")
 	}
-	ctx = context.WithValue(ctx, optionsKey{}, opt)
 	var refs []model.Attachment
 	seen := map[string]bool{}
 	size := 0
@@ -165,25 +328,36 @@ func (a *Agent) ReplyWithOptions(ctx context.Context, botID, serverID, sessionID
 		}
 		seen[id] = true
 		if a.Files == nil {
-			return Result{}, errors.New("附件服务未配置")
+			return opt, nil, errors.New("附件服务未配置")
 		}
 		f, err := a.Files.Get(opt.OwnerID, id)
 		if err != nil {
-			return Result{}, err
+			return opt, nil, err
 		}
 		size += f.Size
 		refs = append(refs, f.Attachment)
 	}
 	if size > attachment.MaxTotal {
-		return Result{}, errors.New("附件合计不能超过 12 MB")
+		return opt, nil, errors.New("附件合计不能超过 12 MB")
 	}
-	if (opt.ChoiceAnswer != nil || opt.SecretAnswer != nil) && len(refs) > 0 {
-		return Result{}, errors.New("回答卡片时不能附带附件")
+	if opt.Workspace != nil {
+		if opt.Workspace.Kind == "local" {
+			// Native local workspaces: the root must sit inside the operator's
+			// allowlist. Task users and the model can never add roots.
+			if a.LocalWorkspace == nil {
+				return opt, nil, errors.New("本地工作区未启用")
+			}
+			if opt.Workspace.ServerID != "local" {
+				return opt, nil, errors.New("本地工作区的 server_id 必须是 local")
+			}
+			if _, err := a.LocalWorkspace.Roots().Pick(opt.Workspace.Root); err != nil {
+				return opt, nil, err
+			}
+		} else if _, err := a.Workspace.Server(ctx, *opt.Workspace); err != nil {
+			return opt, nil, err
+		}
 	}
-	if strings.TrimSpace(content) == "" && len(refs) > 0 {
-		content = "请分析这些附件。"
-	}
-	return a.replyTurn(ctx, botID, serverID, sessionID, content, refs, sink)
+	return opt, refs, nil
 }
 func (a *Agent) messageContent(ctx context.Context, item model.Message) (any, error) {
 	text := a.redact(ctx, item.Content)

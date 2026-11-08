@@ -1017,23 +1017,11 @@ func TestUnknownMutationGateRejectsAnotherMutation(t *testing.T) {
 	}
 	stop := runBackground(t, f.runner)
 	defer stop()
-	// The task keeps asking for a real check and finally parks for the
-	// operator; it never claims completion.
-	var final task.Task
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
-		it, err := f.book.Get("t-gate")
-		if err == nil && (it.Terminal() || it.Status == task.StatusWaitingUser) {
-			final = it
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if final.Status == task.StatusCompleted {
-		t.Fatalf("mutating call satisfied the verification gate: %+v", final)
-	}
-	if final.Status != task.StatusWaitingUser {
-		t.Fatalf("expected the task to park for the operator: %+v", final)
+	// The task still needs a real check. If verification cannot be obtained,
+	// report the failure rather than waiting on a nonexistent question.
+	final := f.waitTerminal(t, "t-gate")
+	if final.Status != task.StatusFailed || final.Pending != nil || final.LastError != incompleteVerification {
+		t.Fatalf("unverified operation did not end explicitly: status=%s error=%q", final.Status, final.LastError)
 	}
 }
 

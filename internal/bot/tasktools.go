@@ -408,6 +408,9 @@ func (st *taskState) runTaskTool(ctx context.Context, a *Agent, call toolCall) (
 			// Result and ResultMessageID are part of this same write: a task
 			// must never be completed without the outbox that lets a restart
 			// write (or repair) its closing message.
+			if hasCorrection(*t) {
+				return errCorrectionPending
+			}
 			t.Result = clip(text, task.MaxResult)
 			t.ResultMessageID = messageID
 			t.Verified = verified
@@ -422,6 +425,9 @@ func (st *taskState) runTaskTool(ctx context.Context, a *Agent, call toolCall) (
 			appendTaskToolEntry(t, st.turn, call, text)
 			return nil
 		})
+		if errors.Is(err, errCorrectionPending) {
+			return correctionSkipped, true, nil
+		}
 		if err := st.taskToolErr(err); err != nil {
 			return "", true, err
 		}

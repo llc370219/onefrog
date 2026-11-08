@@ -41,7 +41,7 @@ export default function ChoiceCard({ choice, disabled, stale, onAnswer }: { choi
         {skipped && <span className="grok-pill muted">已跳过</span>}
       </div>
       <div className="choice-rows">
-        {choice.options.map((o, idx) => {
+        {(choice.options || []).map((o, idx) => {
           const on = chosen.includes(o.value);
           const letter = String.fromCharCode(65 + idx);
           return (

@@ -67,10 +67,12 @@ func ParseChoice(arguments string) (model.Choice, error) {
 	if c.Prompt == "" {
 		return model.Choice{}, errors.New("ask_user 需要 prompt")
 	}
-	if len(args.Options) < minChoiceOptions || len(args.Options) > maxChoiceOptions {
-		return model.Choice{}, errors.New("ask_user 需要 2–6 个选项")
+	if (len(args.Options) < minChoiceOptions || len(args.Options) > maxChoiceOptions) &&
+		!(len(args.Options) == 0 && args.AllowCustom && !args.MultiSelect) {
+		return model.Choice{}, errors.New("ask_user 需要 2–6 个选项；开放问题可不设选项并开启 allow_custom")
 	}
 	seen := map[string]bool{}
+	c.Options = make([]model.ChoiceOption, 0, len(args.Options))
 	for _, o := range args.Options {
 		label := cleanText(o.Label, maxChoiceLabel)
 		value := cleanText(o.Value, maxChoiceValue)
@@ -234,7 +236,8 @@ var askUserTool = map[string]any{
 			"properties": map[string]any{
 				"prompt": map[string]string{"type": "string", "description": "要用户决定的问题，一句话"},
 				"options": map[string]any{
-					"type": "array", "minItems": minChoiceOptions, "maxItems": maxChoiceOptions,
+					"type": "array", "maxItems": maxChoiceOptions,
+					"description": "2–6 个选项；开放问题传空数组并开启 allow_custom",
 					"items": map[string]any{
 						"type": "object",
 						"properties": map[string]any{

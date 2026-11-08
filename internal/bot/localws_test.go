@@ -298,27 +298,50 @@ func TestLocalWorkspaceOutsideRootRefused(t *testing.T) {
 }
 
 func TestLocalTaskCancelStopsWindow(t *testing.T) {
-	f := newLocalWSFixture(t, preferences.ModeOff,
-		func(n int) string {
-			// Keep the model busy issuing tool calls; the operator cancels.
-			return toolReply("c1", "workspace", `{"action":"read","path":"x.txt"}`)
-		},
-	)
+	f := newLocalWSFixture(t, preferences.ModeOff)
 	stop := runBackground(t, f.runner)
 	defer stop()
+	entered := make(chan struct{})
+	f.runner.stepHook = func(ctx context.Context, _ *Agent, _ task.Task) (taskOutcome, error) {
+		close(entered)
+		<-ctx.Done()
+		return taskOutcome{}, errCancelled
+	}
 	it := f.submitLocal(t, context.Background(), "sess-cancel-1", "长时间任务")
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		cur, err := f.book.Get(it.ID)
+		if err != nil {
+			t.Fatalf("task window never started; read task: %v", err)
+		}
+		t.Fatalf("task window never started: status=%s last_error=%q", cur.Status, cur.LastError)
+	}
 	deadline := time.Now().Add(10 * time.Second)
-	var running task.Task
+	var lastSeen string
+	var lastErr string
 	for time.Now().Before(deadline) {
-		cur, _ := f.book.Get(it.ID)
+		cur, err := f.book.Get(it.ID)
+		if err != nil {
+			// A read error must not be silently converted into a zero-value
+			// task (Status ""), which both masks the real failure and makes
+			// the loop spin on a phantom record.
+			t.Fatalf("read task %s while waiting for running: %v", it.ID, err)
+		}
+		lastSeen, lastErr = cur.Status, cur.LastError
 		if cur.Status == task.StatusRunning {
-			running = cur
 			break
 		}
-		time.Sleep(10 * time.Millisecond)
+		if cur.Terminal() {
+			// The task raced to a terminal state before any Running
+			// observation could be seen; waiting out the deadline cannot
+			// change that. Fail fast with the real state instead.
+			t.Fatalf("task reached terminal state %s before running (last_error=%q)", cur.Status, cur.LastError)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
-	if running.Status != task.StatusRunning {
-		t.Fatalf("task never ran: %+v", running)
+	if lastSeen != task.StatusRunning {
+		t.Fatalf("task never ran: status=%s last_error=%q", lastSeen, lastErr)
 	}
 	cancelled, err := f.runner.Cancel(context.Background(), f.owner, it.ID)
 	if err != nil {

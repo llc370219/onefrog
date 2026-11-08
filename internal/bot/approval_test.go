@@ -21,13 +21,18 @@ func TestApprovalGateAndModelIsolation(t *testing.T) {
 		name, mode, command, reply string
 		allow                      bool
 		wantCalls                  int
+		wantPending                bool
 	}{
-		{"approve", "model", "uptime", `{"allow":true,"risk":"low","reason":"只读状态检查"}`, true, 1},
-		{"deny", "model", "uptime", `{"allow":false,"risk":"medium","reason":"不在授权范围"}`, false, 1},
-		{"malformed", "model", "uptime", `maybe`, false, 1},
-		{"high risk true", "model", "uptime", `{"allow":true,"risk":"high","reason":"危险"}`, false, 1},
-		{"hard rule first", "model", "rm -rf /tmp/example", `{"allow":true,"risk":"low","reason":"ok"}`, false, 0},
-		{"plan", "plan", "uptime", "", false, 0},
+		{"approve", "model", "uptime", `{"decision":"allow","risk":"low","reason":"只读状态检查"}`, true, 1, false},
+		{"deny", "model", "uptime", `{"decision":"deny","risk":"medium","reason":"不在授权范围"}`, false, 1, false},
+		// An unparseable reviewer answer becomes an ask; without an operator it
+		// parks, it never silently allows and never records a completed denial.
+		{"malformed", "model", "uptime", `maybe`, false, 1, true},
+		// Risk is evidence: an allow with high risk still runs.
+		{"high risk allow", "model", "uptime", `{"decision":"allow","risk":"high","reason":"用户要求"}`, true, 1, false},
+		// The independent reviewer decides even when rules flag the command.
+		{"rule hit reviewed", "model", "rm -rf /tmp/example", `{"decision":"allow","risk":"low","reason":"清理临时目录"}`, true, 1, false},
+		{"plan", "plan", "uptime", "", false, 0, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			box, _ := secret.New(bytesRepeat())
@@ -65,7 +70,7 @@ func TestApprovalGateAndModelIsolation(t *testing.T) {
 			h, _ := mem.ListHistory(ctx, 20)
 			found := false
 			for _, row := range h {
-				if row.Status == "approval_allowed" || row.Status == "approval_denied" {
+				if row.Status == "approval_allowed" || row.Status == "approval_denied" || row.Status == "approval_pending" {
 					found = true
 				}
 			}
@@ -131,9 +136,12 @@ func TestApprovalModes(t *testing.T) {
 		{"smart read-only pipeline runs", "smart", "df -h | sort -k5 -h | tail -n 5", "low", nil, false, true},
 		{"smart risky asks and runs on approve", "smart", "systemctl restart nginx", "medium", allow, true, true},
 		{"smart risky rejected", "smart", "systemctl restart nginx", "medium", deny, true, false},
-		{"smart risky without approver denied", "smart", "systemctl restart nginx", "medium", nil, false, false},
-		{"smart missing model risk asks", "smart", "uptime", "", allow, true, true},
-		{"smart model can raise risk", "smart", "uptime", "high", deny, true, false},
+		// No operator: risky call parks (pending), it does not run.
+		{"smart risky without approver parks", "smart", "systemctl restart nginx", "medium", nil, false, false},
+		// The executing model's self-declared risk is not an authorization input:
+		// a read-only command runs even when risk is missing or self-reported high.
+		{"smart ignores missing self-risk", "smart", "uptime", "", allow, false, true},
+		{"smart ignores self-reported high risk", "smart", "uptime", "high", deny, false, true},
 		{"smart model cannot downgrade rule hit", "smart", "sudo -E rm -rf /var/lib/x", "low", deny, true, false},
 		{"smart bypass find delete", "smart", "find / -delete", "low", deny, true, false},
 		{"smart bypass base64", "smart", "echo cm0gLXJmIC8= | base64 -d | sh", "low", deny, true, false},

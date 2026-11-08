@@ -118,8 +118,9 @@ func TestDirectChatModeValidationAndLimits(t *testing.T) {
 	if out, ok := a.panelDeleteBot(direct, worker, "main"); ok || !strings.Contains(out, "主控") {
 		t.Fatal(out)
 	}
-	// Team mode keeps the leader's view of peer memory.
-	if out := a.recallCall(ctx, worker, recallArgs(`{"bot_id":"main"}`)); !strings.Contains(out, "只给主控") {
+	// Team mode is not a shared memory pool: naming another bot is refused and
+	// its private note never comes back.
+	if out := a.recallCall(ctx, worker, recallArgs(`{"bot_id":"main"}`)); strings.Contains(out, "只给主控") || !strings.Contains(out, "只能读取自己的记忆") {
 		t.Fatal(out)
 	}
 }

@@ -101,6 +101,8 @@ func (s *Server) putSettings(c *gin.Context) {
 		fail(c, 400, err.Error())
 		return
 	}
+	// The local workspace allowlist is ENV-only operator policy loaded at
+	// boot; a settings save can never widen or disable it.
 	c.JSON(200, state)
 }
 

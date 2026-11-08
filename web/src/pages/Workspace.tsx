@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Code2, FileCode2, GitBranch, RefreshCw, Send } from 'lucide-react';
-import { api, type ChatSession, type Host, type WorkspaceResult, type WorkspaceTarget } from '../api';
+import { Code2, FileCode2, GitBranch, HardDrive, RefreshCw, Send } from 'lucide-react';
+import { api, type ChatSession, type Host, type WorkspaceCapabilities, type WorkspaceResult, type WorkspaceTarget } from '../api';
 import { Button, Empty, Field, Notice, PageHeading } from '../components/ui';
 
 const errorText = (err: unknown) => err instanceof Error ? err.message : '工作区操作失败';
@@ -37,17 +37,37 @@ export default function Workspace({ hosts, target, onTarget, sessions, activeTas
   const opened = info && target ? target : undefined;
   const related = sessions.filter(s => s.options?.workspace && equal(s.options.workspace, target));
 
+  // Server-provided local workspace capability. An older backend 404s and the
+  // resolved value is disabled, so the SSH flow stays exactly as before.
+  const [caps, setCaps] = useState<WorkspaceCapabilities | null>(null);
+  useEffect(() => {
+    let live = true;
+    api.workspaceCapabilities().then(c => { if (live) setCaps(c); }).catch(() => { if (live) setCaps(null); });
+    return () => { live = false; };
+  }, []);
+  const localEnabled = Boolean(caps?.local.enabled && caps.local.roots.length);
+
   function allowDiscard() { return !dirty || window.confirm('放弃此文件还没保存的修改？'); }
 
   async function repo(t: WorkspaceTarget, prefix = '') {
-    const [files, state] = await Promise.all([api.workspace(t, {action:'list', path:prefix}), api.workspace(t, {action:'status'})]);
+    // 列表必须成功；status 在非 Git 目录可能失败，单独兜底，不能挡住打开。
+    const files = await api.workspace(t, {action:'list', path:prefix});
+    let text = '';
+    try { text = (await api.workspace(t, {action:'status'})).text || ''; } catch { text = ''; }
     setInfo(files);
-    setStatus(state.text || '');
+    setStatus(text);
   }
 
   async function open() {
     if (busy || !allowDiscard()) return;
-    const next = {server_id:server, root:root.trim()};
+    // kind: 'local' rides along only when an operator-allowlisted root is used;
+    // the default stays an SSH target, backward compatible with the old backend.
+    const isLocal = server === 'local';
+    const next: WorkspaceTarget = {
+      server_id: isLocal ? 'local' : server,
+      root: root.trim(),
+      ...(isLocal ? {kind: 'local' as const} : {}),
+    };
     setBusy(true); setError(''); setNotice('');
     try {
       await repo(next);
@@ -126,26 +146,41 @@ export default function Workspace({ hosts, target, onTarget, sessions, activeTas
 
   const visible = (info?.files || []).filter(p => p.toLowerCase().includes(query.toLowerCase()));
   return <section className="page workspace-page">
-    <PageHeading title="代码工作区" note="打开已接入服务器上的 Git 仓库，查看改动，或把开发任务交给助手。" actions={<Button onClick={onAddServer}>添加服务器</Button>}/>
+    <PageHeading title="代码工作区" note="打开服务器仓库或本机允许的目录，查看改动，或把开发任务交给助手。" actions={<Button onClick={onAddServer}>添加服务器</Button>}/>
     {error && <Notice error>{error}</Notice>}
     {notice && <Notice>{notice}</Notice>}
     <form className="workspace-connect" onSubmit={e=>{e.preventDefault();void open();}}>
-      <Field label="服务器"><select value={server} onChange={e=>setServer(e.target.value)} required disabled={busy}>
+      <Field label="位置">{localEnabled ? <select value={server} onChange={e=>{
+        const next = e.target.value;
+        setServer(next);
+        // Picking the server host offers its first allowlisted root; the
+        // operator can still switch between allowed roots below.
+        if (next === 'local') setRoot(caps?.local.roots[0] || '');
+      }} required disabled={busy}>
+        <option value="">选择位置</option>
+        <option value="local">{caps?.local.execution_environment === 'container' ? '本机（OneFrog 容器内）' : '本机（服务器所在主机）'}</option>
+        {hosts.map(h=><option key={h.id} value={h.id} disabled={h.username==='root'}>{h.name}{h.username==='root'?'（需要非 root 账号）':''}</option>)}
+      </select> : <select value={server} onChange={e=>setServer(e.target.value)} required disabled={busy}>
         <option value="">选择已确认指纹的服务器</option>
         {hosts.map(h=><option key={h.id} value={h.id} disabled={h.username==='root'}>{h.name}{h.username==='root'?'（需要非 root 账号）':''}</option>)}
-      </select></Field>
-      <Field label="Git 仓库根目录"><input value={root} onChange={e=>setRoot(e.target.value)} placeholder="/home/onefrog-ops/src/onefrog" required maxLength={1024} disabled={busy} spellCheck={false} autoCapitalize="off"/></Field>
+      </select>}</Field>
+      {server === 'local' && localEnabled ? <Field label="本机允许的目录" hint={
+        `仅限管理员在本机允许的目录${caps?.local.command_execution ? '；本机工作区允许执行命令' : '；本机工作区不执行命令'}。${caps?.local.execution_environment === 'container' ? '本机指容器环境，不是宿主机。' : '命令以服务进程账号权限直接执行，不是沙箱隔离；'}高危操作仍需审批。`
+      }><select value={root} onChange={e=>setRoot(e.target.value)} required disabled={busy}>
+        <option value="">选择允许的目录</option>
+        {caps?.local.roots.map(r=><option key={r} value={r}>{r}</option>)}
+      </select></Field> : <Field label="Git 仓库根目录"><input value={root} onChange={e=>setRoot(e.target.value)} placeholder="/home/onefrog-ops/src/onefrog" required maxLength={1024} disabled={busy} spellCheck={false} autoCapitalize="off"/></Field>}
       <Button type="submit" busy={busy && !opened} disabled={busy || !server || !root.trim()}><Code2 size={15}/>打开仓库</Button>
     </form>
-    {!opened ? <Empty title={busy ? '正在连接仓库' : '还没有打开仓库'} body="在宿主机的源码目录运行 pwd -P 获取路径。SSH 账号需要能访问该目录，宿主机需有 Git 和 Python 3.9 或更新版本。"/> : <>
-      <div className="workspace-location"><GitBranch size={15}/><code title={opened.root}>{hosts.find(h=>h.id===opened.server_id)?.name || opened.server_id} · {opened.root}</code><Button onClick={refresh} disabled={busy}><RefreshCw size={14}/>刷新仓库</Button></div>
+    {!opened ? <Empty title={busy ? '正在连接目录' : '还没有打开目录'} body={localEnabled ? '选择本机允许的目录或已接入的服务器仓库。本机目录不要求是 Git 仓库；服务器仓库需要 Git 和 Python 3.9 或更新版本。' : '在宿主机的源码目录运行 pwd -P 获取路径。SSH 账号需要能访问该目录，宿主机需有 Git 和 Python 3.9 或更新版本。'}/> : <>
+      <div className="workspace-location"><GitBranch size={15}/><code title={opened.root}>{opened.kind === 'local' ? <><HardDrive size={13}/> 本机 · </> : <>{hosts.find(h=>h.id===opened.server_id)?.name || opened.server_id} · </>}{opened.root}</code><Button onClick={refresh} disabled={busy}><RefreshCw size={14}/>刷新仓库</Button></div>
       <div className="workspace-grid">
         <aside className="workspace-files" aria-label="仓库文件">
           <Field label="筛选当前列表"><input type="search" value={query} onChange={e=>setQuery(e.target.value)} placeholder="文件名或目录"/></Field>
           {(info?.truncated || subdir !== "") && <form className="workspace-subdir" onSubmit={e=>{e.preventDefault();void refresh();}}><Field label="按子目录加载"><input value={subdir} onChange={e=>setSubdir(e.target.value)} placeholder="例如 internal/bot"/></Field><Button type="submit" disabled={busy}>加载</Button></form>}
           <div className="workspace-file-list">{visible.map(p=><button type="button" key={p} title={p} disabled={busy} aria-current={p===file?.path?'true':undefined} onClick={()=>void read(p)}><FileCode2 size={14}/><span>{p}</span></button>)}
           {!visible.length && <p className="muted">没有匹配的文件。</p>}</div>
-          <pre className="workspace-status" aria-label="Git 状态">{status || '工作树没有改动。'}</pre>
+          <pre className="workspace-status" aria-label="Git 状态">{status || '当前目录没有可用的 Git 状态（可能不是 Git 仓库），仍可浏览和编辑文件。'}</pre>
         </aside>
         <div className="workspace-editor">
           <div className="workspace-tabs"><Button onClick={()=>setTab('file')} aria-pressed={tab==='file'}>编辑器</Button><Button onClick={()=>void showDiff()} aria-pressed={tab==='diff'} disabled={busy}>Git 差异</Button></div>
@@ -164,7 +199,7 @@ export default function Workspace({ hosts, target, onTarget, sessions, activeTas
       </div>
       <section className="workspace-task">
         <h2>交给开发助手</h2>
-        <p className="muted">助手可以读代码、改文件、跑测试。写入和运行命令都需要你逐次批准。</p>
+        <p className="muted">助手可以读代码、改文件、跑测试。每项写入和命令都按你的审批设置独立审查，有风险的操作会先暂停等你确认。</p>
         <form onSubmit={e=>{e.preventDefault();if(!dirty&&!busy&&!sending&&task.trim())onNewTask(opened,task.trim());}}>
           <Field label="开发任务"><textarea rows={3} value={task} onChange={e=>setTask(e.target.value)} placeholder="例如：修复这个接口的空结果处理，跑相关测试并汇报差异。"/></Field>
           <Button type="submit" variant="primary" disabled={dirty||sending||busy||!task.trim()}><Send size={14}/>去任务对话</Button>

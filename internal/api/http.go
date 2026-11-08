@@ -54,6 +54,8 @@ type Server struct {
 	DevModules    *devmodule.Book
 	// Automations holds scheduled Bot tasks; nil keeps an in-memory book.
 	Automations *automation.Book
+	// Tasks is the durable background task runner; nil disables /api/tasks.
+	Tasks *bot.Runner
 	// Updates checks GitHub for newer releases; nil reports a dev build.
 	Updates *update.Checker
 	// TrustedProxies is OF_TRUSTED_PROXIES (comma separated CIDRs/IPs, or "none").
@@ -136,14 +138,22 @@ func (s *Server) Handler() http.Handler {
 	}
 	if s.Agent != nil {
 		agent := s.Agent
-		s.Automations.SetRunner(func(ctx context.Context, it automation.Automation) (string, string, error) {
-			sid := automation.SessionID(it)
-			res, err := agent.RunAutomation(ctx, it.BotID, it.ServerID, sid, it.Name, it.Prompt, it.OwnerID, it.ApprovalMode)
-			if res.SessionID != "" {
-				sid = res.SessionID
-			}
-			return sid, res.Text, err
-		})
+		// A scheduled run is durable when a task runner is wired: it is
+		// persisted before it executes, a restart observes the same task, and a
+		// run that needs a human decision is recorded as waiting instead of
+		// failing or silently succeeding.
+		if agent.TasksRunner != nil {
+			s.Automations.SetDurableRunner(automationDurableRunner(agent))
+		} else {
+			s.Automations.SetRunner(func(ctx context.Context, it automation.Automation) (string, string, error) {
+				sid := automation.SessionID(it)
+				res, err := agent.RunAutomation(ctx, it.BotID, it.ServerID, sid, it.Name, it.Prompt, it.OwnerID, it.ApprovalMode)
+				if res.SessionID != "" {
+					sid = res.SessionID
+				}
+				return sid, res.Text, err
+			})
+		}
 	}
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -248,7 +258,20 @@ func (s *Server) Handler() http.Handler {
 	authed.POST("/automations/:id/run", s.runAutomation)
 	authed.POST("/history/:id/rollback", s.rollback)
 	authed.POST("/workspace", s.codeWorkspace)
+	authed.POST("/workspace/local", s.localCodeWorkspace)
+	authed.GET("/workspace/local/raw", s.localRawRead)
+	authed.POST("/workspace/local/raw/read", s.localRawRead)
+	authed.POST("/workspace/local/raw", s.localRawSave)
+	authed.GET("/workspace/capabilities", s.getWorkspaceCapabilities)
 	authed.POST("/chat", s.chat)
+	authed.GET("/tasks", s.listTasks)
+	authed.POST("/tasks", s.createTask)
+	authed.GET("/tasks/:id", s.getTask)
+	authed.POST("/tasks/:id/pause", s.pauseTask)
+	authed.POST("/tasks/:id/resume", s.resumeTask)
+	authed.POST("/tasks/:id/cancel", s.cancelTask)
+	authed.POST("/tasks/:id/guidance", s.guideTask)
+	authed.POST("/tasks/:id/approvals/:approvalID", s.decideTaskApproval)
 	authed.GET("/sessions", s.listSessions)
 	authed.DELETE("/sessions/:id", s.deleteChatSession)
 	authed.GET("/sessions/:id/messages", s.messages)
@@ -275,6 +298,49 @@ func (s *Server) Handler() http.Handler {
 		}
 	}
 	return r
+}
+
+// automationDurableRunner adapts the shared task runtime to the scheduler. The
+// run identity is the persisted RunID, so a retried firing resolves to the same
+// task; Wait only reports success for a completed task, and a parked run is
+// reported as waiting with its task id kept for the human decision.
+func automationDurableRunner(agent *bot.Agent) *automation.DurableRunner {
+	return &automation.DurableRunner{
+		Submit: func(ctx context.Context, it automation.Automation, runID string) (string, string, error) {
+			out, err := agent.SubmitAutomation(ctx, bot.AutomationRequest{
+				OwnerID: it.OwnerID, BotID: it.BotID, ServerID: it.ServerID,
+				SessionID: automation.SessionID(it), Title: it.Name, Prompt: it.Prompt,
+				ApprovalMode: it.ApprovalMode, ClientRequestID: "automation:" + it.ID + ":" + runID,
+			})
+			if err != nil {
+				return "", "", err
+			}
+			return out.ID, out.SessionID, nil
+		},
+		Wait: func(ctx context.Context, it automation.Automation, taskID string) (automation.Observation, error) {
+			out, err := agent.WaitAutomation(ctx, it.OwnerID, taskID)
+			return automationObservation(out), err
+		},
+		Observe: func(ctx context.Context, it automation.Automation, taskID string) (automation.Observation, error) {
+			out, err := agent.ObserveAutomation(ctx, it.OwnerID, taskID)
+			return automationObservation(out), err
+		},
+	}
+}
+
+// automationObservation maps a task outcome to the scheduler's flat shape.
+func automationObservation(out bot.AutomationOutcome) automation.Observation {
+	status := out.Status
+	obs := automation.Observation{
+		SessionID: out.SessionID,
+		Status:    status,
+		Done:      out.Done(),
+		Waiting:   strings.HasPrefix(status, "waiting_") || status == "paused",
+	}
+	// Only a completed run carries a success text; a failed or cancelled
+	// terminal run carries its own reason instead, never a success summary.
+	obs.Text = out.Text
+	return obs
 }
 
 func (s *Server) requireAuth(c *gin.Context) {

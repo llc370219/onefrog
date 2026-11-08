@@ -411,7 +411,16 @@ func (a *Agent) approveHighRisk(ctx context.Context, botID string, rec store.Ser
 	if strings.TrimSpace(rec.Name) == "" {
 		rec.Name = "面板"
 	}
+	// The shared authorization already asked for this exact panel action. The
+	// grant is bound to the bot, target and current call, so another call still
+	// asks.
+	if grantForHandler(ctx, botID, rec.ID) {
+		return true, ""
+	}
 	review := a.askOperator(ctx, botID, rec, what, a.approvalMode(ctx), riskGate{Level: "high", Reasons: reasons})
+	if review.Pending {
+		return false, review.Reason
+	}
 	if review.Allow {
 		return true, ""
 	}

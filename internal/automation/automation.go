@@ -49,6 +49,10 @@ const (
 	StatusRunning = "running"
 	StatusSuccess = "success"
 	StatusFailed  = "failed"
+	// StatusWaiting means the run stopped for a human decision (an approval
+	// card or a card question). It is not a success and it is not a failure:
+	// the stored task can still be resumed.
+	StatusWaiting = "waiting"
 )
 
 var (
@@ -91,12 +95,44 @@ type Automation struct {
 	LastError    string     `json:"last_error,omitempty"`
 	LastSummary  string     `json:"last_summary,omitempty"`
 	SessionID    string     `json:"session_id,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	// TaskID is the durable task of the most recent run. It is persisted when
+	// the run is accepted, before anything executes, so a restart observes the
+	// same task instead of failing it or submitting the work again.
+	TaskID string `json:"task_id,omitempty"`
+	// RunID identifies one scheduled firing. A retry of that firing reuses it,
+	// so the runtime resolves to the same task.
+	RunID     string    `json:"run_id,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Runner performs one run and returns the session used and the Bot's reply.
 type Runner func(ctx context.Context, it Automation) (sessionID, text string, err error)
+
+// Observation is what a durable run currently looks like. Text is only set for
+// a completed run, so a waiting or running run can never be recorded as a
+// success.
+type Observation struct {
+	SessionID string
+	Text      string
+	Status    string
+	// Waiting means the run stopped for a human decision; Done means it reached
+	// a terminal state. Neither is implied by the other.
+	Waiting bool
+	Done    bool
+}
+
+// DurableRunner executes a run through the shared task runtime. Submit accepts
+// the run and returns its durable task id; it must persist before returning so
+// the scheduler can record the id before any work happens. Wait observes that
+// task until it stops making progress.
+type DurableRunner struct {
+	Submit func(ctx context.Context, it Automation, runID string) (taskID, sessionID string, err error)
+	Wait   func(ctx context.Context, it Automation, taskID string) (Observation, error)
+	// Observe reads the current state without waiting; the scheduler uses it on
+	// restart so an interrupted run is inspected instead of failed.
+	Observe func(ctx context.Context, it Automation, taskID string) (Observation, error)
+}
 
 // SessionID is the chat session an automation writes into.
 func SessionID(it Automation) string { return SessionPrefix + it.ID + "-" + it.BotID }
@@ -119,6 +155,7 @@ type Book struct {
 	items   map[string]Automation
 	running map[string]bool
 	runner  Runner
+	durable *DurableRunner
 	base    context.Context
 
 	slots chan struct{}
@@ -159,9 +196,23 @@ func New(path string, box *secret.Box, st store.Store) (*Book, error) {
 		if it.ID == "" {
 			continue
 		}
+		// A run that was in flight when the process stopped is not a failure:
+		// its durable task may still be parked on a human decision or still
+		// running in the registry. Keep both the status and the task id, and let
+		// the startup reconcile observe the stored task. Only the turn-bound
+		// path (no task id) has nothing to observe, so that one is failed.
 		if it.LastStatus == StatusRunning {
-			it.LastStatus = StatusFailed
-			it.LastError = "服务重启，运行被中断"
+			// RunID alone is enough to recover: submission is idempotent per run
+			// identity, so a crash between submit and the TaskID write re-submits
+			// the same run and adopts the same task instead of starting a new
+			// run. Only a run with no durable identity at all is a failure.
+			if it.RunID != "" || it.TaskID != "" {
+				it.LastStatus = StatusWaiting
+				it.LastError = "服务重启，正在核对任务状态"
+			} else {
+				it.LastStatus = StatusFailed
+				it.LastError = "服务重启，运行被中断"
+			}
 		}
 		b.items[it.ID] = it
 	}
@@ -172,6 +223,15 @@ func New(path string, box *secret.Box, st store.Store) (*Book, error) {
 func (b *Book) SetRunner(r Runner) {
 	b.mu.Lock()
 	b.runner = r
+	b.mu.Unlock()
+}
+
+// SetDurableRunner installs the durable task-backed runner. When it is set, a
+// run is submitted as a task, its id is persisted before anything executes, and
+// a restart observes that task instead of failing it or resubmitting the work.
+func (b *Book) SetDurableRunner(r *DurableRunner) {
+	b.mu.Lock()
+	b.durable = r
 	b.mu.Unlock()
 }
 
@@ -307,6 +367,12 @@ func (b *Book) RunNow(id string) (Automation, error) {
 	if b.running[id] {
 		return Automation{}, ErrRunning
 	}
+	// A firing whose durable run is still unresolved also blocks RunNow: the
+	// caller must see "already running" instead of a silent no-op that looks
+	// like a fresh run was started.
+	if b.pendingLocked(it) {
+		return Automation{}, ErrRunning
+	}
 	return b.startLocked(it, false), nil
 }
 
@@ -315,7 +381,10 @@ func (b *Book) Run(ctx context.Context) {
 	b.mu.Lock()
 	b.base = ctx
 	b.mu.Unlock()
+	b.reconcile()
 	defer b.wg.Wait()
+	tick := time.NewTicker(reconcileEvery)
+	defer tick.Stop()
 	for {
 		wait := b.dispatchDue()
 		timer := time.NewTimer(wait)
@@ -323,11 +392,170 @@ func (b *Book) Run(ctx context.Context) {
 		case <-ctx.Done():
 			timer.Stop()
 			return
+		case <-tick.C:
+			timer.Stop()
+			// A parked run whose approval was granted elsewhere resumes in the
+			// task runtime; observing periodically keeps its scheduler status
+			// truthful without waiting for a restart.
+			b.reconcile()
 		case <-b.wake:
 			timer.Stop()
 		case <-timer.C:
 		}
 	}
+}
+
+// reconcileEvery bounds how long a scheduler status can lag the durable task
+// state (for example a run approved while the process kept running).
+const reconcileEvery = 30 * time.Second
+
+// reconcile observes runs that were in flight when the process stopped. A run
+// whose durable task still exists is re-read: a completed task records its
+// result, a parked or running one stays waiting. Nothing is resubmitted and
+// nothing is marked failed just because the process restarted.
+func (b *Book) reconcile() {
+	b.mu.Lock()
+	durable := b.durable
+	var pending []Automation
+	for _, it := range b.items {
+		if it.TaskID == "" || (it.LastStatus != StatusRunning && it.LastStatus != StatusWaiting) {
+			continue
+		}
+		pending = append(pending, it)
+	}
+	b.mu.Unlock()
+	if durable == nil {
+		return
+	}
+	if durable.Observe != nil {
+		for _, it := range pending {
+			ctx, cancel := context.WithTimeout(b.background(), 15*time.Second)
+			obs, err := durable.Observe(ctx, it, it.TaskID)
+			cancel()
+			if err != nil {
+				log.Printf("automation: reconcile %s: %v", it.ID, err)
+				continue
+			}
+			b.applyObservation(it.ID, it.RunID, it.TaskID, obs)
+		}
+	}
+	// A run that was submitted but whose task id was never written is recovered
+	// through its persisted run identity: re-submitting the same identity
+	// adopts the same task, so the work is observed instead of run twice.
+	for _, it := range b.unidentifiedRuns() {
+		ctx, cancel := context.WithTimeout(b.background(), 15*time.Second)
+		sid, text, err := b.executeDurable(ctx, it, durable)
+		cancel()
+		if err != nil && !errors.Is(err, errWaiting) {
+			log.Printf("automation: recover run %s: %v", it.ID, err)
+		}
+		// Record the recovered outcome exactly like a live run, so a recovered
+		// task does not leave the automation stuck in waiting forever.
+		b.finish(it, sid, text, err)
+	}
+}
+
+// unidentifiedRuns returns runs whose durable task id is still unknown, so
+// startup can recover them by re-submitting the same run identity. New marks a
+// running run with a RunID as waiting, so both statuses are covered; the
+// running case is kept for a run that started after New.
+func (b *Book) unidentifiedRuns() []Automation {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var out []Automation
+	for _, it := range b.items {
+		if it.RunID == "" || it.TaskID != "" {
+			continue
+		}
+		if it.LastStatus != StatusWaiting && it.LastStatus != StatusRunning {
+			continue
+		}
+		out = append(out, it)
+	}
+	return out
+}
+
+// observedStatus maps a durable task status to the scheduler's status. Only a
+// completed task is a success; a parked or paused one keeps waiting; every
+// other terminal state is a failure, never a silent success.
+func observedStatus(obs Observation) string {
+	switch {
+	case obs.Status == "completed" || (obs.Done && obs.Status == "" && !obs.Waiting):
+		return StatusSuccess
+	case obs.Waiting:
+		return StatusWaiting
+	case obs.Status == "paused":
+		return StatusWaiting
+	case obs.Done:
+		// failed, cancelled, budget_exhausted: a terminal run that did not
+		// finish its goal. Reporting it as success would hide the failure.
+		return StatusFailed
+	default:
+		// queued, running, waiting_job: still active.
+		return StatusRunning
+	}
+}
+
+// applyObservation records an observed run state truthfully. Only a completed
+// run becomes a success, a parked one stays waiting, and a failed or cancelled
+// terminal run stays failed. The observation must still belong to the run the
+// automation is currently on: a stale one is discarded.
+func (b *Book) applyObservation(id, runID, taskID string, obs Observation) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	it, ok := b.items[id]
+	if !ok {
+		return
+	}
+	if runID != "" && it.RunID != "" && it.RunID != runID {
+		return
+	}
+	if taskID != "" && it.TaskID != "" && it.TaskID != taskID {
+		return
+	}
+	prev := it
+	switch status := observedStatus(obs); status {
+	case StatusSuccess:
+		it.LastStatus = StatusSuccess
+		it.LastError = ""
+		it.LastSummary = clip(strings.TrimSpace(obs.Text), summaryLimit)
+	case StatusWaiting:
+		it.LastStatus = StatusWaiting
+		it.LastError = "等待审批或用户回答后才能继续"
+		it.LastSummary = ""
+	case StatusFailed:
+		it.LastStatus = StatusFailed
+		it.LastError = clip(firstNonEmptyText(obs.Text, "任务没有完成："+obs.Status), summaryLimit)
+		it.LastSummary = ""
+	default:
+		it.LastStatus = StatusRunning
+		it.LastError = ""
+	}
+	if obs.SessionID != "" {
+		it.SessionID = obs.SessionID
+	}
+	b.items[id] = it
+	if err := b.saveLocked(); err != nil {
+		log.Printf("automation: save: %v", err)
+		b.items[id] = prev
+	}
+}
+
+// firstNonEmptyText returns the first non-blank candidate.
+func firstNonEmptyText(v, fallback string) string {
+	if strings.TrimSpace(v) != "" {
+		return v
+	}
+	return fallback
+}
+
+func (b *Book) background() context.Context {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.base == nil {
+		return context.Background()
+	}
+	return b.base
 }
 
 func (b *Book) dispatchDue() time.Duration {
@@ -345,11 +573,13 @@ func (b *Book) dispatchDue() time.Duration {
 			continue
 		}
 		if !it.NextRunAt.After(now) {
-			if b.running[it.ID] {
+			if b.running[it.ID] || b.pendingLocked(it) {
 				// Still busy with the previous run: skip this slot.
 				it.NextRunAt = b.nextFor(it, now)
 				b.items[it.ID] = it
-				_ = b.saveLocked()
+				if err := b.saveLocked(); err != nil {
+					log.Printf("automation: save: %v", err)
+				}
 			} else {
 				it = b.startLocked(it, true)
 			}
@@ -366,13 +596,37 @@ func (b *Book) dispatchDue() time.Duration {
 	return wait
 }
 
+// pendingLocked reports whether a firing still owns an unresolved durable run.
+// The run identity is written before anything executes and survives until the
+// run reaches a terminal state, so RunID plus a running/waiting status is the
+// durable marker of "this automation still has one run in flight" — including
+// the recovery window where a RunID exists but the TaskID write did not land,
+// and the window where an observation turned the run back to running.
+func (b *Book) pendingLocked(it Automation) bool {
+	if b.durable == nil || strings.TrimSpace(it.RunID) == "" {
+		return false
+	}
+	return it.LastStatus == StatusRunning || it.LastStatus == StatusWaiting
+}
+
 func (b *Book) startLocked(it Automation, scheduled bool) Automation {
 	done, err := b.Gate.Enter()
 	if err != nil {
 		return it
 	}
+	// No overlap: while the previous durable run is still unresolved (running,
+	// parked on a human decision, or awaiting recovery) a new firing must not
+	// replace its task id or start a second task.
+	if b.pendingLocked(it) {
+		done()
+		return it
+	}
 	now := b.now()
-	b.running[it.ID] = true
+	prev := it
+	// Every firing gets its own run identity. Reusing the previous one would
+	// resolve to the previous task and silently reuse its result.
+	it.RunID = id.New()
+	it.TaskID = ""
 	it.LastStatus = StatusRunning
 	it.LastError = ""
 	it.LastRunAt = &now
@@ -381,8 +635,15 @@ func (b *Book) startLocked(it Automation, scheduled bool) Automation {
 	}
 	b.items[it.ID] = it
 	if err := b.saveLocked(); err != nil {
+		// The run identity must be durable before anything executes, otherwise
+		// a retry could not prove it is the same firing. Roll back and fail
+		// closed instead of running an unidentified run.
 		log.Printf("automation: save: %v", err)
+		b.items[it.ID] = prev
+		done()
+		return prev
 	}
+	b.running[it.ID] = true
 	b.wg.Add(1)
 	go func() { defer done(); b.execute(b.base, it) }()
 	return it
@@ -409,7 +670,12 @@ func (b *Book) execute(parent context.Context, it Automation) {
 	defer func() { <-b.slots }()
 	b.mu.Lock()
 	runner := b.runner
+	durable := b.durable
 	b.mu.Unlock()
+	if durable != nil {
+		sid, out, err = b.executeDurable(parent, it, durable)
+		return
+	}
 	if runner == nil {
 		err = errors.New("Bot 服务未配置")
 		return
@@ -422,22 +688,154 @@ func (b *Book) execute(parent context.Context, it Automation) {
 	}
 }
 
+// errWaiting marks a run that stopped for a human decision or is still active.
+// finish maps it to StatusWaiting instead of success or failure.
+var errWaiting = errors.New("运行等待处理")
+
+// isRejected reports whether an error definitely means "this run was refused
+// before anything was accepted". Such a run may be recorded as failed; every
+// other submission error is uncertain and must be retried with the same run
+// identity.
+func isRejected(err error) bool {
+	var r interface{ Rejected() bool }
+	return errors.As(err, &r) && r.Rejected()
+}
+
+// executeDurable submits the run as a durable task, persists its id before any
+// work happens, and then observes the task. A run that parks on a human
+// decision is recorded as waiting, never success, and its task id is kept so
+// the decision resumes that task instead of starting another run.
+func (b *Book) executeDurable(parent context.Context, it Automation, d *DurableRunner) (sid, out string, err error) {
+	runID := strings.TrimSpace(it.RunID)
+	if runID == "" {
+		// Without a persisted identity this run cannot be proven to be the same
+		// firing on a retry, so it must not execute. startLocked always mints one.
+		return "", "", errors.New("运行标识缺失，未执行")
+	}
+	ctx, cancel := context.WithTimeout(parent, RunTimeout)
+	defer cancel()
+	// Submission is idempotent per run identity: after a crash between submit
+	// and the TaskID write, this re-submits the same run and adopts the same
+	// task instead of creating a second one. An adopted TaskID is kept, so no
+	// new identity is ever invented for it.
+	taskID := strings.TrimSpace(it.TaskID)
+	sessionID := strings.TrimSpace(it.SessionID)
+	submitted, submittedSession, submitErr := d.Submit(ctx, it, runID)
+	if submitErr != nil {
+		// A definite local rejection can never succeed on retry, so it is a
+		// failure. Anything else (store, registry, network, timeout) is an
+		// uncertain submission: the task may have been accepted, so the run
+		// keeps its identity and stays waiting for the same run to be retried
+		// instead of being marked failed and replaced by a new firing.
+		if isRejected(submitErr) {
+			return "", "", submitErr
+		}
+		return "", "", fmt.Errorf("%w：提交结果未知（%v）", errWaiting, submitErr)
+	}
+	if taskID != "" && submitted != "" && submitted != taskID {
+		return "", "", errors.New("运行对应的任务不一致，未执行")
+	}
+	if taskID == "" {
+		taskID = submitted
+	}
+	if submittedSession != "" {
+		sessionID = submittedSession
+	}
+	if taskID == "" {
+		return sessionID, "", errors.New("运行没有生成任务，未执行")
+	}
+	sid = sessionID
+	b.mu.Lock()
+	// The observation must target this firing only: a stale observation (the
+	// automation already moved on to another run) is discarded.
+	cur, ok := b.items[it.ID]
+	stale := !ok || (cur.RunID != "" && cur.RunID != runID)
+	if !stale {
+		prev := cur
+		cur.TaskID = taskID
+		if sessionID != "" {
+			cur.SessionID = sessionID
+		}
+		b.items[it.ID] = cur
+		if saveErr := b.saveLocked(); saveErr != nil {
+			log.Printf("automation: save task id: %v", saveErr)
+			b.items[it.ID] = prev
+			b.mu.Unlock()
+			// The task was accepted, but its id could not be persisted. The run
+			// must stay unresolved with the same identity so a retry adopts the
+			// same task: reporting a failure here would free the automation for
+			// a new firing while the accepted task is still running.
+			return sid, "", fmt.Errorf("%w：任务标识保存失败，等待恢复", errWaiting)
+		}
+	}
+	b.mu.Unlock()
+	if stale {
+		return sid, "", nil
+	}
+	if d.Wait == nil {
+		// Nothing can observe the task, so its outcome is unknown. Reporting
+		// success here would claim a result nobody read.
+		return sid, "", errWaiting
+	}
+	obs, waitErr := d.Wait(ctx, it, taskID)
+	if obs.SessionID != "" {
+		sid = obs.SessionID
+	}
+	// The status mapping is the single source of truth: only a completed run is
+	// a success. A failed, cancelled or budget-exhausted run is a failure, and a
+	// parked, paused or still-active one keeps waiting.
+	switch observedStatus(obs) {
+	case StatusSuccess:
+		return sid, obs.Text, nil
+	case StatusWaiting:
+		return sid, "", errWaiting
+	case StatusFailed:
+		if waitErr != nil {
+			return sid, "", waitErr
+		}
+		return sid, "", errors.New(firstNonEmptyText(obs.Text, "运行没有完成："+obs.Status))
+	default:
+		if waitErr != nil {
+			return sid, "", waitErr
+		}
+		return sid, "", errWaiting
+	}
+}
+
 func (b *Book) finish(ran Automation, sid, out string, runErr error) {
 	status, detail := StatusSuccess, strings.TrimSpace(out)
-	if runErr != nil {
+	switch {
+	case errors.Is(runErr, errWaiting):
+		// A parked run needs a human decision or is still active. It is not a
+		// success and not a failure: the durable task stays resumable.
+		status, detail = StatusWaiting, "等待处理"
+	case runErr != nil:
 		status, detail = StatusFailed, runErr.Error()
 	}
 	if sid == "" {
 		sid = SessionID(ran)
 	}
 	b.mu.Lock()
-	delete(b.running, ran.ID)
 	it, ok := b.items[ran.ID]
+	// Only the current firing may write the final status. A late result from a
+	// previous firing (the automation already moved on) must not overwrite the
+	// newer run's state, its task id, or the busy marker of the current run.
+	if ok && ran.RunID != "" && it.RunID != "" && it.RunID != ran.RunID {
+		b.mu.Unlock()
+		return
+	}
+	delete(b.running, ran.ID)
 	if ok {
+		prev := it
 		it.LastStatus = status
-		if runErr != nil {
+		switch {
+		case status == StatusWaiting:
+			it.LastError = "等待审批或用户回答后才能继续"
+			it.LastSummary = ""
+		case runErr != nil:
 			it.LastError = clip(detail, summaryLimit)
-		} else {
+			it.LastSummary = ""
+		default:
 			it.LastError = ""
 			it.LastSummary = clip(detail, summaryLimit)
 		}
@@ -448,6 +846,16 @@ func (b *Book) finish(ran Automation, sid, out string, runErr error) {
 		b.items[it.ID] = it
 		if err := b.saveLocked(); err != nil {
 			log.Printf("automation: save: %v", err)
+			// Never keep an unpersisted success. Disk still holds the pre-run
+			// state, which carries the run identity, so the run stays unresolved
+			// and a retry reconciles the same task; in memory it is marked
+			// waiting too, so no new firing can start while disk is stale.
+			status = StatusWaiting
+			detail = "运行结果保存失败，等待恢复"
+			prev.LastStatus = status
+			prev.LastError = detail
+			prev.LastSummary = ""
+			b.items[it.ID] = prev
 		}
 	}
 	st := b.store

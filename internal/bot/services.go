@@ -56,18 +56,24 @@ func (a *Agent) inspectServices(ctx context.Context, speaker model.Bot, fallback
 		return "仅规划模式，不执行远程检测；可用 list 查看已保存的检测快照"
 	}
 	if unselected || mode == preferences.ModeManual {
-		gate := riskGate{Ask: true, Level: "low", Reasons: []string{"只读检测 systemd、Docker 与监听端口"}}
-		if unselected {
-			gate.Level = "high"
-			gate.Reasons = append(gate.Reasons, "这台服务器不是本轮手动选中的")
+		if !grantForCall(ctx, speaker.ID, rec.ID, call) {
+			gate := riskGate{Ask: true, Level: "low", Reasons: []string{"只读检测 systemd、Docker 与监听端口"}}
+			if unselected {
+				gate.Level = "high"
+				gate.Reasons = append(gate.Reasons, "这台服务器不是本轮手动选中的")
+			}
+			review := a.askOperator(ctx, speaker.ID, rec, "只读检测服务器服务、容器与监听端口", mode, gate)
+			if review.Pending {
+				if unselected {
+					return "没有执行检测：这台服务器不是本轮手动选中的，等待用户审批"
+				}
+				return PendingNotice
+			}
+			if !review.Allow {
+				return "没有执行检测：" + review.Reason
+			}
 		}
-		review := a.askOperator(ctx, speaker.ID, rec, "只读检测服务器服务、容器与监听端口", mode, gate)
-		if !review.Allow {
-			return "没有执行检测：" + review.Reason
-		}
-		if unselected {
-			grantServer(ctx, rec.ID)
-		}
+		// A one-call approval covers this scan only, not the rest of the turn.
 	}
 	v, err := a.Services.Scan(ctx, rec.ID)
 	if err != nil {

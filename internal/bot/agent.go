@@ -12,7 +12,6 @@ import (
 	"log"
 	"onefrog/internal/asset"
 	"onefrog/internal/attachment"
-	"onefrog/internal/audit"
 	"onefrog/internal/devmodule"
 	"onefrog/internal/maintenance"
 	"onefrog/internal/model"
@@ -24,6 +23,7 @@ import (
 	"onefrog/internal/secret"
 	"onefrog/internal/services"
 	"onefrog/internal/store"
+	"onefrog/internal/task"
 	"onefrog/internal/usage"
 	"onefrog/internal/workspace"
 )
@@ -33,7 +33,14 @@ type Exec interface {
 }
 
 type Agent struct {
-	Workspace  *workspace.Service
+	Workspace *workspace.Service
+	// LocalWorkspace executes native local workspaces on this server, inside
+	// operator-allowlisted roots. Nil disables the whole feature.
+	LocalWorkspace *workspace.LocalEngine
+	// Jobs tracks native background command jobs started inside local
+	// workspaces. Process-local: a restart loses running jobs and tasks must
+	// treat their outcome as unknown, never replay them.
+	Jobs       *workspace.JobTable
 	Gate       *maintenance.Gate
 	Services   *services.Scanner
 	OAuth      *providerlogin.Manager
@@ -59,6 +66,18 @@ type Agent struct {
 	// Mail runs background inbox turns for message_agent. Nil delivers the
 	// message without waking the target bot.
 	Mail *Mailbox
+	// Tasks is the durable task registry. Nil keeps the ordinary, turn-bound
+	// chat loop.
+	Tasks *task.Book
+	// TasksRunner is the durable task runner used by background callers
+	// (automation, inbox). Nil means those callers fall back to the ordinary
+	// turn-bound loop.
+	TasksRunner *Runner
+	// AuthorizeCall is the shared per-call authorization hook: it runs after
+	// capability and isolation checks and before any side effect. A non-empty
+	// returned string refuses or parks the call; the returned context carries
+	// the permit for exactly that call. Nil falls back to Approver.
+	AuthorizeCall func(ctx context.Context, speaker model.Bot, serverID string, call toolCall) (context.Context, string)
 }
 
 // ProbeIndex forgets a server's probe after its panel record is deleted.
@@ -419,7 +438,6 @@ func (a *Agent) runTool(ctx context.Context, botID, fallbackServer string, call 
 			return ev
 		}
 	}
-	unselected := options(ctx).RestrictServers && (fallbackServer == "" || rec.ID != fallbackServer) && !serverGranted(ctx, rec.ID)
 	expanded, err := a.expand(ctx, args.Command)
 	if err != nil {
 		ev.Output = err.Error()
@@ -429,69 +447,20 @@ func (a *Agent) runTool(ctx context.Context, botID, fallbackServer string, call 
 		ev.Output = rec.Name + " 的 SSH 主机指纹还没确认，命令没有执行。请主控先用 panel 的 test_server 拿到指纹，再 confirm_fingerprint。确认会弹出审批，不要自己接受指纹。"
 		return ev
 	}
-	mode := a.approvalMode(ctx)
-	reason := args.Reason
-	if reason == "" {
-		reason = args.Purpose
-	}
-	gate := a.assess(ctx, args.Command, args.Risk, reason)
-	if unselected {
-		gate.Ask = true
-		if riskRank[gate.Level] < riskRank["high"] {
-			gate.Level = "high"
-		}
-		gate.Reasons = append([]string{"这台服务器不是本轮手动选中的"}, gate.Reasons...)
-	}
-	blocked := func(why string) ToolEvent {
-		ev.Output = "已拦截：" + why + "。不要换一种写法重试同一操作；请向用户说明情况并询问下一步。"
-		_, _ = a.Store.AddHistory(ctx, store.HistoryRec{History: model.History{BotID: botID, ServerID: rec.ID, Action: ev.Command, Command: ev.Command, Status: "blocked"}})
-		return ev
-	}
-	denied := func(why string) ToolEvent {
-		if unselected {
-			if strings.TrimSpace(why) == "" {
-				why = "未批准"
+	// Authorization is centralized in authorizeCall: one three-state decision
+	// for this exact call. A call the shared hook already allowed carries a
+	// grant and skips the second card; a parked call returns PendingNotice and
+	// must not run.
+	if !grantForCall(ctx, botID, rec.ID, call) {
+		next, refusal := a.authorizeCall(ctx, model.Bot{ID: botID}, fallbackServer, call)
+		if refusal != "" {
+			ev.Output = refusal
+			if refusal != PendingNotice {
+				_, _ = a.Store.AddHistory(ctx, store.HistoryRec{History: model.History{BotID: botID, ServerID: rec.ID, Action: ev.Command, Command: ev.Command, Status: "blocked"}})
 			}
-			ev.Output = "已拦截：未手动选择的服务器 " + rec.Name + " 需要审批后才能执行。" + why
-			_, _ = a.Store.AddHistory(ctx, store.HistoryRec{History: model.History{BotID: botID, ServerID: rec.ID, Action: ev.Command, Command: ev.Command, Status: "blocked"}})
 			return ev
 		}
-		return blocked(why)
-	}
-	switch mode {
-	case preferences.ModeSmart, preferences.ModeManual:
-		// The operator decides; catastrophic keyword hits are shown, not hard-blocked.
-		if mode == preferences.ModeSmart && !gate.Ask {
-			break
-		}
-		if hard := audit.Decide(expanded); !hard.Allow {
-			gate.Reasons = append([]string{"命中内置危险命令清单：" + hard.Reason}, gate.Reasons...)
-			gate.Level = "high"
-		}
-		if decision := a.askOperator(ctx, botID, rec, ev.Command, mode, gate); !decision.Allow {
-			return denied(decision.Reason)
-		}
-		if unselected {
-			grantServer(ctx, rec.ID)
-		}
-	default:
-		// off, model, plan: the built-in catastrophic list is a hard block.
-		if hard := audit.Decide(expanded); !hard.Allow {
-			a.recordReview(ctx, botID, rec.ID, ev.Command, Review{Allow: false, Reason: hard.Reason, Risk: "high", Mode: mode, Findings: gate.Findings})
-			return blocked(hard.Reason)
-		}
-		if unselected && mode != preferences.ModePlan {
-			if decision := a.askOperator(ctx, botID, rec, ev.Command, mode, gate); !decision.Allow {
-				return denied(decision.Reason)
-			}
-			grantServer(ctx, rec.ID)
-			break
-		}
-		if mode != preferences.ModeOff {
-			if decision := a.approve(ctx, botID, rec.ID, args.Command, gate); !decision.Allow {
-				return blocked(decision.Reason)
-			}
-		}
+		ctx = next
 	}
 	plain := ""
 	if rec.EncryptedKey != "" {

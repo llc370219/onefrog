@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowUp, Blocks, BookOpen, CodeXml, CalendarClock, Code2, HardDrive, History, Inbox, KeyRound, LoaderCircle, LockKeyhole, Plus, Server, ShieldCheck, Sparkles, Paperclip, Send, Trash2, Users, Wallet } from 'lucide-react';
-import { api, type ApprovalDecision, type BotMemory, type ProjectNote, type BotRow, type ChatLine, type ChatMode, type ChatSession, type Host, type Attachment, type SecretRow, type SettingsState, type WorkspaceTarget } from '../api';
+import { api, taskIsActive, type BotMemory, type ProjectNote, type BotRow, type ChatLine, type ChatMode, type ChatSession, type Host, type Attachment, type SecretRow, type SettingsState, type TaskView, type WorkspaceTarget } from '../api';
 import ChatControls, { type ChatControlState } from '../components/ChatControls';
 import Attachments from '../components/Attachments';
 import TurnStream from '../components/TurnStream';
+import TaskPanel from '../components/TaskPanel';
 import { Button, IconButton, Modal, Status } from '../components/ui';
 import { BotAvatar } from '../components/BotAvatar';
 import { AvatarStack } from '../components/SecondaryNav';
@@ -49,10 +50,16 @@ export default function Chat({
   onNotice,
   onAnswer,
   onProvide,
-  onDecideApproval,
   onGoServer,
   onGoAsset,
   onGoHistory,
+  tasks = [],
+  taskBusy,
+  onTaskAction,
+  onTaskGuide,
+  onTaskApproval,
+  onTaskDismiss,
+  onTaskParent,
 }: {
   onAddServer: () => void;
   controls: ChatControlState;
@@ -86,16 +93,23 @@ export default function Chat({
   onNotice: (s: string) => void;
   onAnswer: (line: ChatLine, values: string[], custom: string) => void;
   onProvide: (line: ChatLine, value: string) => void;
-  onDecideApproval: (id: string, dec: ApprovalDecision) => void;
   onGoServer?: () => void;
   onGoAsset?: (host: Host) => void;
   onGoHistory?: (hostName: string) => void;
+  tasks?: TaskView[];
+  taskBusy?: string;
+  onTaskAction: (id: string, action: 'pause' | 'resume' | 'cancel') => void;
+  onTaskGuide: (id: string, content: string) => void;
+  onTaskApproval: (taskID: string, approvalID: string, allow: boolean) => void;
+  onTaskDismiss?: (id: string) => void;
+  onTaskParent?: (task: TaskView) => TaskView | undefined;
 }) {
   const end = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const taskRunning = tasks.some(taskIsActive);
   useEffect(() => {
     end.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
-  }, [lines]);
+  }, [lines, tasks]);
 
   const [memoryState, setMemoryState] = useState<{ bot: string; rows: BotMemory[] } | null>(null);
   const memoryBot = mode === 'direct' ? activeBot?.id || '' : '';
@@ -121,7 +135,7 @@ export default function Chat({
     return () => { active = false; };
   }, [projectID, sending]);
   const notes = projectID && projectNotes?.id === projectID ? projectNotes : null;
-  const title = projectTitle || sessions.find(s => s.id === session)?.title || '群聊';
+  const title = projectTitle || sessions.find(s => s.id === session)?.title || '隔离项目';
 
   const current = hosts.find(h => h.id === selected);
   const members = workspace && activeBot ? [activeBot] : mode === 'team' ? groupMembers(bots, activeBot?.id || '', controls.excluded) : [];
@@ -135,7 +149,7 @@ export default function Chat({
     ? '查看或开关面板模块、维护资产与订阅台账，或管理自定义模块里的数据记录。'
     : mode === 'direct'
     ? `只和「${activeBot?.name || 'Bot'}」一对一对话。它带着自己的记忆独立干活，能操作服务器和面板；别的 Bot 更熟悉时，它会自己找对方协助。`
-    : `这是一个 ${members.length} 个 Bot 的群聊。主控「${activeBot?.name || '主控'}」按任务分派给群里的 Bot，每条回复都标出是谁说的；你可以在右侧随时剔除或拉入 Bot。`;
+    : `这是一个 ${members.length} 个 Bot 的隔离项目。主控「${activeBot?.name || '主控'}」按任务分派给项目里的 Bot，每条回复都标出是谁说的；会话和工作记忆只保留在这个项目里，不读取任何 Bot 私有记忆，也不会写入任何 Bot 的长期记忆。你可以在右侧随时剔除或拉入 Bot。`;
 
   const suggestions = workspace
     ? [
@@ -183,11 +197,12 @@ export default function Chat({
             ? <Button onClick={onNewTopic || onNew} disabled={sending}><Plus size={15}/>新话题</Button>
             : <div className="conversation-actions">
               <IconButton label="项目工作记忆" onClick={() => setMemoryOpen(true)}><BookOpen size={16}/></IconButton>
-              {workspace ? <Button onClick={onOpenWorkspace}><CodeXml size={15}/>查看代码</Button> : <Button onClick={onNew} disabled={sending}><Users size={15}/>新建群聊</Button>}
+              {workspace ? <Button onClick={onOpenWorkspace}><CodeXml size={15}/>查看代码</Button> : <Button onClick={onNew} disabled={sending}><Users size={15}/>新建隔离项目</Button>}
             </div>}
         </header>
         {workspace && <div className="chat-workspace-path mono" title={workspace.root}>{current?.name || workspace.server_id} · {workspace.root}</div>}
         <div className="chat-scroll">
+          <TaskPanel tasks={tasks} bots={bots} parentOf={onTaskParent} busy={taskBusy} settings={settings} onAction={onTaskAction} onGuide={onTaskGuide} onApproval={onTaskApproval} onDismiss={onTaskDismiss}/>
           {!lines.length ? (
             <div className="chat-welcome">
               {mode === 'direct' && activeBot ? <BotAvatar bots={bots} id={activeBot.id} className="welcome-icon"/> : <div className="welcome-icon welcome-group"><AvatarStack bots={bots} members={members} max={5}/></div>}
@@ -236,7 +251,6 @@ export default function Chat({
                         stale={i < lines.length - 1}
                         disabled={sending}
                         animateFinal={i === lines.length - 1 && !line.pending}
-                        onDecideApproval={onDecideApproval}
                         onAnswerChoice={(values, custom) => onAnswer(line, values, custom)}
                         onProvideSecret={value => onProvide(line, value)}
                         onCopy={copy}
@@ -318,12 +332,12 @@ export default function Chat({
               <span className="attachment-hint" title="最多 4 个附件；图片/PDF 每个 5 MB，UTF-8 文本每个 256 KB，合计 12 MB。">
                 {uploading ? '正在加密上传…' : attachments.length ? `${attachments.length}/4 个附件` : '图片 / PDF / 配置 / 日志'}
               </span>
-              <button className="send-btn" type="submit" aria-label="发送指令" disabled={(!draft.trim() && !attachments.length) || sending || uploading || !activeBot?.enabled}>
+              <button className="send-btn" type="submit" aria-label="发送指令" disabled={(!draft.trim() && !attachments.length) || sending || uploading || !activeBot?.enabled || taskRunning} title={taskRunning ? '当前任务还在执行，可在上方任务卡片暂停、取消或补充引导' : undefined}>
                 {sending ? <LoaderCircle size={18} className="spin"/> : <ArrowUp size={19}/>}
               </button>
             </div>
           </form>
-          <p className="composer-note"><LockKeyhole size={11}/>凭据通过加密卡片录入 · 高危操作在对话内联卡片确认 · Enter 发送</p>
+          <p className="composer-note"><LockKeyhole size={11}/>凭据通过加密卡片录入 · 高危操作在对话内联卡片确认 · Enter 发送{taskRunning ? ' · 任务执行中，可先写好下一条指令' : ''}</p>
         </div>
       </div>
       <aside className="context-panel">
@@ -393,8 +407,8 @@ export default function Chat({
             <button type="button" className="text-btn" onClick={() => setMemoryOpen(true)}><BookOpen size={13}/>查看笔记</button>
           </div>
           {!workspace && <div className="context-section">
-            <h3>群成员 <span className="tag">{members.length}</span></h3>
-            <p className="muted">主控按需分派任务给群里的 Bot，可随时剔除或拉入。</p>
+            <h3>项目成员 <span className="tag">{members.length}</span></h3>
+            <p className="muted">主控按需分派任务给项目里的 Bot，可随时剔除或拉入。</p>
             {bots.filter(b => b.enabled).sort((a, b) => Number(b.id === activeBot?.id) - Number(a.id === activeBot?.id)).map(b => {
               const lead = b.id === activeBot?.id;
               const out = !lead && controls.excluded.includes(b.id);

@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -63,11 +64,23 @@ func hasInteractiveCardCall(calls []toolCall) bool {
 }
 
 func (a *Agent) lead(ctx context.Context, leader model.Bot, serverID, sessionID string, sink func(Step)) (Result, error) {
+	tr := &trace{agent: a, ctx: ctx, sink: sink}
+	return a.leadWithTrace(ctx, leader, serverID, sessionID, tr)
+}
+
+// leadWithTrace runs one leader turn on an existing trace so a durable task
+// keeps its own conversation window and journal.
+func (a *Agent) leadWithTrace(ctx context.Context, leader model.Bot, serverID, sessionID string, tr *trace) (Result, error) {
 	leader, creds, err := a.credentialsFor(ctx, leader, false)
 	if err != nil {
 		return Result{}, err
 	}
-	tr := &trace{agent: a, ctx: ctx, sink: sink}
+	if tr.agent == nil {
+		tr.agent = a
+	}
+	if tr.ctx == nil {
+		tr.ctx = ctx
+	}
 	ctx = context.WithValue(ctx, traceKey{}, tr)
 	tr.ctx = ctx
 	var system string
@@ -89,12 +102,23 @@ func (a *Agent) lead(ctx context.Context, leader model.Bot, serverID, sessionID 
 			system = a.leaderPrompt(ctx, leader, serverID)
 		}
 	}
-	messages, err := a.sessionMessages(ctx, sessionID, system, leader.Name)
-	if err != nil {
-		return Result{}, err
+	var messages []map[string]any
+	if st := taskFrom(ctx); st != nil {
+		// A durable task resumes from its stored window; only a brand-new
+		// task builds one from the session.
+		if it, e := st.book.Get(st.id); e == nil && len(it.Checkpoint.Messages) > 0 {
+			messages = copyMessages(it.Checkpoint.Messages)
+		}
+	}
+	if len(messages) == 0 {
+		var err error
+		messages, err = a.sessionMessages(ctx, sessionID, system, leader.Name)
+		if err != nil {
+			return Result{}, err
+		}
 	}
 	text, err := a.converse(ctx, leader, creds, serverID, messages, canDelegate, tr)
-	if err != nil {
+	if err != nil && !(errors.Is(err, errSuspended) && (tr.choice != nil || tr.secret != nil)) {
 		return Result{}, err
 	}
 	text = strings.TrimSpace(a.redact(ctx, text))
@@ -124,48 +148,23 @@ func (a *Agent) lead(ctx context.Context, leader model.Bot, serverID, sessionID 
 	if text == "" && len(tr.timeline) == 0 {
 		text = "没有得到模型回复。"
 	}
+	// A durable task owns its own transcript writes: the task loop stores the
+	// closing message together with its checkpoint, so writing it here as well
+	// would duplicate it. Cards are the exception, because their message id is
+	// what the task binds the pending state to.
+	if taskFrom(ctx) != nil {
+		return Result{SessionID: sessionID, Text: text, Tools: tr.tools, Steps: tr.steps, Timeline: tr.timeline}, nil
+	}
 	msg, _ := a.Store.AddMessage(ctx, model.Message{SessionID: sessionID, Role: "assistant", Content: text, Timeline: tr.timeline})
 	return Result{SessionID: sessionID, Text: text, Tools: tr.tools, Steps: tr.steps, Timeline: tr.timeline, MessageID: msg.ID}, nil
 }
 
 func (a *Agent) converse(ctx context.Context, speaker model.Bot, creds credentials, serverID string, messages []map[string]any, canDelegate bool, tr *trace) (string, error) {
 	limit := a.execution().MaxSteps
-	var spec []map[string]any
-	if options(ctx).Workspace != nil {
-		spec = []map[string]any{workspaceTool, askUserTool, rememberTool, recallTool}
-	} else if a.developsModules(speaker) {
-		spec = []map[string]any{developModuleTool, rememberTool, recallTool}
-		if !isWorker(ctx) {
-			spec = append(spec, askUserTool)
-			if canDelegate {
-				spec = append(spec, askAgentTool())
-			}
-		}
-	} else {
-		spec = toolDefs(canDelegate, a.managesAssets(speaker))
-		if !a.managesAssets(speaker) {
-			spec = append(spec, inspectServicesTool)
-		}
-		if a.managesAssets(speaker) && !isWorker(ctx) {
-			spec = append(spec, askUserTool)
-			if canDelegate {
-				spec = append(spec, askAgentTool())
-			}
-		}
-		if !a.managesAssets(speaker) && !isWorker(ctx) {
-			spec = append(spec, askUserTool, requestSecretTool)
-			if a.commandsPanel(ctx, speaker) {
-				spec = append(spec, panelTool, installProbeTool)
-			}
-			spec = append(spec, developModuleTool)
-			spec = append(spec, toolDefs(false, true)...)
-		}
-	}
-	if projectID(ctx) != "" && a.managesAssets(speaker) {
-		spec = append(spec, rememberTool, recallTool)
-	}
-	if options(ctx).Workspace == nil && a.canMessage(ctx, speaker) {
-		spec = append(spec, messageAgentTool())
+	spec := a.toolSpec(ctx, speaker, canDelegate)
+	if state := taskFrom(ctx); state != nil {
+		out, err := a.taskLoop(ctx, state, speaker, creds, serverID, messages, spec, canDelegate, tr)
+		return out.Text, err
 	}
 	mediaNote := ""
 	for i := 0; i < limit; i++ {
@@ -204,6 +203,56 @@ func (a *Agent) converse(ctx context.Context, speaker model.Bot, creds credentia
 		}
 	}
 	return joinMediaNote(mediaNote, a.pauseForBudget(ctx, speaker, creds, messages)), nil
+}
+
+// toolSpec builds the tool list for one speaker. It is shared by the ordinary
+// turn loop and the durable task loop so both offer exactly the same tools.
+func (a *Agent) toolSpec(ctx context.Context, speaker model.Bot, canDelegate bool) []map[string]any {
+	var spec []map[string]any
+	if options(ctx).Workspace != nil {
+		spec = []map[string]any{workspaceTool, askUserTool, rememberTool, recallTool}
+	} else if a.developsModules(speaker) {
+		spec = []map[string]any{developModuleTool, rememberTool, recallTool}
+		if !isWorker(ctx) {
+			spec = append(spec, askUserTool)
+			if canDelegate {
+				spec = append(spec, askAgentTool())
+			}
+		}
+	} else {
+		spec = toolDefs(canDelegate, a.managesAssets(speaker))
+		if !a.managesAssets(speaker) {
+			spec = append(spec, inspectServicesTool)
+		}
+		if a.managesAssets(speaker) && !isWorker(ctx) {
+			spec = append(spec, askUserTool)
+			if canDelegate {
+				spec = append(spec, askAgentTool())
+			}
+		}
+		if !a.managesAssets(speaker) && !isWorker(ctx) {
+			spec = append(spec, askUserTool, requestSecretTool)
+			if a.commandsPanel(ctx, speaker) {
+				spec = append(spec, panelTool, installProbeTool)
+			}
+			spec = append(spec, developModuleTool)
+			spec = append(spec, toolDefs(false, true)...)
+		}
+	}
+	if projectID(ctx) != "" && a.managesAssets(speaker) {
+		spec = append(spec, rememberTool, recallTool)
+	}
+	if options(ctx).Workspace == nil && a.canMessage(ctx, speaker) {
+		spec = append(spec, messageAgentTool())
+	}
+	if taskFrom(ctx) != nil {
+		spec = append(spec, taskToolDefs()...)
+	}
+	// Native background jobs exist only for a bound local workspace.
+	if jobToolsActive(ctx) && taskFrom(ctx) != nil {
+		spec = append(spec, jobToolDefs()...)
+	}
+	return spec
 }
 
 // pauseForBudget runs when the tool loop hits its limit. The tool results are
@@ -288,6 +337,22 @@ func (a *Agent) execCall(ctx context.Context, speaker model.Bot, creds credentia
 		switch call.Function.Name {
 		case "workspace":
 			return a.workspaceCall(ctx, speaker, call, tr)
+		case "job_start":
+			return a.jobStartCall(ctx, speaker, call, tr)
+		case "job_status":
+			return a.jobStatusCall(ctx, speaker, call, tr)
+		case "job_cancel":
+			return a.jobCancelCall(ctx, speaker, call, tr)
+		case "job_wait":
+			// Parked by the task layer; without a task state this is unusable.
+			if st := taskFrom(ctx); st != nil {
+				out, parked := a.jobWaitCall(ctx, st, speaker, call, tr)
+				if parked {
+					return out
+				}
+				return out
+			}
+			return "job_wait 只能在持久任务里使用"
 		case "ask_user", "remember", "recall":
 		default:
 			return "代码任务只能使用已绑定的工作区工具"
@@ -298,6 +363,24 @@ func (a *Agent) execCall(ctx context.Context, speaker model.Bot, creds credentia
 	}
 	if a.developsModules(speaker) && call.Function.Name != "develop_module" && call.Function.Name != "remember" && call.Function.Name != "recall" && call.Function.Name != "ask_user" && call.Function.Name != "ask_agent" && call.Function.Name != "message_agent" {
 		return "自定义模块 Bot 只负责开发和维护自定义模块，不能执行服务器命令；需要服务器或资产操作时请用 ask_agent 协同对应 Bot。"
+	}
+	// The shared authorization hook runs once per call, after the capability
+	// checks above and before any side effect. A refusal is returned as the
+	// tool result; a parked call returns the pending notice and does not run.
+	// A nil AuthorizeCall still authorizes: the central hook is the default,
+	// never an optional bypass. The returned context already carries the hook
+	// mark, so it must be used as-is; re-marking here would drop the effective
+	// server and tool identity the handler checks.
+	if !isTaskStateTool(call.Function.Name) && !CallAlreadyAuthorized(ctx, speaker.ID, serverID, call) {
+		authorize := a.AuthorizeCall
+		if authorize == nil {
+			authorize = a.authorizeCall
+		}
+		next, blocked := authorize(ctx, speaker, serverID, call)
+		if blocked != "" {
+			return blocked
+		}
+		ctx = next
 	}
 	switch call.Function.Name {
 	case "connect_server":
@@ -414,6 +497,14 @@ func (a *Agent) execCall(ctx context.Context, speaker model.Bot, creds credentia
 }
 
 func (a *Agent) handOff(ctx context.Context, speaker model.Bot, creds credentials, serverID string, call toolCall, tr *trace) string {
+	// Inside a durable task, delegation must be a durable child task with its
+	// own session and journal, never an inline worker turn. The runtime
+	// intercepts ask_agent before dispatch; if this is reached anyway the
+	// window was built without the delegation hook, so refuse loudly instead
+	// of doing work the parent cannot account for.
+	if taskFrom(ctx) != nil {
+		return "任务内的派工必须作为持久子任务执行；当前窗口没有安装委托，未执行。"
+	}
 	var args struct {
 		BotID string `json:"bot_id"`
 		Task  string `json:"task"`
@@ -468,7 +559,17 @@ func (a *Agent) handOff(ctx context.Context, speaker model.Bot, creds credential
 		{"role": "system", "content": a.workerPrompt(ctx, target, serverID)},
 		{"role": "user", "content": taskContent},
 	}
-	workerCtx := usageContext(ctx, target.ID, "worker", child.provider)
+	// A delegated worker gets its own branch of the context: no task state, no
+	// task approver, no approved-call permit. Otherwise its turn would write
+	// into the leader's checkpoint and could finish the parent task. Its tool
+	// calls are still gated by the shared authorization hook, which is the same
+	// for leader and worker, and a park on a worker call is reported back as a
+	// refusal here (the parent stays in control).
+	workerOpt := options(ctx)
+	workerOpt.Approver = nil
+	workerCtx := context.WithValue(ctx, optionsKey{}, workerOpt)
+	workerCtx = context.WithValue(workerCtx, taskStateKey{}, (*taskState)(nil))
+	workerCtx = usageContext(workerCtx, target.ID, "worker", child.provider)
 	text, err := a.converse(workerCtx, target, child, serverID, messages, false, tr)
 	if err != nil {
 		return "派工失败：" + a.safe(ctx, err.Error())

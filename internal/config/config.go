@@ -35,6 +35,20 @@ type Config struct {
 	UpdateRepo string
 	// Channel (OF_CHANNEL) is the release channel: "stable" or "beta".
 	Channel string
+	// LocalWorkspace is the ENV-only operator policy for native local
+	// workspaces: an explicit allowlist of project roots plus an opt-in for
+	// command execution. It is loaded once at boot and cannot be widened from
+	// the settings API, the model or a running task.
+	LocalWorkspace LocalWorkspacePolicy
+}
+
+// LocalWorkspacePolicy is the immutable, boot-time local workspace policy.
+type LocalWorkspacePolicy struct {
+	// Roots are absolute project directories. Empty means the feature is off.
+	Roots []string
+	// CommandExecution opts in to shell/command runs (still with the process's
+	// OS account authority; never a sandbox).
+	CommandExecution bool
 }
 
 func Load() (Config, error) {
@@ -59,6 +73,36 @@ func Load() (Config, error) {
 		UpdateRepo:           strings.TrimSpace(os.Getenv("OF_UPDATE_REPO")),
 		Channel:              strings.TrimSpace(os.Getenv("OF_CHANNEL")),
 	}
+	// OF_LOCAL_WORKSPACE_ROOTS: a colon-separated allowlist of absolute
+	// project roots ("": feature off). Paths are normalized; a bad entry is a
+	// boot error rather than a silently narrowed allowlist.
+	for _, raw := range strings.Split(os.Getenv("OF_LOCAL_WORKSPACE_ROOTS"), ":") {
+		root := strings.TrimSpace(raw)
+		if root == "" {
+			continue
+		}
+		if !filepath.IsAbs(root) || strings.ContainsRune(root, 0) {
+			return Config{}, errString("OF_LOCAL_WORKSPACE_ROOTS 中的路径必须是绝对路径：" + root)
+		}
+		clean := filepath.Clean(root)
+		if clean == "/" {
+			return Config{}, errString("OF_LOCAL_WORKSPACE_ROOTS 不能包含文件系统根 /")
+		}
+		dup := false
+		for _, have := range cfg.LocalWorkspace.Roots {
+			if have == clean {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			cfg.LocalWorkspace.Roots = append(cfg.LocalWorkspace.Roots, clean)
+		}
+	}
+	// OF_LOCAL_COMMAND_EXECUTION=1: shell runs are a separate operator
+	// decision because they execute with the server process's OS account
+	// authority (NOT a sandbox).
+	cfg.LocalWorkspace.CommandExecution = os.Getenv("OF_LOCAL_COMMAND_EXECUTION") == "1" && len(cfg.LocalWorkspace.Roots) > 0
 	root, err := filepath.Abs(cfg.DataDir)
 	if err != nil {
 		return Config{}, err

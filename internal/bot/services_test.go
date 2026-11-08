@@ -35,7 +35,7 @@ func TestInspectServicesRespectsScopeApprovalAndSharedCache(t *testing.T) {
 	call.Function.Arguments = `{"action":"scan","server_id":"test-node"}`
 	restricted := context.WithValue(ctx, optionsKey{}, Options{RestrictServers: true})
 	out := a.inspectServices(restricted, speaker, "", call, nil)
-	if ssh.calls.Load() != 0 || !strings.Contains(out, "没有执行") {
+	if ssh.calls.Load() != 0 || (!strings.Contains(out, "没有执行") && !strings.Contains(out, "等待用户审批")) {
 		t.Fatalf("unselected host scanned without approval: %s", out)
 	}
 	plan := context.WithValue(ctx, optionsKey{}, Options{ApprovalMode: preferences.ModePlan})

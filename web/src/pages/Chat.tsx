@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowUp, Blocks, BookOpen, CodeXml, CalendarClock, Code2, HardDrive, History, Inbox, KeyRound, LoaderCircle, LockKeyhole, Plus, Server, ShieldCheck, Sparkles, Paperclip, Send, Trash2, Users, Wallet } from 'lucide-react';
+import { ArrowUp, Blocks, BookOpen, CodeXml, CalendarClock, Code2, HardDrive, History, Inbox, KeyRound, LoaderCircle, LockKeyhole, Plus, Server, ShieldCheck, Sparkles, Paperclip, Send, Square, Trash2, Users, Wallet } from 'lucide-react';
 import { api, taskIsActive, type BotMemory, type ProjectNote, type BotRow, type ChatLine, type ChatMode, type ChatSession, type Host, type Attachment, type SecretRow, type SettingsState, type TaskView, type WorkspaceTarget } from '../api';
 import ChatControls, { type ChatControlState } from '../components/ChatControls';
 import Attachments from '../components/Attachments';
@@ -9,6 +9,7 @@ import { Button, IconButton, Modal, Status } from '../components/ui';
 import { BotAvatar } from '../components/BotAvatar';
 import { AvatarStack } from '../components/SecondaryNav';
 import { groupMembers, groupSessions } from '../lib/chatGroups';
+import { statusLine, taskBusyId } from '../lib/taskCardFormat';
 
 function when(value: string) {
   const d = new Date(value);
@@ -97,7 +98,7 @@ export default function Chat({
   onGoAsset?: (host: Host) => void;
   onGoHistory?: (hostName: string) => void;
   tasks?: TaskView[];
-  taskBusy?: string;
+  taskBusy?: string | string[];
   onTaskAction: (id: string, action: 'pause' | 'resume' | 'cancel') => void;
   onTaskGuide: (id: string, content: string) => void;
   onTaskApproval: (taskID: string, approvalID: string, allow: boolean) => void;
@@ -107,6 +108,10 @@ export default function Chat({
   const end = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const taskRunning = tasks.some(taskIsActive);
+  // Roots of THIS chat that are still active (incl. paused): the pinned strip
+  // above the composer keeps the interrupt discoverable even when many child
+  // cards push the TaskPanel out of the visible scroll area.
+  const activeRoots = tasks.filter(t => taskIsActive(t) && !t.parent_id);
   useEffect(() => {
     end.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
   }, [lines, tasks]);
@@ -202,7 +207,6 @@ export default function Chat({
         </header>
         {workspace && <div className="chat-workspace-path mono" title={workspace.root}>{current?.name || workspace.server_id} · {workspace.root}</div>}
         <div className="chat-scroll">
-          <TaskPanel tasks={tasks} bots={bots} parentOf={onTaskParent} busy={taskBusy} settings={settings} onAction={onTaskAction} onGuide={onTaskGuide} onApproval={onTaskApproval} onDismiss={onTaskDismiss}/>
           {!lines.length ? (
             <div className="chat-welcome">
               {mode === 'direct' && activeBot ? <BotAvatar bots={bots} id={activeBot.id} className="welcome-icon"/> : <div className="welcome-icon welcome-group"><AvatarStack bots={bots} members={members} max={5}/></div>}
@@ -250,6 +254,7 @@ export default function Chat({
                         secret={line.secret}
                         stale={i < lines.length - 1}
                         disabled={sending}
+                        showCompletion={!taskRunning}
                         animateFinal={i === lines.length - 1 && !line.pending}
                         onAnswerChoice={(values, custom) => onAnswer(line, values, custom)}
                         onProvideSecret={value => onProvide(line, value)}
@@ -261,9 +266,35 @@ export default function Chat({
               ))}
             </div>
           )}
+          <TaskPanel tasks={tasks} bots={bots} parentOf={onTaskParent} busy={taskBusy} settings={settings} onAction={onTaskAction} onGuide={onTaskGuide} onApproval={onTaskApproval} onDismiss={onTaskDismiss}/>
           <div ref={end}/>
         </div>
         <div className="composer-area">
+          {(sending || activeRoots.length > 0) && (
+            <div className="composer-task-strip" role="status" aria-label="当前任务状态">
+              {sending && !activeRoots.length ? (
+                <span className="composer-task">
+                  <LoaderCircle size={13} className="spin"/>
+                  <span className="composer-task-status">已提交，等待任务创建…</span>
+                </span>
+              ) : activeRoots.map(t => (
+                <span className={`composer-task ${t.status}`} key={t.id}>
+                  {t.status === 'queued' || t.status === 'running'
+                    ? <LoaderCircle size={13} className="spin"/>
+                    : <span className="waiting-dot" aria-hidden="true"/>}
+                  <span className="composer-task-status" title={t.goal}>{statusLine(t)}</span>
+                  <button
+                    type="button"
+                    className="composer-task-stop"
+                    disabled={Boolean(taskBusyId(taskBusy, t.id))}
+                    aria-label={`停止任务：${t.goal}`}
+                    title={t.goal}
+                    onClick={() => onTaskAction(t.id, 'cancel')}
+                  ><Square size={12}/>停止</button>
+                </span>
+              ))}
+            </div>
+          )}
           <ChatControls
             workspace={Boolean(workspace)}
             onAddServer={onAddServer}

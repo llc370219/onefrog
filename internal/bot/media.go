@@ -91,6 +91,13 @@ func (a *Agent) postChat(ctx context.Context, baseURL, modelName, apiKey string,
 	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
 	res, err := client.Do(req)
 	if err != nil {
+		// Cancellation and timeout must survive as sentinel errors: the model
+		// loop classifies the in-flight activity as interrupted (not failed)
+		// from them, and the runner distinguishes operator cancellation from
+		// a genuine failure.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, 0, err
+		}
 		return nil, 0, fmt.Errorf("连不上模型接口：%s", clip(err.Error(), 180))
 	}
 	defer res.Body.Close()

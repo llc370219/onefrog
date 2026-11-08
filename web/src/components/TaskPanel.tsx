@@ -33,7 +33,7 @@ export default function TaskPanel({
   bots: BotRow[];
   /** Parent goal, when the task was delegated by another task. */
   parentOf?: (task: TaskView) => TaskView | undefined;
-  busy?: string;
+  busy?: string | string[];
   /** Model/provider settings, for resolving the card's model label. Optional. */
   settings?: SettingsState | null;
   onAction: (id: string, action: 'pause' | 'resume' | 'cancel') => void;
@@ -52,7 +52,7 @@ function TaskCard({ task, parent, bots, busy, settings, onAction, onGuide, onApp
   task: TaskView;
   parent?: TaskView;
   bots: BotRow[];
-  busy?: string;
+  busy?: string | string[];
   settings?: SettingsState | null;
   onAction: (id: string, action: 'pause' | 'resume' | 'cancel') => void;
   onGuide: (id: string, content: string) => void;

@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -91,7 +92,16 @@ var errNotOwner = errors.New("后台作业不属于当前任务，无法访问")
 
 // Start runs command in the exact requested root as a background process.
 // owner and taskID scope the job: only they can read or cancel it.
+//
+// The caller's ctx is deliberately NOT attached to the job: the job runs on
+// a detached background context so it can span model windows. The ctx is
+// only a start gate — it is checked before validation and again under the
+// registration lock before cmd.Start, so an already-canceled caller never
+// spawns a job. Canceling the ctx after Start returns never kills the job.
 func (t *JobTable) Start(ctx context.Context, engine *LocalEngine, root, command, owner, taskID string) (Job, error) {
+	if err := ctx.Err(); err != nil {
+		return Job{}, err
+	}
 	if engine == nil {
 		return Job{}, errors.New("本地工作区未启用")
 	}
@@ -117,6 +127,14 @@ func (t *JobTable) Start(ctx context.Context, engine *LocalEngine, root, command
 	}
 	t.gc()
 	t.mu.Lock()
+	// Second gate under the registration lock, BEFORE cmd.Start: either the
+	// caller ctx was already canceled when the lock was taken and Start
+	// rejects here, or the job registers atomically below. There is no
+	// window where a job is half-registered against a canceled caller.
+	if err := ctx.Err(); err != nil {
+		t.mu.Unlock()
+		return Job{}, err
+	}
 	running := 0
 	for _, j := range t.jobs {
 		if j.job.Status == JobRunning {
@@ -175,9 +193,13 @@ func (t *JobTable) Start(ctx context.Context, engine *LocalEngine, root, command
 		cancel: cancel,
 		done:   make(chan struct{}),
 	}
+	// Store the process handle while t.mu is held so registration is atomic
+	// with respect to CancelTask: any job CancelTask can observe as running
+	// already has a killable process. Storing after unlock would let a
+	// concurrent CancelTask miss the pid and leak the process tree.
+	rj.proc.Store(cmd.Process)
 	t.jobs[id] = rj
 	t.mu.Unlock()
-	rj.proc.Store(cmd.Process)
 	go t.watch(rj, cmd, runCtx, logPipe, errPipe)
 	return t.snapshot(rj), nil
 }
@@ -274,33 +296,112 @@ func (t *JobTable) Cancel(id, owner, taskID string) (Job, error) {
 	t.mu.Lock()
 	alive := rj.job.Status == JobRunning
 	t.mu.Unlock()
+	var killErr error
 	if alive {
+		signalJob(rj)
+		killErr = awaitJobEnd(rj)
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.snapshotLocked(rj), killErr
+}
+
+// signalJob immediately kills a running job's process tree: it fires the
+// context cancel (cmd.Cancel → group kill) and signals the group directly.
+// It does NOT wait and must be called WITHOUT t.mu held, so CancelTask can
+// fire it for every target before any waiting happens.
+func signalJob(rj *runningJob) {
+	rj.cancel()
+	if ap := rj.proc.Load(); ap != nil {
+		_ = killProcessTree(ap)
+	}
+}
+
+// jobKillWait bounds how long a cancel waits for the collector to record
+// the final state before giving up and reporting an error. A var only so
+// tests can shorten it.
+var jobKillWait = 10 * time.Second
+
+// awaitJobEnd waits for the job's collector to record the final state.
+// The kernel delivers the group signal asynchronously, so it polls briefly
+// and re-kills while the leader is still alive — a racing grandchild must
+// not keep the pipes open. Closing rj.done confirms the command itself
+// exited; descendants that escaped the group (e.g. double-forked) are not
+// tracked. It returns an error when the job is STILL not terminal after the
+// bounded wait, so a caller never reports success while the command is
+// still running. Call without t.mu held: it sleeps and waits on rj.done.
+func awaitJobEnd(rj *runningJob) error {
+	if canInspectProcesses {
 		if ap := rj.proc.Load(); ap != nil {
-			p := ap
-			rj.cancel()
-			// Verify the tree actually died: cancel signals the group, but the
-			// kernel delivers the signal asynchronously. Poll briefly and
-			// re-kill so a racing grandchild cannot keep the pipes open.
-			if canInspectProcesses {
-				for i := 0; i < 20; i++ {
-					if !pidAlive(p.Pid) {
-						break
-					}
-					_ = killProcessTree(p)
-					time.Sleep(50 * time.Millisecond)
+			for i := 0; i < 20; i++ {
+				if !pidAlive(ap.Pid) {
+					break
 				}
+				_ = killProcessTree(ap)
+				time.Sleep(50 * time.Millisecond)
 			}
-		} else {
-			rj.cancel()
 		}
 	}
 	select {
 	case <-rj.done:
-	case <-time.After(10 * time.Second):
+		return nil
+	case <-time.After(jobKillWait):
+		return fmt.Errorf("后台作业 %s 取消后仍未结束，可能仍有残留进程", rj.job.ID)
 	}
+}
+
+// CancelTask cancels EVERY running job started by exactly this owner and
+// task, e.g. when the task is aborted mid-run. Other tasks and other owners
+// are never touched, and there are no tombstones: each job simply records
+// its cancelled outcome and expires through the normal retention path.
+//
+// Race semantics with Start: a Start whose caller ctx is already canceled
+// is rejected under the registration lock (Start re-checks ctx.Err there),
+// so a canceled task cannot spawn new jobs afterwards. For a Start already
+// in flight with a live ctx, registration is atomic with respect to this
+// method (the proc handle is stored under the same table lock), so any job
+// visible here as running is fully killable: it either registers before the
+// snapshot below and gets cancelled, or does not exist yet for this task.
+//
+// No waits happen under the table lock. Every target is signalled FIRST so
+// all process groups die in parallel, then the bounded waits run
+// concurrently: the worst-case latency is one signal pass plus one
+// jobKillWait window, not multiplied by the job count. If any job is still
+// running after the wait, an error is returned — silent success is never
+// reported.
+func (t *JobTable) CancelTask(owner, taskID string) error {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.snapshotLocked(rj), nil
+	var targets []*runningJob
+	for _, rj := range t.jobs {
+		if rj.job.Status == JobRunning && rj.job.Owner == owner && rj.job.TaskID == taskID {
+			targets = append(targets, rj)
+		}
+	}
+	t.mu.Unlock()
+	if len(targets) == 0 {
+		return nil
+	}
+	// Signal phase: fire every kill immediately, no waiting anywhere.
+	for _, rj := range targets {
+		signalJob(rj)
+	}
+	// Wait phase: concurrently, so the bound is constant in the job count.
+	var wg sync.WaitGroup
+	errs := make([]error, len(targets))
+	for i, rj := range targets {
+		wg.Add(1)
+		go func(i int, rj *runningJob) {
+			defer wg.Done()
+			errs[i] = awaitJobEnd(rj)
+		}(i, rj)
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Wait blocks until the job finishes or the context ends, only for its owner

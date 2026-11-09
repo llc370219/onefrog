@@ -97,17 +97,3 @@ func (s *Server) updateProfile(c *gin.Context) {
 	}
 	c.JSON(200, s.profileJSON(user))
 }
-func (s *Server) listSessions(c *gin.Context) {
-	items, err := s.Store.ListChatSessions(c.Request.Context())
-	if mapStore(c, err) {
-		return
-	}
-	c.JSON(200, items)
-}
-
-func (s *Server) deleteChatSession(c *gin.Context) {
-	if mapStore(c, s.Store.DeleteChatSession(c.Request.Context(), c.Param("id"))) {
-		return
-	}
-	c.Status(http.StatusNoContent)
-}

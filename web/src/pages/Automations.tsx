@@ -3,6 +3,7 @@ import { CalendarClock, MessageSquare, Pencil, Play, Plus, Trash2 } from 'lucide
 import { api, type Automation, type AutomationInput, type AutomationKind, type AutomationMode, type BotRow, type Host, type TaskView } from '../api';
 import { Button, Empty, Field, Modal, Notice, PageHeading } from '../components/ui';
 import { taskStatusText, useTaskPoll } from '../lib/taskFeed';
+import TaskPanel from '../components/TaskPanel';
 
 const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 const kinds: { id: AutomationKind; label: string }[] = [{ id: 'daily', label: '每天' }, { id: 'weekly', label: '每周' }, { id: 'interval', label: '固定间隔' }, { id: 'once', label: '只运行一次' }];
@@ -78,7 +79,7 @@ function toInput(f: Form): AutomationInput {
 // Frog Bot（AI 助理）也是自动化的执行者：定时到点时，任务进入当前账号的 Frog Bot 后台队列。
 const FROG_BOT = 'frog-bot';
 
-export default function Automations({ bots, hosts, onOpenSession }: { bots: BotRow[]; hosts: Host[]; onOpenSession: (id: string, botId: string) => void }) {
+export default function Automations({ bots, hosts, onOpenAssistant }: { bots: BotRow[]; hosts: Host[]; onOpenAssistant: () => void }) {
   const [items, setItems] = useState<Automation[] | null>(null);
   const [error, setError] = useState('');
   const [editing, setEditing] = useState<Automation | 'new' | null>(null);
@@ -90,6 +91,7 @@ export default function Automations({ bots, hosts, onOpenSession }: { bots: BotR
   // Linked durable tasks of runs that are still active, so a `waiting` run
   // shows the real reason and the operator can open it to approve or answer.
   const [tasks, setTasks] = useState<Record<string, TaskView>>({});
+  const [taskBusy, setTaskBusy] = useState<string[]>([]);
   const mounted = useRef(true);
   const enabledBots = bots.filter(b => b.enabled);
   const firstBot = (enabledBots.find(b => b.id === 'main') || enabledBots[0])?.id || '';
@@ -115,6 +117,15 @@ export default function Automations({ bots, hosts, onOpenSession }: { bots: BotR
     const timer = window.setInterval(() => { if (!document.hidden) void load(); }, anyRunning ? 3000 : 30000);
     return () => clearInterval(timer);
   }, [load, anyRunning]);
+  // A classic Bot's run is handled right here: there is no separate chat
+  // page any more, so its approvals, pause and stop live on the card.
+  async function control(id: string, key: string, call: () => Promise<TaskView>) {
+    if (taskBusy.some(k => k.startsWith(id + ':'))) return;
+    setTaskBusy(cur => [...cur, id + ':' + key]);
+    try { const t = await call(); if (mounted.current) setTasks(cur => ({ ...cur, [t.id]: t })); void load(); }
+    catch (e) { if (mounted.current) setError(errText(e, '操作失败')); }
+    finally { if (mounted.current) setTaskBusy(cur => cur.filter(k => k !== id + ':' + key)); }
+  }
   const replace = (a: Automation) => setItems(old => (old || []).some(x => x.id === a.id) ? (old || []).map(x => x.id === a.id ? a : x) : [...(old || []), a]);
   function openNew() { setForm(blank(firstBot)); setFormError(''); setEditing('new'); }
   function openEdit(a: Automation) { setForm(fromItem(a)); setFormError(''); setEditing(a); }
@@ -144,7 +155,7 @@ export default function Automations({ bots, hosts, onOpenSession }: { bots: BotR
   const hostName = (id: string) => !id ? '不指定服务器' : hosts.find(h => h.id === id)?.name || '已删除的服务器';
   const set = <K extends keyof Form>(key: K, value: Form[K]) => setForm(f => ({ ...f, [key]: value }));
   const list = items || [];
-  return <div className="page automations-page"><PageHeading title="自动化" note="让 Bot 按计划在后台执行任务，结果写入对话和变更记录。" actions={<Button variant="primary" disabled={!enabledBots.length} onClick={openNew}><Plus size={14}/>新建自动化</Button>}/>
+  return <div className="page automations-page"><PageHeading title="自动化" note="让 Bot 按计划在后台执行任务，结果显示在卡片上并写入变更记录。" actions={<Button variant="primary" disabled={!enabledBots.length} onClick={openNew}><Plus size={14}/>新建自动化</Button>}/>
     {error && <Notice error>{error}</Notice>}
     <p className="automation-note"><CalendarClock size={13}/>后台运行时不会自动放行：需要确认的操作会挂起等待你审批，命令不会执行，任务可以审批后继续。Bot 只能操作这里指定的服务器。时间按 OneFrog 服务器所在时区计算。</p>
     {items === null ? <Empty title="正在读取自动化"/> : !list.length ? <Empty title="还没有自动化" body="例如每天早上让 Bot 检查磁盘和服务状态，或每小时巡检一次日志里的错误。" action={enabledBots.length ? <Button variant="primary" onClick={openNew}><Plus size={14}/>新建自动化</Button> : undefined}/> :
@@ -165,24 +176,18 @@ export default function Automations({ bots, hosts, onOpenSession }: { bots: BotR
             <span>上次 <strong className="mono">{fmt(a.last_run_at)}</strong></span>
           </div>
           {a.last_status === 'failed' && a.last_error && <p className="automation-result danger">{a.last_error}</p>}
-          {a.last_status === 'waiting' && <p className="automation-result">{a.task_id && tasks[a.task_id] ? taskStatusText(tasks[a.task_id]) : '这次运行还没结束，等待你处理；打开任务可以查看进度并批准或回答。'}</p>}
+          {a.last_status === 'waiting' && <p className="automation-result">{a.task_id && tasks[a.task_id] ? taskStatusText(tasks[a.task_id]) : '这次运行还没结束，等待你处理；可在下方任务卡片里批准、拒绝或停止。'}</p>}
+          {a.bot_id !== FROG_BOT && a.task_id && tasks[a.task_id] && (a.last_status === 'running' || a.last_status === 'waiting') && <TaskPanel tasks={[tasks[a.task_id]]} bots={bots} busy={taskBusy} onAction={(id, action) => void control(id, action, () => api.taskAction(id, action))} onGuide={(id, content) => void control(id, 'guide', () => api.guideTask(id, content))} onApproval={(id, approvalID, allow) => void control(id, approvalID, () => api.decideTaskApproval(id, approvalID, allow, allow ? '' : '用户在自动化卡片中拒绝'))}/>}
           {a.last_status !== 'failed' && a.last_status !== 'waiting' && a.last_summary && <p className="automation-result">{a.last_summary}</p>}
           <footer className="automation-actions">
             <Button busy={busy || a.last_status === 'running'} disabled={!!working} onClick={() => void act(a, async () => replace(await api.runAutomation(a.id)))}><Play size={13}/>立即运行</Button>
-            {(() => {
-              // The task is the source of truth; the session id may only exist
-              // on the task until the run writes its first message.
-              const sid = a.task_id ? tasks[a.task_id]?.session_id || a.session_id : a.session_id;
-              if (!sid) return null;
-              const waiting = a.last_status === 'waiting';
-              return <Button onClick={() => onOpenSession(sid, a.bot_id)}><MessageSquare size={13}/>{waiting ? '查看并处理任务' : '查看对话'}</Button>;
-            })()}
+            {a.bot_id === FROG_BOT && (a.session_id || a.last_run_at) && <Button onClick={onOpenAssistant}><MessageSquare size={13}/>{a.last_status === 'waiting' ? '查看并处理任务' : '在 AI 助理中查看'}</Button>}
             <Button variant="ghost" onClick={() => openEdit(a)}><Pencil size={13}/>编辑</Button>
             <Button variant="ghost" disabled={!!working} onClick={() => { setFormError(''); setRemoving(a); }}><Trash2 size={13}/>删除</Button>
           </footer>
         </section>;
       })}</div>}
-    {editing && <Modal wide title={editing === 'new' ? '新建自动化' : '编辑自动化'} note="Bot 会在设定时间收到下面的指令并独立完成，过程和结果可在对话里查看。" onClose={() => !saving && setEditing(null)} onSubmit={() => void save()} busy={saving} error={formError}>
+    {editing && <Modal wide title={editing === 'new' ? '新建自动化' : '编辑自动化'} note="Bot 会在设定时间收到下面的指令并独立完成，结果显示在本页卡片上；Frog Bot 的运行也可以在 AI 助理里查看。" onClose={() => !saving && setEditing(null)} onSubmit={() => void save()} busy={saving} error={formError}>
       <Field label="名称"><input value={form.name} maxLength={40} onChange={e => set('name', e.target.value)} placeholder="例如：每日磁盘巡检"/></Field>
       <Field label="要 Bot 做的事" hint="写清楚检查什么、发现问题时怎么处理。需要审批的修改不会在后台执行。"><textarea value={form.prompt} rows={5} onChange={e => set('prompt', e.target.value)} placeholder="检查磁盘使用率和失败的 systemd 服务，超过 85% 或有失败服务时说明原因和建议。"/></Field>
       <div className="form-grid automation-form">

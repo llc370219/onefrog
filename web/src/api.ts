@@ -241,10 +241,8 @@ export const api = {
  async enroll(body:EnrollmentRequest):Promise<Enrollment>{return call('/api/servers/onboarding',{method:'POST',body:JSON.stringify(body)});},
  async enrollment(id:string):Promise<Enrollment>{return call('/api/servers/onboarding/'+encodeURIComponent(id));},
  async confirmEnrollment(id:string,fingerprint:string):Promise<Enrollment>{return call('/api/servers/onboarding/'+encodeURIComponent(id)+'/confirm',{method:'POST',body:JSON.stringify({fingerprint})});},
- async upload(file:File):Promise<Attachment>{const data=new FormData();data.append('file',file);const res=await fetch('/api/attachments',{method:'POST',credentials:'include',headers:{[CSRF_HEADER]:'1'},body:data});const body=await res.json();if(!res.ok)throw new Error(body.error||'上传失败');return body;},
  async updateBot(id:string,body:{name:string;description:string;system_prompt:string;model_route:ModelRoute}){return call('/api/bots/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(body)});},
  async botEnabled(id:string,enabled:boolean){return call('/api/bots/'+encodeURIComponent(id)+'/enabled',{method:'PUT',body:JSON.stringify({enabled})});},
- async projectNotes(id:string):Promise<ProjectNote[]>{return call('/api/sessions/'+encodeURIComponent(id)+'/project-memory');},
  async memories(id:string):Promise<BotMemory[]>{return (await call('/api/bots/'+encodeURIComponent(id)+'/memories'))||[];},
  async addMemory(id:string,body:{title:string;body:string}):Promise<BotMemory>{return call('/api/bots/'+encodeURIComponent(id)+'/memories',{method:'POST',body:JSON.stringify(body)});},
  async deleteMemory(id:string,memoryID:string){return call('/api/bots/'+encodeURIComponent(id)+'/memories/'+encodeURIComponent(memoryID),{method:'DELETE'});},
@@ -254,18 +252,7 @@ export const api = {
   async probeToken(id:string,opts:{province?:string;targets?:string[]}={}):Promise<{token:string;server_id:string;ping_targets:PingTarget[]}>{return call("/api/servers/"+encodeURIComponent(id)+"/probe/token",{method:"POST",body:JSON.stringify(opts)});},
   async probeProvince(id:string,province:string,pingIntervalSeconds=60):Promise<{message:string}>{return call('/api/servers/'+encodeURIComponent(id)+'/probe/province',{method:'POST',body:JSON.stringify({province,ping_interval_seconds:pingIntervalSeconds})});},
   async profile(body:{username:string;display_name:string;avatar:string;current_password:string;new_password:string}):Promise<Profile>{return call("/api/auth/profile",{method:"PUT",body:JSON.stringify(body)});},
-  async workspace(target:WorkspaceTarget, request:WorkspaceRequest):Promise<WorkspaceResult>{return call('/api/workspace',{method:'POST',body:JSON.stringify({target,...request})});},
-  /** Operator-provided local workspace capability. A 404 from an older backend resolves to disabled. */
-  async workspaceCapabilities():Promise<WorkspaceCapabilities>{
-    try { return await call('/api/workspace/capabilities'); }
-    catch (err) {
-      if ((err as {status?:unknown})?.status === 404) return { local:{enabled:false,roots:[],execution_environment:'native',command_execution:false} };
-      throw err;
-    }
-  },
-  async sessions():Promise<ChatSession[]>{return (await call("/api/sessions"))||[];},
   async messages(id:string):Promise<{id:string;role:string;content:string;from_bot?:string;attachments?:Attachment[];choice?:Choice;secret_request?:SecretRequest;timeline?:TurnItem[]}[]>{return (await call("/api/sessions/"+encodeURIComponent(id)+"/messages"))||[];},
-  async deleteSession(id:string){return call("/api/sessions/"+encodeURIComponent(id),{method:"DELETE"});},
   async updateStatus():Promise<UpdateStatus>{return call("/api/update");},
   async checkUpdate():Promise<UpdateStatus>{return call("/api/update/check",{method:"POST",body:"{}"});},
   async applyUpdate():Promise<{ok:boolean;version:string;message:string}>{return call("/api/update/apply",{method:"POST",body:"{}"});},

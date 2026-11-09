@@ -1,20 +1,19 @@
 /*
  * Offline visual fixture for the durable task UI. It is NOT part of the
  * production app: no auth, no router, no API/network calls. It renders the
- * real TaskPanel/Chat/Dashboard components with local fixture state and the
+ * real TaskPanel/Dashboard components with local fixture state and the
  * real index.css, so light/dark and 390px/desktop layouts can be checked.
  *
  * Open with: npx vite tests/runtime-preview.html
  */
-import { StrictMode, useEffect, useMemo, useState } from 'react';
+import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import '../src/index.css';
-import Chat from '../src/pages/Chat';
 import Dashboard from '../src/pages/Dashboard';
 import Develop from '../src/pages/Develop';
 import TaskPanel from '../src/components/TaskPanel';
 import { setThemePref, useTheme } from '../src/theme';
-import { api, type BotRow, type ChatLine, type ChatSession, type Host, type Mod, type SettingsState, type TaskActivity, type TaskApprovalMeta, type TaskView } from '../src/api';
+import { api, type BotRow, type Host, type Mod, type SettingsState, type TaskActivity, type TaskApprovalMeta, type TaskView } from '../src/api';
 import { createDevelopMock, installDevelopMock } from './developMock';
 
 const now = Date.now();
@@ -113,7 +112,6 @@ const budgetTask: TaskView = {
   last_error: '总步骤预算用完，任务还没有完成',
 };
 
-const sessions: ChatSession[] = [{ id: 'sess-1', bot_id: 'main', title: '生产环境磁盘告警', preview: '排查磁盘告警', updated_at: at(1) }];
 const hosts: Host[] = [{ id: 'srv-1', name: 'prod-web-1', host: '10.0.0.11', up: true, disk: 91, load: '0.42', role: 'web', status: 'online', username: 'root', port: 22, auth_type: 'password' }];
 const mods: Mod[] = [{ id: 'alerts', name: '告警', desc: '离线与磁盘告警', enabled: true }];
 function Toolbar({ width, onWidth }: { width: number | 'auto'; onWidth: (w: number | 'auto') => void }) {
@@ -170,86 +168,7 @@ function TaskCardsFixture() {
   );
 }
 
-function ChatFixture() {
-  const [tasks, setTasks] = useState<TaskView[]>([parentTask, childTask]);
-  const [draft, setDraft] = useState('清理 /var/log 里 3 天前的旧日志，先只读确认。');
-  const [lines, setLines] = useState<ChatLine[]>(lines0());
-  const [busy, setBusy] = useState('');
-  const [notice, setNotice] = useState('');
-  const [state, setState] = useState({ model: { provider_id: '', model: '' }, excluded: [] as string[], approval: 'default' });
-  const patch = (id: string, fn: (t: TaskView) => TaskView) => setTasks(cur => cur.map(t => t.id === id ? fn(t) : t));
-  const controls = useMemo(() => state, [state]);
 
-  function send() {
-    if (!draft.trim()) return;
-    const id = 'task-new-' + tasks.length;
-    const task: TaskView = { id, user_message_id: 'chat-' + id, bot_id: 'main', session_id: 'sess-1', goal: draft.trim(), status: 'queued', total_steps: 0, max_steps: 32, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
-    setTasks(cur => [task, ...cur]);
-    setDraft('');
-    setNotice('已接受消息（夹具）');
-  }
-  function action(id: string, act: 'pause' | 'resume' | 'cancel' | 'withdraw') {
-    setBusy(id + ':' + act);
-    window.setTimeout(() => setBusy(''), 400);
-    patch(id, t => ({ ...t, status: act === 'pause' ? 'paused' : act === 'resume' ? 'queued' : 'cancelled' }));
-  }
-
-  return (
-    <section className="preview-section preview-chat">
-      <h2>对话页 · 动画回复</h2>
-      <p>真实 Chat 组件；等待动效显示在对话中，审批和停止回复仍可操作。</p>
-      <button className="text-btn" type="button" onClick={() => {
-        const id = 'preview-question';
-        setTasks([{ ...parentTask, status: 'waiting_user', approvals: [], pending: { kind: 'user', card_message_id: id } }]);
-        setLines([...lines0(), { id, who: 'bot', text: '', choice: { prompt: '报错的模块叫什么？', options: [], allow_custom: true } }]);
-        setDraft('');
-      }}>模拟开放问题</button>
-      <button className="text-btn" type="button" onClick={() => {
-        const pending = tasks.filter(t => !t.parent_id && ['running', 'queued', 'waiting_approval'].includes(t.status)).reverse();
-        const [current, next] = pending;
-        if (!current) return;
-        setTasks(cur => cur.map(t => t.id === current.id || t.parent_id === current.id
-          ? { ...t, status: 'completed' } : t.id === next?.id ? { ...t, status: 'running' } : t));
-        setLines(cur => [...cur, { who: 'bot', text: '排查完成，日志轮转正常。\n\n没有改动服务器配置。' },
-          ...(next ? [{ who: 'user' as const, id: next.user_message_id, text: next.goal }] : [])]);
-      }}>模拟收到最终回复</button>
-      <div className="preview-frame">
-        <Chat
-          onAddServer={() => {}} controls={controls} onControls={next => setState(next as typeof state)} settings={null}
-          mode="team" projectTitle="生产环境磁盘告警" onOpenWorkspace={() => {}} attachments={[]} onFiles={() => {}} onRemoveFile={() => {}} uploading={false}
-          activeBot={bots[0]} hosts={hosts} bots={bots} secrets={[]} selected="srv-1" onSelect={() => {}}
-          draft={draft} onDraft={setDraft} lines={lines} onSend={send} sending={false} onNew={() => {}}
-          onCorrect={id => {
-            if (!tasks.some(t => t.id === id && t.status === 'running')) return;
-            setLines(cur => [...cur, { who: 'user', text: draft.trim() }]);
-            setDraft('');
-            setNotice('纠正已送达当前轮（夹具）');
-          }}
-          sessions={sessions} session="sess-1" onSession={() => {}} onDeleteSession={() => {}} onNewTopic={() => {}}
-          onNotice={setNotice} onAnswer={(line, values, custom) => {
-            patch(parentTask.id, t => ({ ...t, status: 'running', pending: undefined }));
-            setLines(cur => cur.map(l => l.id === line.id && l.choice ? { ...l, choice: { ...l.choice, answer: { values, custom } } } : l));
-            setDraft('');
-            setNotice('已回答当前轮（夹具）');
-          }} onProvide={() => {}}
-          tasks={tasks} taskBusy={busy} onTaskAction={action}
-          onTaskApproval={(id, approvalID, allow) => patch(id, t => ({ ...t, status: 'queued', pending: undefined, approvals: (t.approvals || []).map(a => a.id === approvalID ? { ...a, status: allow ? 'allowed' : 'denied' } : a) }))}
-        />
-      </div>
-      {notice && <p className="preview-note" role="status">{notice}</p>}
-    </section>
-  );
-}
-
-function lines0(): ChatLine[] {
-  return [
-    { who: 'user', text: '排查生产环境磁盘告警并给出处置方案' },
-    { who: 'bot', text: '已确认磁盘使用率 91%，主要占用在 /var/log。清理前需要你确认。', timeline: [
-      { kind: 'step', bot: '主控', server_id: 'srv-1', command: 'df -h', ok: true },
-      { kind: 'delegate', bot: '主控', target: '数据库专家', task: '分析慢查询并给出索引建议' },
-    ] },
-  ];
-}
 
 function DashboardFixture() {
   const [tasks, setTasks] = useState<TaskView[]>([parentTask]);
@@ -320,7 +239,7 @@ function DevelopFixture() {
         <button type="button" className={loseResponse ? 'active' : ''} onClick={() => { mock.loseNextResponse(); setLoseResponse(true); say('下一次提交会先保存任务再丢失响应，验证同一 client_request_id 只重试一次'); }}>下次提交丢失响应</button>
       </div>
       <div className="preview-frame">
-        <Develop key={reloadKey} bots={bots} settings={developSettings} onOpenChat={() => {}} onOpenSettings={() => {}} onOpenModule={() => {}} onChanged={async () => {}}/>
+        <Develop key={reloadKey} bots={bots} settings={developSettings} onOpenSettings={() => {}} onOpenModule={() => {}} onChanged={async () => {}}/>
       </div>
       <div className="preview-note" role="status">
         <strong>任务 API 调用记录（夹具）</strong>
@@ -332,19 +251,18 @@ function DevelopFixture() {
 
 function Preview() {
   const [width, setWidth] = useState<number | 'auto'>('auto');
-  const [page, setPage] = useState<'tasks' | 'chat' | 'dashboard' | 'develop'>('tasks');
+  const [page, setPage] = useState<'tasks' | 'dashboard' | 'develop'>('tasks');
   return (
     <div className="preview-shell">
       <Toolbar width={width} onWidth={setWidth}/>
       <p className="preview-note">“容器宽 390px”只约束内容容器，不会触发 CSS 媒体查询；真实手机布局请把浏览器/设备视口设为 390px（媒体查询断点 600/760px）。</p>
       <div className="preview-tabs" role="tablist" aria-label="预览页面">
-        {([['tasks', '任务卡片'], ['chat', '对话页'], ['dashboard', '面板页'], ['develop', '自定义模块页']] as const).map(([id, label]) => (
+        {([['tasks', '任务卡片'], ['dashboard', '面板页'], ['develop', '自定义模块页']] as const).map(([id, label]) => (
           <button key={id} type="button" role="tab" aria-selected={page === id} className={page === id ? 'active' : ''} onClick={() => setPage(id)}>{label}</button>
         ))}
       </div>
       <div className="preview-viewport" style={width === 'auto' ? undefined : { width: width + 'px' }}>
         {page === 'tasks' && <TaskCardsFixture/>}
-        {page === 'chat' && <ChatFixture/>}
         {page === 'dashboard' && <DashboardFixture/>}
         {page === 'develop' && <DevelopFixture/>}
       </div>

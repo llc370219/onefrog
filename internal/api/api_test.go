@@ -101,13 +101,30 @@ func TestAuthAndResources(t *testing.T) {
 		t.Fatal("missing rollback row")
 	}
 	postJSON(t, client, srv.URL+"/api/history/"+rollbackID+"/rollback", map[string]string{}, http.StatusOK, &map[string]any{})
-	var chat map[string]any
-	postJSON(t, client, srv.URL+"/api/chat", map[string]string{"content": "看一下磁盘", "server_id": "web-01"}, http.StatusOK, &chat)
-	if chat["text"] == "" {
-		t.Fatal("empty chat reply")
+	// The ops chat (运维会话) and code workspace were removed in v0.1.33;
+	// AI 助理 (Frog Bot) is the only chat. Their routes must stay gone.
+	for _, probe := range []struct{ method, path string }{
+		{http.MethodPost, "/api/chat"}, {http.MethodGet, "/api/sessions"}, {http.MethodDelete, "/api/sessions/x"},
+		{http.MethodGet, "/api/sessions/x/project-memory"}, {http.MethodPost, "/api/workspace"},
+		{http.MethodGet, "/api/workspace/capabilities"}, {http.MethodGet, "/ws/chat"},
+	} {
+		req, err := http.NewRequest(probe.method, srv.URL+probe.path, strings.NewReader("{}"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-OneFrog-CSRF", "1")
+		res, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s %s = %d, want 404", probe.method, probe.path, res.StatusCode)
+		}
 	}
 	if ssh.calls != 0 {
-		t.Fatal("chat without a model must not run ssh")
+		t.Fatal("no request so far may run ssh")
 	}
 	res, err = client.Post(srv.URL+"/api/servers/web-01/test", "application/json", strings.NewReader("{}"))
 	if err != nil {

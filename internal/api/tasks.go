@@ -362,8 +362,8 @@ func (s *Server) resumeTaskCard(c *gin.Context, user model.User, req chatReq) {
 	c.JSON(http.StatusAccepted, s.taskViewFor(c, it))
 }
 
-// ResumeTaskCard is the shared card-resume path for every ingress (POST
-// /api/tasks, /api/chat and the WebSocket relay). It returns the task the answer
+// ResumeTaskCard is the shared card-resume path (POST /api/tasks and the
+// in-process callers). It returns the task the answer
 // belongs to, so no transport reimplements the card identity rules.
 func (s *Server) ResumeTaskCard(ctx context.Context, ownerID, sessionID string, opt bot.Options) (task.Task, error) {
 	messageID, isChoice, hasCard := bot.TaskCardIdentity(opt)
@@ -541,4 +541,13 @@ func taskError(c *gin.Context, err error) {
 	default:
 		fail(c, http.StatusConflict, err.Error())
 	}
+}
+
+// clipText caps a string at n runes for API responses.
+func clipText(s string, n int) string {
+	r := []rune(s)
+	if len(r) > n {
+		return string(r[:n])
+	}
+	return s
 }

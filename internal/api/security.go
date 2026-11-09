@@ -5,7 +5,6 @@ import (
 	"mime"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -65,29 +64,6 @@ func requireCSRF(c *gin.Context) {
 		return
 	}
 	fail(c, http.StatusUnsupportedMediaType, "请求必须是 JSON")
-}
-
-// sameOrigin reports whether a browser Origin header matches the request host
-// or the configured public URL. Requests without Origin (non-browser clients)
-// are allowed; they cannot ride on a victim's browser cookie.
-func sameOrigin(r *http.Request, publicURL string) bool {
-	origin := r.Header.Get("Origin")
-	if origin == "" {
-		return true
-	}
-	u, err := url.Parse(origin)
-	if err != nil || u.Host == "" {
-		return false
-	}
-	if strings.EqualFold(u.Host, r.Host) {
-		return true
-	}
-	if publicURL != "" {
-		if p, err := url.Parse(publicURL); err == nil && strings.EqualFold(p.Host, u.Host) && p.Scheme == u.Scheme {
-			return true
-		}
-	}
-	return false
 }
 
 // loginLimiter tracks failed logins per client IP. It deliberately does not lock

@@ -97,15 +97,9 @@ OneFrog 的对话任务不再依赖某一次 HTTP 请求或 WebSocket 连接。�
 
 `TaskView` 只暴露 id、bot/session/project、goal、plan、progress、next、status、步数、时间、deadline、result、last_error、待处理摘要和安全的审批元数据；不下发 checkpoint、messages、options JSON、journal 原始参数或任何密钥。
 
-### 老入口（`POST /api/chat`、`/ws/chat`）
+### 已移除的老入口
 
-两个老入口在配置了 runner 时都只是**共享提交路径**（`Agent.SubmitTask`）的薄传输层，自身不接受任务、不复制身份规则：
-
-- `POST /api/chat`：带 `client_request_id` 提交任务，然后按 100ms 轮询 `WaitTask`。任务进入等待态或终态即返回；只有 `completed` 且结果非空才返回旧的 `Result` 形状。`failed` / `cancelled` / `budget_exhausted`、以及等待审批/等待卡片/等待子任务的情况返回 202 + `TaskView`，绝不把失败包装成成功，也不从会话里猜一个答案。请求 context 到期（客户端断开）同样返回 202，任务继续跑。
-- `/ws/chat`：同样提交任务，然后用连接 context 观察。正常结束发 `assistant` + `done`；等待态发 `task`，并把挂起的审批以 `approval_request`（带 `id` 和 `task_id`）下发；连接断开时发 `detached` 并**保留任务**，不是取消任务。用同一个 `client_request_id` 重连会落到同一个任务，不会重复执行。
-- 审批决策一律走 `Runner.Decide`：HTTP 用 `POST /api/tasks/:id/approvals/:approvalID`，WebSocket 的 `{"type":"approval","id":…,"task_id":…,"allow":…}` 也走同一个方法。**没有 `task_id` 的 socket 审批会被拒绝**，不会去猜“唯一挂起的那个任务”。决策持久化在任务上，所以断开重连后仍然可以重新决定同一个审批。
-- 卡片回答（`choice_answer` / `secret_answer`）在两个老入口里都复用 `ResumeTaskCard`，与任务面板是同一条身份校验路径（精确匹配 `Pending.CardMessageID`）。
-- 没有 runner 时（测试或嵌入式构建）才回退到旧的 `ReplyWithOptions` + 通道审批；这条回退路径不持久，断线即丢。
+v0.1.33 移除了 `POST /api/chat`、`/ws/chat`、`GET /api/sessions`、`DELETE /api/sessions/:id` 和会话的 project-memory 接口。提交和观察任务只走 `/api/tasks*`；卡片回答也走 `POST /api/tasks` 里的 `ResumeTaskCard`。
 
 ## 已知限制与后续
 
@@ -113,7 +107,6 @@ OneFrog 的对话任务不再依赖某一次 HTTP 请求或 WebSocket 连接。�
 - **`waiting_job` 没有真实外部作业探针**：目前由 `wait` 工具与子任务共用挂起通道，按稀疏退避轮询，受 deadline 约束。
 - **进度可能回退一段**：checkpoint 是周期写入，不是每次模型调用后都写。
 - **终态判定依赖模型自述**：`completed` 需要 `finish` 带核验证据，但“证据是否真的证明了目标”仍由模型判断，运行时只保证“有只读调用执行过”。
-- **WebSocket 不中继逐步执行过程**：durable 任务没有按连接绑定的步骤流，`/ws/chat` 只发状态、审批卡片和最终答案，不重放 `say` / 工具步骤。任务面板是观察进度的入口。
 
 子任务不继承父任务的审批结果，但继承父任务的授权来源与预算：`delegation.go` 在创建子任务时逐字段复制 `Purpose` / `Hop` / `Untrusted` 和父任务剩余的 `MaxSteps`（`StepBudget` 取窗口剩余量，`MaxSteps` 取子树剩余额度），子任务自己的审批、journal 与卡片独立。`Untrusted` 因此在委派链上只增不减，不会因为换了一个 Bot 就被洗白。
 
@@ -147,8 +140,8 @@ OneFrog 的对话任务不再依赖某一次 HTTP 请求或 WebSocket 连接。�
   权限。要操作宿主机项目，必须由操作员显式挂载项目目录（最小权限，不要挂载
   Docker socket 或宿主机根目录）——面板不会"魔法地"访问宿主。
 - **工具契约**：`workspace` 工具的 `action` 增加 `search`；`WorkspaceTarget`
-  增加 `kind:"local"`（`server_id:"local"`）。`GET /api/workspace/capabilities`
-  返回 `{local:{enabled,roots,execution_environment,command_execution}}`。
+  增加 `kind:"local"`（`server_id:"local"`）。v0.1.33 起网页上的「代码工作区」
+  和 `/api/workspace*` 接口已移除，这部分只剩运行时内部的工具实现。
 
 ## 后台作业（job_start / job_status / job_cancel / job_wait）
 
@@ -194,10 +187,4 @@ job_status 等），以 journal 序号比较，跨窗口和重启仍然成立；
 
 ## 工作区编辑器的原始文件协议（HTTP）
 
-- `POST /api/workspace/local/raw/read`：返回文件的**完整原文**和 revision
-  （无模型摘录头、无截断；超过大小上限或二进制文件被拒绝）。
-- `POST /api/workspace/local/raw`：全量保存，**必须携带** read 返回的
-  revision；旧 revision 拒绝，新文件 `O_EXCL` 创建，写入原子化。绝不把
-  截断的文件保存回磁盘。
-- `POST /api/workspace/local`：只提供 list/status/diff/read/search；没有任意命令执行的 HTTP 端点。
-- `GET /api/workspace/capabilities` 的 execution_environment 诚实返回 native 或 container；Docker 部署里的 local 是容器内文件系统，除非操作员显式挂载。
+v0.1.33 已随「代码工作区」页面一起移除。

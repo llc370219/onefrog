@@ -2,10 +2,7 @@ package api
 
 import (
 	"net/http"
-	"net/url"
 	"os"
-
-	"github.com/gorilla/websocket"
 
 	"onefrog/internal/model"
 	"strings"
@@ -115,27 +112,6 @@ func TestLoginLimiterBackoff(t *testing.T) {
 	}
 }
 
-func TestSameOrigin(t *testing.T) {
-	r, _ := http.NewRequest("GET", "http://example.test/ws/chat", nil)
-	r.Host = "example.test"
-	if !sameOrigin(r, "") {
-		t.Fatal("no origin allowed")
-	}
-	r.Header.Set("Origin", "http://example.test")
-	if !sameOrigin(r, "") {
-		t.Fatal("same host")
-	}
-	r.Header.Set("Origin", "https://evil.test")
-	if sameOrigin(r, "") {
-		t.Fatal("cross origin")
-	}
-	r.Host = "127.0.0.1:8080"
-	r.Header.Set("Origin", "https://of.example.test")
-	if !sameOrigin(r, "https://of.example.test") {
-		t.Fatal("public url")
-	}
-}
-
 func TestOAuthStartRequiresRiskAcknowledgement(t *testing.T) {
 	t.Setenv("OF_GOOGLE_OAUTH_CLIENT_ID", "")
 	client, srv, _ := testClient(t)
@@ -184,29 +160,4 @@ func TestOAuthStartRequiresRiskAcknowledgement(t *testing.T) {
 	if !acked {
 		t.Fatal("acknowledgement missing from history")
 	}
-}
-
-func TestWebSocketOriginChecked(t *testing.T) {
-	client, srv, _ := testClient(t)
-	defer srv.Close()
-	login(t, client, srv, "admin", "admin", http.StatusOK)
-	u, _ := url.Parse(srv.URL)
-	header := http.Header{}
-	for _, c := range client.Jar.Cookies(u) {
-		header.Add("Cookie", c.Name+"="+c.Value)
-	}
-	ws := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws/chat"
-	header.Set("Origin", "https://evil.example")
-	if conn, res, err := websocket.DefaultDialer.Dial(ws, header); err == nil {
-		conn.Close()
-		t.Fatal("cross-origin websocket accepted")
-	} else if res == nil || res.StatusCode != http.StatusForbidden {
-		t.Fatalf("expected 403, got %v", res)
-	}
-	header.Set("Origin", srv.URL)
-	conn, _, err := websocket.DefaultDialer.Dial(ws, header)
-	if err != nil {
-		t.Fatal(err)
-	}
-	conn.Close()
 }

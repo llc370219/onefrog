@@ -112,7 +112,7 @@ export default function Assets({ hosts, focusServer, onConsumedFocus, onOpenServ
     finally { setBusy(false); }
   }
 
-  return <div className="page assets-page"><PageHeading eyebrow="MODULE / ASSETS" title="订阅" note="统一记录服务器、域名、软件会员和其他订阅的费用与到期时间。" actions={<><Button onClick={() => onAsk('请列出订阅台账里 7 天内到期的订阅（不限于服务器），并说明费用和续费状态。')}><Bot size={15}/>交给模块管理</Button><Button variant="primary" onClick={() => edit()}><Plus size={15}/>添加订阅</Button></>}/>
+  return <div className="page assets-page"><PageHeading eyebrow="MODULE / ASSETS" title="订阅" note="统一记录服务器、域名、软件会员和其他订阅的费用与到期时间。" actions={<><Button onClick={() => onAsk('请列出订阅台账里 7 天内到期的订阅（不限于服务器），并说明费用和续费状态。')}><Bot size={15}/>交给主控</Button><Button variant="primary" onClick={() => edit()}><Plus size={15}/>添加订阅</Button></>}/>
     {error && <Notice error>{error}</Notice>}
     <SubscriptionSummary summary={summary}/>
     <div className="list-toolbar"><div className="tabs" role="group" aria-label="资产筛选">{[['current','当前订阅'],['expiring','7 天内到期'],['historical','历史订阅'],['all','全部']].map(([id,label]) => <button key={id} className={filter===id?'active':''} aria-pressed={filter===id} onClick={() => setFilter(id)}>{label}</button>)}</div><label className="search"><Search size={15}/><input aria-label="搜索资产" placeholder="搜索名称、提供商、IP…" value={query} onChange={e => setQuery(e.target.value)}/></label></div>

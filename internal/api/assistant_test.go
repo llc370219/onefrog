@@ -40,7 +40,7 @@ func TestBotControlsPreserveFieldsAndValidateModel(t *testing.T) {
 		}
 	}
 }
-func TestUploadAndChatAttachmentEndpoints(t *testing.T) {
+func TestUploadAttachmentEndpoints(t *testing.T) {
 	c, s, _ := testClient(t)
 	defer s.Close()
 	login(t, c, s, "admin", "admin", 200)
@@ -74,24 +74,6 @@ func TestUploadAndChatAttachmentEndpoints(t *testing.T) {
 	if res.StatusCode != 401 {
 		t.Fatal("attachment exposed without login")
 	}
-	var reply struct {
-		SessionID string `json:"session_id"`
-	}
-	postJSON(t, c, s.URL+"/api/chat", map[string]any{"content": "", "attachment_ids": []string{ref.ID}, "excluded_bot_ids": []string{"check"}, "approval_mode": "plan"}, 200, &reply)
-	var msgs []model.Message
-	getJSON(t, c, s.URL+"/api/sessions/"+reply.SessionID+"/messages", &msgs)
-	if len(msgs) != 2 || len(msgs[0].Attachments) != 1 || msgs[0].Attachments[0].ID != ref.ID {
-		t.Fatal(msgs)
-	}
-	postJSON(t, c, s.URL+"/api/chat", map[string]any{"content": "test", "attachment_ids": []string{"missing-id"}}, 400, nil)
-	var sessions []model.SessionSummary
-	getJSON(t, c, s.URL+"/api/sessions", &sessions)
-	var opts map[string]any
-	if len(sessions) != 1 || json.Unmarshal(sessions[0].Options, &opts) != nil || opts["approval_mode"] != "plan" {
-		t.Fatal("session options not exposed", sessions)
-	}
-	postJSON(t, c, s.URL+"/api/chat", map[string]any{"content": "switch", "session_id": reply.SessionID, "bot_id": "check"}, 400, nil)
-
 	if strings.Contains(getBody(t, c, s.URL+"/api/usage"), "port=8088") {
 		t.Fatal("file content leaked into usage")
 	}

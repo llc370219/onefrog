@@ -168,14 +168,15 @@ export function CustomModulePage({
 export default function Develop({
   bots,
   settings,
-  onOpenChat,
+  seed,
   onOpenSettings,
   onOpenModule,
   onChanged,
 }: {
   bots: BotRow[];
   settings: SettingsState | null;
-  onOpenChat: (prompt: string) => void;
+  /** A request handed over from another page; it fills the builder input. */
+  seed?: { text: string; n: number };
   onOpenSettings: () => void;
   onOpenModule: (id: string) => void;
   onChanged: () => Promise<void>;
@@ -184,6 +185,13 @@ export default function Develop({
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState('');
   const [prompt, setPrompt] = useState('');
+  const promptRef = useRef<HTMLInputElement>(null);
+  // Puts a request into the builder input for the operator to finish and send.
+  const ask = useCallback((text: string) => {
+    setPrompt(text);
+    window.setTimeout(() => { promptRef.current?.scrollIntoView({ block: 'center' }); promptRef.current?.focus(); }, 0);
+  }, []);
+  useEffect(() => { if (seed?.text) ask(seed.text); }, [seed, ask]);
   const [task, setTask] = useState<TaskView | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [taskBusy, setTaskBusy] = useState('');
@@ -489,7 +497,6 @@ export default function Develop({
         note="用一句话让自定义模块 Bot 生成交互功能卡片，或直接编辑源码；创建后自动挂载到「模块」目录和「面板」首页。"
         actions={
           <>
-            <Button onClick={() => onOpenChat(prompt || '帮我创建一个自定义模块：')}><Bot size={15}/>进入对话细调</Button>
             <Button variant="primary" onClick={openCreate}><Plus size={15}/>新建模块</Button>
           </>
         }
@@ -513,6 +520,7 @@ export default function Develop({
             </div>
             <form className="operator-form" onSubmit={submitPrompt}>
               <input
+                ref={promptRef}
                 aria-label="描述你想创建的自定义模块"
                 value={prompt}
                 disabled={building}
@@ -584,12 +592,12 @@ export default function Develop({
                 title={row.name}
                 version={row.updated_at}
                 onDataChanged={() => { void reload(); }}
-                onFixError={msg => onOpenChat('自定义模块「' + row.name + '」（id=' + row.id + '）报错：' + msg + '。请先 inspect 查看源码并修复，保留已有数据。')}
+                onFixError={msg => ask('自定义模块「' + row.name + '」（id=' + row.id + '）报错：' + msg + '。请先 inspect 查看源码并修复，保留已有数据。')}
               />
               <footer className="develop-card-foot">
                 <div className="row-actions">
                   <Button onClick={() => onOpenModule(row.id)}><ExternalLink size={13}/>独立打开</Button>
-                  <Button onClick={() => onOpenChat('请先 inspect 自定义模块「' + row.name + '」（id=' + row.id + '），保留已有数据并按以下需求升级：')}><Bot size={13}/>AI 改造</Button>
+                  <Button disabled={!ready.ok} onClick={() => ask('请先 inspect 自定义模块「' + row.name + '」（id=' + row.id + '），保留已有数据并按以下需求升级：')}><Bot size={13}/>AI 改造</Button>
                   <Button onClick={() => openEdit(row)}><Code2 size={13}/>源码</Button>
                 </div>
                 <div className="row-actions">

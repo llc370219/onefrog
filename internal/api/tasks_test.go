@@ -9,13 +9,11 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
-	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"golang.org/x/crypto/bcrypt"
 
 	"onefrog/internal/attachment"
@@ -829,151 +827,8 @@ func TestTaskAttachmentOwnershipIsEnforced(t *testing.T) {
 	}, http.StatusBadRequest, &map[string]any{})
 }
 
-// wsDial opens the chat socket with the client's cookies and a same-origin
-// header, like the browser does.
-func wsDial(t *testing.T, client *http.Client, srv *httptest.Server) *websocket.Conn {
-	t.Helper()
-	u, err := url.Parse(srv.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	header := http.Header{}
-	for _, c := range client.Jar.Cookies(u) {
-		header.Add("Cookie", c.Name+"="+c.Value)
-	}
-	header.Set("Origin", srv.URL)
-	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+"/ws/chat", header)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { conn.Close() })
-	return conn
-}
-
-// wsReadUntil reads socket messages until one matches, or fails on timeout.
-func wsReadUntil(t *testing.T, conn *websocket.Conn, match func(map[string]any) bool) map[string]any {
-	t.Helper()
-	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-	for {
-		var msg map[string]any
-		if err := conn.ReadJSON(&msg); err != nil {
-			t.Fatalf("socket read: %v", err)
-		}
-		if match(msg) {
-			return msg
-		}
-	}
-}
-
-// TestWSDurableTaskSurvivesDisconnectAndReconnect proves a socket request is a
-// durable task: closing the connection does not cancel it, and reconnecting
-// with the same request id lands on the same task instead of starting again.
-func TestWSDurableTaskSurvivesDisconnectAndReconnect(t *testing.T) {
-	client, srv, runner, _ := taskServer(t)
-	login(t, client, srv, "admin", "admin", http.StatusOK)
-	ctx, stop := context.WithCancel(context.Background())
-	defer stop()
-	go runner.Run(ctx)
-
-	conn := wsDial(t, client, srv)
-	body := map[string]any{"content": "socket 任务", "client_request_id": "ws-req-1"}
-	if err := conn.WriteJSON(body); err != nil {
-		t.Fatal(err)
-	}
-	taskMsg := wsReadUntil(t, conn, func(m map[string]any) bool { return m["type"] == "task" })
-	taskView, _ := taskMsg["task"].(map[string]any)
-	taskID, _ := taskView["id"].(string)
-	if taskID == "" {
-		t.Fatalf("socket did not report its task: %+v", taskMsg)
-	}
-	// Drop the connection without answering anything.
-	conn.Close()
-
-	// The task is durable: it still exists and is not cancelled by the drop.
-	var stored task.Task
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		cur, err := runner.Book.Get(taskID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		stored = cur
-		if cur.Terminal() {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if stored.Status == task.StatusCancelled {
-		t.Fatal("disconnect cancelled the durable task")
-	}
-
-	// Reconnecting with the same request id resolves to the same task, so no
-	// work is duplicated.
-	again := wsDial(t, client, srv)
-	if err := again.WriteJSON(body); err != nil {
-		t.Fatal(err)
-	}
-	second := wsReadUntil(t, again, func(m map[string]any) bool { return m["type"] == "task" })
-	view2, _ := second["task"].(map[string]any)
-	if view2["id"] != taskID {
-		t.Fatalf("reconnect started a second task: %v vs %v", view2["id"], taskID)
-	}
-}
-
-// TestWSDurableApprovalBindsExactTask proves a socket approval is decided on the
-// exact task and approval id through the runner, and that a reply without a
-// task id is refused instead of being guessed onto some pending task.
-func TestWSDurableApprovalBindsExactTask(t *testing.T) {
-	client, srv, runner, _ := taskServer(t)
-	login(t, client, srv, "admin", "admin", http.StatusOK)
-
-	var view TaskView
-	postJSON(t, client, srv.URL+"/api/tasks", map[string]any{"content": "重启 nginx"}, http.StatusAccepted, &view)
-	if _, err := runner.Book.Update(view.ID, func(it *task.Task) error {
-		it.Status = task.StatusWaitingApproval
-		it.Pending = &task.Pending{Kind: task.PendingApproval, CallID: "c1", ArgsHash: "h", ApprovalID: "apr-ws"}
-		it.Approvals = append(it.Approvals, task.Approval{ID: "apr-ws", CallID: "c1", ArgsHash: "h", Command: "systemctl restart nginx", Status: task.ApprovalPending})
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	conn := wsDial(t, client, srv)
-	// No task id: refuse, never guess which task this decides.
-	if err := conn.WriteJSON(map[string]any{"type": "approval", "id": "apr-ws", "allow": true}); err != nil {
-		t.Fatal(err)
-	}
-	errMsg := wsReadUntil(t, conn, func(m map[string]any) bool { return m["type"] == "error" })
-	if !strings.Contains(errMsg["message"].(string), "任务") {
-		t.Fatalf("unexpected refusal: %+v", errMsg)
-	}
-	if stored, _ := runner.Book.Get(view.ID); stored.Status != task.StatusWaitingApproval {
-		t.Fatalf("an unbound approval resumed the task: %s", stored.Status)
-	}
-
-	// Exact task + approval id: the decision is recorded through Runner.Decide.
-	if err := conn.WriteJSON(map[string]any{"type": "approval", "id": "apr-ws", "task_id": view.ID, "allow": true, "reason": "同意"}); err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		cur, err := runner.Book.Get(view.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if cur.Status != task.StatusWaitingApproval {
-			if len(cur.Approvals) != 1 || cur.Approvals[0].Status != task.ApprovalAllowed {
-				t.Fatalf("approval not recorded: %+v", cur.Approvals)
-			}
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("socket approval never reached the task")
-}
-
-// TestLegacyChatReportsFailedTaskAsDurableView proves the legacy /api/chat
-// Result shape is only used for a completed task. A failed, cancelled or
+// TestLegacyChatReportsFailedTaskAsDurableView proves WaitTask's Result shape
+// is only used for a completed task. A failed, cancelled or
 // exhausted task must surface as the durable view, never as a successful answer
 // that hides the real status.
 func TestLegacyChatReportsFailedTaskAsDurableView(t *testing.T) {

@@ -1,11 +1,9 @@
 package api
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"onefrog/internal/bot"
@@ -16,7 +14,6 @@ import (
 	"onefrog/internal/remote"
 	"onefrog/internal/secret"
 	"onefrog/internal/store"
-	"onefrog/internal/task"
 )
 
 type serverReq struct {
@@ -663,106 +660,6 @@ type chatReq struct {
 	ClientRequestID string `json:"client_request_id"`
 }
 
-// chat is the legacy synchronous ingress. It keeps the Result shape its callers
-// already depend on, but the work itself always runs as a durable task when the
-// runtime is available: the request only observes the task and returns once it
-// stops making progress. A dropped connection therefore never cancels work.
-func (s *Server) chat(c *gin.Context) {
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 2*1024*1024)
-	var req chatReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, http.StatusBadRequest, "请求无效")
-		return
-	}
-	user := c.MustGet("user").(model.User)
-	if s.durable() {
-		s.durableChat(c, user, req)
-		return
-	}
-	// No runner: keep the turn-bound loop for tests and for a build that
-	// deliberately runs without durable tasks.
-	req.OwnerID = user.ID
-	req.RestrictServers = true
-	result, err := s.Agent.ReplyWithOptions(c.Request.Context(), req.BotID, req.ServerID, req.SessionID, req.Content, req.Options, nil)
-	if err != nil {
-		fail(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	c.JSON(http.StatusOK, result)
-}
-
-// durableChat submits the request as a durable task and returns the legacy
-// Result shape once the task stops making progress. If the request's own
-// context expires the task keeps running and the client gets 202 with the task
-// view, never a cancelled task and never a fabricated answer.
-func (s *Server) durableChat(c *gin.Context, user model.User, req chatReq) {
-	ctx := c.Request.Context()
-	// A card reply resumes the exact task bound to that card. It is the same
-	// shared card path the task endpoint uses, so the identity rules cannot
-	// drift between transports.
-	if req.Options.ChoiceAnswer != nil || req.Options.SecretAnswer != nil {
-		it, err := s.ResumeTaskCard(ctx, user.ID, req.SessionID, req.Options)
-		if err != nil {
-			taskCardError(c, err)
-			return
-		}
-		s.awaitChatResult(c, user.ID, it.ID)
-		return
-	}
-	if strings.TrimSpace(req.Content) == "" {
-		fail(c, http.StatusBadRequest, "内容不能为空")
-		return
-	}
-	it, err := s.Agent.SubmitTask(ctx, bot.SubmitRequest{
-		OwnerID: user.ID, BotID: req.BotID, SessionID: req.SessionID,
-		ClientRequestID: strings.TrimSpace(req.ClientRequestID), ServerID: req.ServerID,
-		Content: req.Content, Title: clipText(req.Content, 60), Options: req.Options,
-	})
-	if err != nil {
-		if errors.Is(err, bot.ErrRequestPayloadChanged) {
-			fail(c, http.StatusConflict, err.Error())
-			return
-		}
-		fail(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	s.awaitChatResult(c, user.ID, it.ID)
-}
-
-// awaitChatResult waits for one durable task to stop making progress and
-// reports it in the legacy shape. The task is never bound to the request
-// context: an aborted client leaves the task running.
-func (s *Server) awaitChatResult(c *gin.Context, ownerID, taskID string) {
-	out, err := s.Tasks.WaitTask(c.Request.Context(), ownerID, taskID, 100*time.Millisecond)
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		// The observer gave up, not the task. Report the durable state so the
-		// client can poll or reconnect instead of retrying the work.
-		c.Header("Cache-Control", "no-store")
-		c.JSON(http.StatusAccepted, s.taskViewFor(c, out.Task))
-		return
-	}
-	if err != nil {
-		taskError(c, err)
-		return
-	}
-	if out.Done {
-		// Only a successful terminal task becomes a legacy Result. A failed,
-		// cancelled or budget-exhausted task is reported as the durable view so
-		// its status and error are never hidden behind a successful shape.
-		if out.Task.Status == task.StatusCompleted && out.Result.Text != "" {
-			c.JSON(http.StatusOK, out.Result)
-			return
-		}
-		c.Header("Cache-Control", "no-store")
-		c.JSON(http.StatusAccepted, s.taskViewFor(c, out.Task))
-		return
-	}
-	// Still waiting on the operator, a child job or a restart: the durable view
-	// is the only honest answer. Never synthesize a Result from the session.
-	c.Header("Cache-Control", "no-store")
-	c.JSON(http.StatusAccepted, s.taskViewFor(c, out.Task))
-}
-
 func (s *Server) messages(c *gin.Context) {
 	items, err := s.Store.ListMessages(c.Request.Context(), c.Param("id"))
 	if mapStore(c, err) {
@@ -772,21 +669,4 @@ func (s *Server) messages(c *gin.Context) {
 		items = []model.Message{}
 	}
 	c.JSON(http.StatusOK, items)
-}
-
-func stepEvent(step bot.Step) gin.H {
-	switch step.Kind {
-	case "session":
-		return gin.H{"type": "session", "session_id": step.Output}
-	case "say":
-		return gin.H{"type": "say", "bot": step.Bot, "content": step.Output}
-	case "approval":
-		return gin.H{"type": "approval_resolved", "approval": step.Approval}
-	case "delegate":
-		return gin.H{"type": "delegate", "bot": step.Bot, "target": step.Target, "task": step.Task}
-	case "message":
-		return gin.H{"type": "message", "bot": step.Bot, "target": step.Target, "task": step.Task}
-	default:
-		return gin.H{"type": "tool", "bot": step.Bot, "name": step.Name, "command": step.Command, "server_id": step.ServerID, "ok": step.OK, "output": step.Output}
-	}
 }

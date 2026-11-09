@@ -225,7 +225,11 @@ func TestStopCancelsAll(t *testing.T) {
 	waitFor(t, "running", func() bool {
 		a, _ := b.store.Task(id1)
 		c, _ := b.store.Task(id2)
-		return a.Status == "running" && c.Status == "running"
+		ai.mu.Lock()
+		n := ai.calls
+		ai.mu.Unlock()
+		// 状态先变成 running，Agent 随后才调用模型；两次调用都进来后再记基线。
+		return a.Status == "running" && c.Status == "running" && n >= 2
 	})
 	ai.mu.Lock()
 	before := ai.calls

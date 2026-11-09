@@ -23,7 +23,12 @@ func (askAI) Chat(ctx context.Context, req onefrog.ChatRequest, onText func(stri
 	case last.Role == "tool":
 		reply.Content = "已经去问了，有回复再告诉你。"
 	case strings.Contains(last.Content, "ask:"):
-		to := strings.TrimSpace(last.Content[strings.Index(last.Content, "ask:")+4:])
+		// The user's "ask:<id>" may share a turn with an inbox notice that
+		// arrived at the same time, so only the id token after "ask:" counts.
+		to := ""
+		if f := strings.Fields(last.Content[strings.Index(last.Content, "ask:")+4:]); len(f) > 0 {
+			to = f[0]
+		}
 		reply = toolCall("ask_agent", map[string]string{"to_bot_id": to, "question": "你在忙什么？"})
 	default:
 		reply.Content = "好的"

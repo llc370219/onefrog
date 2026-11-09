@@ -2,7 +2,10 @@ package bot
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -30,16 +33,22 @@ type Event struct {
 }
 
 type Message struct {
-	ID        string       `json:"id"`
-	Role      string       `json:"role"` // user | assistant | notice（系统通知，只给聊天层看）
-	Text      string       `json:"text"`
-	Card      *Card        `json:"card,omitempty"`
-	Tools     []string     `json:"tools,omitempty"`  // 聊天层这一轮用过的工具（界面上显示成小标签）
-	Secret    *SecretReq   `json:"secret,omitempty"` // request_secret 发出的密钥卡片（永远不含值）
-	Files     []Attachment `json:"files,omitempty"`
-	Reactions []Reaction   `json:"reactions,omitempty"`
-	Hidden    bool         `json:"hidden,omitempty"` // 被"重新生成 / 编辑重发"替换掉的消息
-	Silent    bool         `json:"silent,omitempty"` // 只记进上下文、不叫醒聊天层的通知
+	ID           string       `json:"id"`
+	Role         string       `json:"role"` // user | assistant | notice（系统通知，只给聊天层看）
+	Text         string       `json:"text"`
+	FromBotID    string       `json:"from_bot_id,omitempty"`
+	ToBotID      string       `json:"to_bot_id,omitempty"`
+	RequestID    string       `json:"request_id,omitempty"`
+	ReplyTo      string       `json:"reply_to,omitempty"`
+	MessageState string       `json:"message_state,omitempty"` // pending | handled | replied
+	Hop          int          `json:"hop,omitempty"`
+	Card         *Card        `json:"card,omitempty"`
+	Tools        []string     `json:"tools,omitempty"`  // 聊天层这一轮用过的工具（界面上显示成小标签）
+	Secret       *SecretReq   `json:"secret,omitempty"` // request_secret 发出的密钥卡片（永远不含值）
+	Files        []Attachment `json:"files,omitempty"`
+	Reactions    []Reaction   `json:"reactions,omitempty"`
+	Hidden       bool         `json:"hidden,omitempty"` // 被"重新生成 / 编辑重发"替换掉的消息
+	Silent       bool         `json:"silent,omitempty"` // 只记进上下文、不叫醒聊天层的通知
 	// 聊天层这一轮的思考过程（只用于展示，不会喂回模型）
 	Thinking   string    `json:"thinking,omitempty"`
 	ThinkingMs int64     `json:"thinking_ms,omitempty"`
@@ -90,6 +99,7 @@ type TaskRec struct {
 	Steps        int       `json:"steps,omitempty"`
 	StopReason   string    `json:"stop_reason,omitempty"` // 结束：user | stall | restart；暂停：user | chat | restart | held（待办，还没开始过）
 	CreatedAt    time.Time `json:"created_at"`
+	createdSeq   int64     // event order breaks ties on clocks with coarse resolution
 	EndedAt      time.Time `json:"ended_at,omitempty"`
 	LastActivity time.Time `json:"-"`
 	Awaiting     int       `json:"-"` // 正在等待的审批数
@@ -97,11 +107,10 @@ type TaskRec struct {
 	Pausing      bool      `json:"-"` // 已请求暂停，等下一个安全点
 	Notes        []string  `json:"-"` // 暂停期间收到的补充要求，恢复时交给 agent
 	// 以下由事件重放得到，供聊天层的 list_tasks / read_task 使用
-	StartedAt  time.Time `json:"-"`
-	Summary    string    `json:"-"` // agent 的最终总结（task.summary 事件）
-	Files      []string  `json:"-"` // 成功写入/修改过的文件
-	StepLog    []StepRec `json:"-"`
-	createdSeq int64
+	StartedAt time.Time `json:"-"`
+	Summary   string    `json:"-"` // agent 的最终总结（task.summary 事件）
+	Files     []string  `json:"-"` // 成功写入/修改过的文件
+	StepLog   []StepRec `json:"-"`
 }
 
 // StepRec 是 agent 的一步工具调用。
@@ -178,6 +187,10 @@ type Store struct {
 	mu        sync.Mutex
 	codec     state.Codec
 	f         *os.File
+	dirty     bool          // 有写入还没 fsync
+	writeErr  time.Time     // 上次记录写盘失败日志的时间（避免刷屏）
+	stopSync  chan struct{} // 关闭后台定期 fsync
+	syncDone  chan struct{}
 	seq       int64
 	skipped   int
 	log       []Event
@@ -227,43 +240,62 @@ func openStore(dir string, codec state.Codec) (*Store, error) {
 	s := &Store{codec: codec, subs: map[chan Event]struct{}{}, byID: map[string]*Message{}, cards: map[string]*Message{},
 		tasks: map[string]*TaskRec{}, approvals: map[string]*ApprovalRec{}, secrets: map[string]*Message{}}
 	path := filepath.Join(dir, "stream.jsonl")
-	if f, err := os.Open(path); err == nil {
-		sc := bufio.NewScanner(f)
-		sc.Buffer(nil, 16<<20)
-		skipped := 0
-		for sc.Scan() {
-			raw, err := state.Decode(codec, sc.Bytes())
-			var e Event
-			if err != nil || json.Unmarshal(raw, &e) != nil || e.Seq <= 0 {
-				skipped++
-				continue
-			}
-			if e.Seq > s.seq {
-				s.seq = e.Seq
-				s.log = append(s.log, e)
-				s.apply(e)
-			}
-		}
-		if skipped > 0 {
-			s.skipped = skipped
-			log.Printf("Frog Bot: 跳过 %d 条无法读取的事件日志，后续事件继续恢复", skipped)
-		}
-		_ = f.Close()
-		if err := sc.Err(); err != nil {
-			return nil, err
-		}
-	} else if !os.IsNotExist(err) {
-		return nil, err
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600) // 含聊天记录，只允许本用户读
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600) // 含聊天记录，只允许本用户读
 	if err != nil {
 		return nil, err
 	}
+	good, err := s.replay(f)
+	if s.skipped > 0 {
+		log.Printf("Frog Bot: 跳过 %d 条无法读取的事件日志，后续事件继续恢复", s.skipped)
+	}
+	if err != nil {
+		f.Close()
+		return nil, fmt.Errorf("读取 %s 失败: %w", path, err)
+	}
+	// 上次崩溃/断电时可能只写了半行：截掉最后一个换行之后的残留，免得下一条事件接在坏数据后面。
+	if st, err := f.Stat(); err == nil && st.Size() > good {
+		log.Printf("事件日志 %s 末尾有 %d 字节不完整的数据（上次可能异常退出），已截掉", path, st.Size()-good)
+		if err := f.Truncate(good); err != nil {
+			f.Close()
+			return nil, err
+		}
+	}
+	if _, err := f.Seek(0, io.SeekEnd); err != nil {
+		f.Close()
+		return nil, err
+	}
 	s.f = f
+	s.stopSync, s.syncDone = make(chan struct{}), make(chan struct{})
+	go s.syncLoop()
 	return s, nil
 }
 
-func (s *Store) Close() error { return s.f.Close() }
+// replay 读入已有的事件，返回最后一个完整行（以换行结尾）之后的位置。
+func (s *Store) replay(f *os.File) (int64, error) {
+	r := bufio.NewReaderSize(f, 1<<20)
+	var off int64
+	for {
+		line, err := r.ReadBytes('\n')
+		if err == io.EOF {
+			return off, nil // 没有换行结尾的残行不算
+		}
+		if err != nil {
+			return off, err
+		}
+		off += int64(len(line))
+		raw, err := state.Decode(s.codec, bytes.TrimRight(line, "\r\n"))
+		var e Event
+		if err != nil || json.Unmarshal(raw, &e) != nil || e.Seq <= 0 {
+			s.skipped++
+			continue
+		}
+		if e.Seq > s.seq {
+			s.seq = e.Seq
+			s.log = append(s.log, e)
+			s.apply(e)
+		}
+	}
+}
 
 func (s *Store) Skipped() int {
 	s.mu.Lock()
@@ -272,6 +304,71 @@ func (s *Store) Skipped() int {
 }
 
 // Append 保存一条事件、更新状态并推送。
+// syncLoop 每 2 秒把还没落盘的事件 fsync 一次（关键事件在 Append 里立刻 fsync）。
+func (s *Store) syncLoop() {
+	defer close(s.syncDone)
+	t := time.NewTicker(2 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.stopSync:
+			return
+		case <-t.C:
+			s.mu.Lock()
+			s.syncLocked()
+			s.mu.Unlock()
+		}
+	}
+}
+
+func (s *Store) syncLocked() {
+	if !s.dirty || s.f == nil {
+		return
+	}
+	if err := s.f.Sync(); err != nil {
+		s.logWriteErr("fsync", err)
+		return
+	}
+	s.dirty = false
+}
+
+func (s *Store) logWriteErr(op string, err error) {
+	if time.Since(s.writeErr) > time.Minute {
+		s.writeErr = time.Now()
+		log.Printf("⚠ 写事件日志失败（%s）：%v。磁盘满了或没有权限时，重启后可能丢失最近的记录。", op, err)
+	}
+}
+
+func (s *Store) Close() error {
+	if s.stopSync != nil {
+		close(s.stopSync)
+		<-s.syncDone
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.syncLocked()
+	return s.f.Close()
+}
+
+// 这些事件写完立刻 fsync：用户的输入和决定、任务状态变化。其余（agent 的工具调用过程等）由 syncLoop 定期落盘。
+func syncNow(kind string, data []byte) bool {
+	switch kind {
+	case "agent":
+		var ev struct {
+			Type onefrog.EventType `json:"type"`
+		}
+		_ = json.Unmarshal(data, &ev)
+		switch ev.Type {
+		case onefrog.EvTaskCompleted, onefrog.EvTaskFailed, onefrog.EvTaskCancelled, onefrog.EvTaskPaused,
+			onefrog.EvApprovalRequested, onefrog.EvApprovalDecided:
+			return true
+		}
+		return false
+	}
+	return true
+}
+
+// Append 保存一条事件、更新状态并推送。写盘失败时事件仍然生效（内存和界面里都有），并在日志里提示。
 func (s *Store) Append(kind string, data any, internal bool) Event {
 	raw, _ := json.Marshal(data)
 	s.mu.Lock()
@@ -285,12 +382,26 @@ func (s *Store) Append(kind string, data any, internal bool) Event {
 		_, err = s.f.Write(append(enc, '\n'))
 	}
 	if err != nil {
-		log.Print("Frog Bot: event persistence failed")
+		s.logWriteErr("write", err)
+	} else {
+		s.dirty = true
+		if syncNow(kind, raw) {
+			s.syncLocked()
+		}
 	}
 	s.log = append(s.log, e)
 	s.apply(e)
 	s.publish(e)
 	return e
+}
+
+// Touch 记录任务有动静（只推送不保存的流式文字也算），给卡住检测用。
+func (s *Store) Touch(taskID string) {
+	s.mu.Lock()
+	if t := s.tasks[taskID]; t != nil {
+		t.LastActivity = time.Now()
+	}
+	s.mu.Unlock()
 }
 
 // Broadcast 推送一条不保存的临时事件。
@@ -398,6 +509,13 @@ func (s *Store) apply(e Event) {
 		for _, id := range ids {
 			if m := s.byID[id]; m != nil {
 				m.handled = true
+			}
+		}
+	case "message.state":
+		var p struct{ ID, State string }
+		if json.Unmarshal(e.Data, &p) == nil {
+			if m := s.byID[p.ID]; m != nil {
+				m.MessageState = p.State
 			}
 		}
 	case "card":
@@ -669,6 +787,19 @@ func (s *Store) Unhandled() []Message {
 	return out
 }
 
+// Inbox returns durable Bot-to-Bot messages, including completed items when requested.
+func (s *Store) Inbox(includeCompleted bool) []Message {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []Message
+	for _, m := range s.msgs {
+		if m.FromBotID != "" && m.ToBotID != "" && (includeCompleted || m.MessageState == "pending") {
+			out = append(out, *m)
+		}
+	}
+	return out
+}
+
 // History 返回已处理过的最近 n 条消息，作为聊天层的上下文。
 func (s *Store) History(n int) []Message {
 	s.mu.Lock()
@@ -746,7 +877,10 @@ func (s *Store) Queue() []TaskRec {
 		if out[i].Prio != out[j].Prio {
 			return out[i].Prio < out[j].Prio
 		}
-		return out[i].createdSeq < out[j].createdSeq
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].createdSeq < out[j].createdSeq
+		}
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
 	})
 	return out
 }

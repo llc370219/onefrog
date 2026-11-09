@@ -1,9 +1,10 @@
 import { Download, ExternalLink, FileCode2, FileImage, FileText } from 'lucide-react';
-import { api, isImage } from '../api';
+import { useActiveBot, isImage } from '../api';
 import { base, sizeOf } from '../lib/format';
 
 // 产物 / 附件卡片：图片直接显示，其他文件可以打开或下载
 export default function Artifact({ path, size, mime, compact }: { path: string; size?: number; mime?: string; compact?: boolean }) {
+  const { api } = useActiveBot();
   const name = base(path);
   const img = isImage(name, mime);
   const code = /\.(go|ts|tsx|js|py|rs|sh|json|ya?ml|toml|html|css|sql)$/i.test(name);

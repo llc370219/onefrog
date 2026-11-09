@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -356,13 +357,11 @@ var ShellTool = FuncTool{"shell", "在工作区目录中用 bash 执行命令，
 		}
 		ctx, cancel := context.WithTimeout(ctx, min(to, 600*time.Second))
 		defer cancel()
-		cmd := exec.CommandContext(ctx, "bash", "-c", a.Command)
+		cmd := shellCommand(ctx, a.Command)
 		cmd.Dir = env.Workspace
-		if len(env.Env) > 0 {
-			cmd.Env = os.Environ()
-			for k, v := range env.Env {
-				cmd.Env = append(cmd.Env, k+"="+v)
-			}
+		cmd.Env = SafeEnviron()
+		for k, v := range env.Env {
+			cmd.Env = append(cmd.Env, k+"="+v)
 		}
 		var out bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &out, &out
@@ -382,3 +381,30 @@ var ShellTool = FuncTool{"shell", "在工作区目录中用 bash 执行命令，
 		}
 		return res + "\n[exit code 0]", nil
 	}}
+
+// 这些环境变量是 frog bot 自己的模型 Key / 主密钥，不传给 shell 命令。
+var hiddenEnv = map[string]bool{"API_KEY": true, "CHAT_API_KEY": true, "FROGBOT_API_KEY": true, "XAI_API_KEY": true,
+	"OPENAI_API_KEY": true, "FROGBOT_MASTER_KEY": true}
+
+// SafeEnviron 返回去掉了 frog bot 自身密钥的环境变量。
+func SafeEnviron() []string {
+	var out []string
+	for _, kv := range os.Environ() {
+		k, _, _ := strings.Cut(kv, "=")
+		if hiddenEnv[strings.ToUpper(k)] {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
+}
+
+// shellCommand 优先用 bash；Windows 上没有 bash（没装 Git Bash / WSL）时退回 PowerShell。
+func shellCommand(ctx context.Context, command string) *exec.Cmd {
+	if runtime.GOOS == "windows" {
+		if _, err := exec.LookPath("bash"); err != nil {
+			return exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", command)
+		}
+	}
+	return exec.CommandContext(ctx, "bash", "-c", command)
+}

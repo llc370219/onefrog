@@ -12,6 +12,7 @@ export function slot(id: string): number {
 }
 
 export function botAvatarById(id: string, fallbackSlot?: number): string {
+  if (fallbackSlot !== undefined && fallbackSlot < 0) return '/frog-bot.png'; // OneFrog 里的 Frog Bot 用自己的图标
   const n = fallbackSlot !== undefined ? fallbackSlot % BOT_AVATAR_COUNT : slot(id);
   return avatarURL(n);
 }

@@ -244,8 +244,8 @@ type Checker struct {
 	SettingsChannel func() string
 	// SettingsAutoUpdate reports whether auto-upgrade is enabled in Settings.
 	SettingsAutoUpdate func() bool
-	Interval        time.Duration
-	Now             func() time.Time
+	Interval           time.Duration
+	Now                func() time.Time
 
 	mu              sync.Mutex
 	latest          *release
@@ -527,10 +527,10 @@ func (c *Checker) Run(ctx context.Context) {
 }
 
 func (c *Checker) maybeAutoApply(s Status) {
-	if !s.AutoUpdate || !s.CanApply || !safeReleaseTag(s.Latest) {
-		return
-	}
-	if strings.Contains(s.Latest, "-beta.") && s.HelperStale {
+	// Automatic upgrades only ever move to a stable release. A beta (or any
+	// other pre-release tag) needs a person to press the button, even when the
+	// beta channel is selected, because OneFrog can run commands on servers.
+	if !s.AutoUpdate || !s.CanApply || !safeReleaseTag(s.Latest) || !StableTag(s.Latest) {
 		return
 	}
 	c.mu.Lock()
@@ -544,4 +544,11 @@ func (c *Checker) maybeAutoApply(s Status) {
 	if _, err := c.Apply(); err != nil {
 		log.Printf("update: auto-apply failed: %v", err)
 	}
+}
+
+// StableTag reports whether tag is a plain release such as v0.1.32, without a
+// pre-release suffix like -beta.1 or -rc.1.
+func StableTag(tag string) bool {
+	tag = strings.TrimSpace(tag)
+	return safeReleaseTag(tag) && !strings.Contains(tag, "-")
 }

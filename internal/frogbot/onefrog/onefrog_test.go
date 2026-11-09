@@ -84,19 +84,22 @@ func raw(v any) json.RawMessage { b, _ := json.Marshal(v); return b }
 
 func TestPathEscapeDenied(t *testing.T) {
 	ws := t.TempDir()
+	outside := t.TempDir()
 	g := newGuard(t, nil)
 	task := Task{ID: "t", Workspace: ws, Policy: PolicyNever}
-	for _, p := range []string{"../x", filepath.Join(t.TempDir(), "passwd"), "a/../../b"} {
+	for _, p := range []string{"../x", filepath.Join(outside, "outside.txt"), "a/../../b"} {
 		v, _ := g.Classify(task, readFileTool, raw(map[string]string{"path": p}))
 		if v.Decision != Deny {
 			t.Errorf("path %q: want deny, got %v", p, v)
 		}
 	}
 	// 符号链接逃逸
-	if err := os.Symlink(t.TempDir(), filepath.Join(ws, "link")); err == nil {
-		if v, _ := g.Classify(task, readFileTool, raw(map[string]string{"path": "link/passwd"})); v.Decision != Deny {
+	if err := os.Symlink(outside, filepath.Join(ws, "link")); err == nil {
+		if v, _ := g.Classify(task, readFileTool, raw(map[string]string{"path": filepath.Join("link", "outside.txt")})); v.Decision != Deny {
 			t.Errorf("symlink escape: want deny, got %v", v)
 		}
+	} else {
+		t.Logf("directory symlink unavailable on this host: %v", err)
 	}
 	if v, _ := g.Classify(task, readFileTool, raw(map[string]string{"path": "sub/ok.txt"})); v.Decision != Allow {
 		t.Errorf("inside workspace read: want allow, got %v", v)
@@ -232,7 +235,7 @@ func TestLoopToolThenAnswer(t *testing.T) {
 		{Role: "assistant", Content: "写好了"},
 	}}
 	sink := &recSink{}
-	a := &Agent{Provider: fp, Guard: newGuard(t, nil), Sink: sink, Store: NewMemStore()}
+	a := &Agent{Provider: fp, Guard: newGuard(t, nil), Sink: sink}
 	res, err := a.Run(context.Background(), Task{ID: "t1", Input: "写个文件", Workspace: ws})
 	if err != nil || res.Status != StatusCompleted || res.Output != "写好了" || res.Steps != 2 {
 		t.Fatalf("got %+v %v", res, err)

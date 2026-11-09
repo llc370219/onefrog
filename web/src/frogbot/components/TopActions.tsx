@@ -1,31 +1,7 @@
-import { Bell, BellOff, Monitor, Moon, Sun } from 'lucide-react';
-import { useState } from 'react';
+import { Bell, BellOff } from 'lucide-react';
 
-type Pref = 'system' | 'light' | 'dark';
-const KEY = 'frogbot-theme';
-
-function applyTheme(p: Pref) {
-  const root = document.documentElement;
-  if (p === 'system') {
-    delete root.dataset.theme;
-    localStorage.removeItem(KEY);
-  } else {
-    root.dataset.theme = p;
-    localStorage.setItem(KEY, p);
-  }
-}
-
-export default function TopActions({
-  notify,
-  onNotify,
-}: {
-  notify: boolean;
-  onNotify: () => void;
-}) {
-  const [pref, setPref] = useState<Pref>(() => (localStorage.getItem(KEY) as Pref) || 'system');
-  const next: Record<Pref, Pref> = { system: 'light', light: 'dark', dark: 'system' };
-  const Icon = pref === 'light' ? Sun : pref === 'dark' ? Moon : Monitor;
-
+// 嵌入 OneFrog：主题跟随面板（面板切换时由 main.tsx 同步），这里只保留通知开关。
+export default function TopActions({ notify, onNotify }: { notify: boolean; onNotify: () => void }) {
   return (
     <div className="fixed top-3 right-4 z-40 flex items-center gap-1.5 rounded-full border border-line bg-canvas/80 px-2 py-1 shadow-xs backdrop-blur-md">
       <button
@@ -36,18 +12,6 @@ export default function TopActions({
         aria-pressed={notify}
       >
         {notify ? <Bell size={16} /> : <BellOff size={16} />}
-      </button>
-      <button
-        onClick={() => {
-          const p = next[pref];
-          setPref(p);
-          applyTheme(p);
-        }}
-        className="grid size-8 place-items-center rounded-full text-fg3 transition hover:bg-s2 hover:text-fg"
-        title={{ system: '跟随系统', light: '浅色', dark: '深色' }[pref]}
-        aria-label="切换黑白主题"
-      >
-        <Icon size={16} />
       </button>
     </div>
   );

@@ -29,7 +29,15 @@ func (s *Server) bindAutomation(c *gin.Context) (automation.Automation, bool) {
 		fail(c, http.StatusBadRequest, "请选择 Bot")
 		return in, false
 	}
-	if _, err := s.Store.GetBot(ctx, in.BotID); err != nil {
+	if in.BotID == FrogBotID {
+		if s.FrogBots == nil {
+			fail(c, http.StatusBadRequest, "Frog Bot 未启用")
+			return in, false
+		}
+		// Frog Bot works in its own workspace and reaches servers only through
+		// approved run_onefrog_command calls, so a target server does not apply.
+		in.ServerID = ""
+	} else if _, err := s.Store.GetBot(ctx, in.BotID); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			fail(c, http.StatusBadRequest, "Bot 不存在")
 		} else {

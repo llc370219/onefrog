@@ -144,7 +144,12 @@ func (s *Server) Handler() http.Handler {
 		// run that needs a human decision is recorded as waiting instead of
 		// failing or silently succeeding.
 		if agent.TasksRunner != nil {
-			s.Automations.SetDurableRunner(automationDurableRunner(agent))
+			runner := automationDurableRunner(agent)
+			if s.FrogBots != nil {
+				s.FrogBots.SetAutomations(s.Automations)
+				runner = s.wrapAutomationRunner(runner)
+			}
+			s.Automations.SetDurableRunner(runner)
 		} else {
 			s.Automations.SetRunner(func(ctx context.Context, it automation.Automation) (string, string, error) {
 				sid := automation.SessionID(it)

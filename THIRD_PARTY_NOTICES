@@ -2740,6 +2740,29 @@ SOFTWARE.
 
 Frog Bot integration
 --------------------
-Portions of the chat UI and runtime were imported from llc370219/frog-bot,
-revision 314a84f14a811fcf92e15d91411a1458fc34c2b9. See the upstream
-ATTRIBUTION.md for materials previously adapted from OneFrog v0.1.31.
+The AI assistant ("AI 助理") chat UI and runtime under internal/frogbot/ and
+web/src/frogbot/ are adapted from llc370219/frog-bot v0.1.2, revision
+0ca375c, by the same author, used under the MIT License below. Frog Bot itself
+reused UI material from OneFrog v0.1.31; see the upstream ATTRIBUTION.md.
+
+MIT License
+
+Copyright (c) 2026 llc370219
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

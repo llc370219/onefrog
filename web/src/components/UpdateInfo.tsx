@@ -119,11 +119,11 @@ export function AboutSection({ onStatus }: { onStatus?: (s: UpdateStatus) => voi
     <div className="about-actions">
       <div className="about-toggles">
         <label className="enable-label"><span>自动检查更新</span><input type="checkbox" checked={status.disabled_by !== 'settings' && status.disabled_by !== 'env'} disabled={busy || status.disabled_by === 'env'} onChange={e => run(() => api.setUpdateCheck(e.target.checked))}/></label>
-        <label className="enable-label" title={!status.can_apply ? '当前部署不支持面板内一键升级，需先用脚本升级一次' : undefined}><span>自动安装新版本</span><input type="checkbox" checked={!!status.auto_update} disabled={busy || !status.enabled || !status.can_apply} onChange={e => run(() => api.setAutoUpdate(e.target.checked))}/></label>
+        <label className="enable-label" title={!status.can_apply ? '当前部署不支持面板内一键升级，需先用脚本升级一次' : undefined}><span>自动安装新正式版</span><input type="checkbox" checked={!!status.auto_update} disabled={busy || !status.enabled || !status.can_apply} onChange={e => run(() => api.setAutoUpdate(e.target.checked))}/></label>
       </div>
       <Button onClick={() => run(api.checkUpdate)} busy={busy} disabled={!status.enabled}><RefreshCw size={14}/>立即检查</Button>
     </div>
-    {status.auto_update && <p className="muted">已开启自动更新：后台检测到 GitHub 有新版本时会自动触发升级并重启面板容器，数据与配置保留。</p>}
+    {status.auto_update && <p className="muted">已开启自动更新：检测到新的正式版时会自动升级并重启面板容器，数据与配置保留。测试版不会自动安装，需要你手动点「立即升级」。</p>}
     {!status.enabled && status.disabled_by && <p className="muted">{disabledText[status.disabled_by]}</p>}
     <div className="settings-subheading"><h3>开源许可</h3><p>OneFrog 以 AGPL-3.0 发布，源码见 <a href={`https://github.com/${status.repo}`} target="_blank" rel="noreferrer noopener">github.com/{status.repo}</a>。</p></div>
   </div>;

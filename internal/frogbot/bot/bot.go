@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"onefrog/internal/frogbot/onefrog"
@@ -20,29 +21,36 @@ import (
 )
 
 type Config struct {
-	Name          string
-	DataDir       string // 事件日志、记忆
-	Workspace     string // 后台 agent 的工作区
-	ChatProvider  onefrog.Provider
-	ChatModel     string
-	AgentProvider onefrog.Provider
-	AgentModel    string
-	Reviewer      onefrog.Reviewer // 可选：auto 模式的审核模型
-	Policy        onefrog.Policy
-	ChatPolicy    onefrog.Policy // 聊天层直接写文件时的审批模式，默认 untrusted（每次写都要你确认）
-	Rules         onefrog.Rules
-	MaxConcurrent int
-	TaskMaxTime   time.Duration // 单个任务最长运行时间，默认 30 分钟
-	StallTimeout  time.Duration // 多久没有进展算卡住，默认 12 分钟
-	TurnTimeout   time.Duration // 聊天层每轮上限，默认 90 秒
-	MasterKey     string        // FROGBOT_MASTER_KEY；为空时用 data/master.key（自动生成）
-	Demo          bool
-	DisableShell  bool
-	Codec         state.Codec
-	AgentTools    []onefrog.Tool
-	Enter         func() (func(), error) // host maintenance lease
-	Redact        func(string) string    // host credential redactor
-	Timezone      string                 // 默认 Asia/Shanghai，用于展示与新建计划
+	Name           string
+	DataDir        string // 事件日志、记忆
+	Workspace      string // 后台 agent 的工作区
+	ChatProvider   onefrog.Provider
+	ChatModel      string
+	AgentProvider  onefrog.Provider
+	AgentModel     string
+	Reviewer       onefrog.Reviewer // 可选：auto 模式的审核模型
+	ReviewerModel  string           // 使用当前 API 连接
+	Policy         onefrog.Policy
+	ChatPolicy     onefrog.Policy // 聊天层直接写文件时的审批模式，默认 untrusted（每次写都要你确认）
+	Rules          onefrog.Rules
+	MaxConcurrent  int           // 所有 Bot 合计同时运行的后台任务上限（MAX_CONCURRENT），默认 4
+	TaskMaxTime    time.Duration // 单个任务最长运行时间，默认 30 分钟
+	ContextTokens  int           // 后台任务对话超过多少 token（估算）就压缩旧内容，默认 60000（CONTEXT_TOKENS）
+	StallTimeout   time.Duration // 多久没有进展算卡住，默认 12 分钟
+	TurnTimeout    time.Duration // 聊天层每轮上限，默认 90 秒
+	MasterKey      string        // FROGBOT_MASTER_KEY；为空时用 data/master.key（自动生成）
+	Demo           bool
+	Timezone       string // 默认 Asia/Shanghai，用于展示与新建计划
+	InitialBaseURL string
+	InitialKey     string
+
+	// 以下字段只在嵌入 OneFrog 时使用。
+	Host         *Host                  // 非空表示嵌入模式：登录、模型、密钥、定时都由宿主提供
+	DisableShell bool                   // 关闭宿主机 Shell 工具
+	Codec        state.Codec            // 宿主加密：事件日志、记忆、检查点
+	AgentTools   []onefrog.Tool         // 宿主额外提供给后台 Agent 的工具
+	Enter        func() (func(), error) // 宿主维护闸门（备份/迁移期间暂停）
+	Redact       func(string) string    // 宿主凭据脱敏
 }
 
 type Bot struct {
@@ -53,14 +61,26 @@ type Bot struct {
 	chatTool *onefrog.Registry
 	chatG    *onefrog.Guard
 	guard    *onefrog.Guard // 任务和聊天层共用的审批管线
-	vault    *vault.Vault
+	vault    Vault
 	sch      sched
 	sched    *scheduler.Engine // 定时唤醒器（持久化计划）
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	kick   chan struct{}
-	wg     sync.WaitGroup
+	modelMu        sync.RWMutex
+	memoryMu       sync.Mutex
+	model          modelConnection
+	envModel       modelConnection // 环境变量提供的模型连接，非空时优先
+	channels       []storedChannel
+	defaultChannel string
+	modelOwner     *Bot
+	slots          *taskSlots // 所有 Bot 共用的后台任务并发上限
+	coordinator    *Bots
+	profile        atomic.Pointer[BotProfile]
+
+	ctx        context.Context
+	cancel     context.CancelFunc
+	kick       chan struct{}
+	wg         sync.WaitGroup
+	background sync.WaitGroup
 
 	turnMu     sync.Mutex
 	turnCancel context.CancelCauseFunc
@@ -72,6 +92,10 @@ var (
 )
 
 func New(cfg Config) (*Bot, error) {
+	return newRuntime(cfg, nil, nil)
+}
+
+func newRuntime(cfg Config, modelOwner *Bot, profile *BotProfile) (*Bot, error) {
 	if cfg.Name == "" {
 		cfg.Name = "Frog"
 	}
@@ -103,39 +127,61 @@ func New(cfg Config) (*Bot, error) {
 	if err != nil {
 		return nil, err
 	}
-	opened := false
+	initialized := false
 	defer func() {
-		if !opened {
-			_ = store.Close()
+		if !initialized {
+			store.Close()
 		}
 	}()
-	key, generated, err := vault.LoadKey(cfg.MasterKey, cfg.DataDir)
-	if err != nil {
-		return nil, fmt.Errorf("读取主密钥失败: %w", err)
-	}
-	if generated {
-		log.Printf("已生成主密钥 %s（权限 0600）。丢了它就解不开已保存的密钥；生产环境建议改用 FROGBOT_MASTER_KEY。", filepath.Join(cfg.DataDir, "master.key"))
-	}
-	vlt, err := vault.Open(cfg.DataDir, key)
-	if err != nil {
-		return nil, err
+	var vlt Vault
+	if cfg.Host != nil && cfg.Host.Vault != nil {
+		vlt = cfg.Host.Vault // 嵌入模式：只用宿主的保险箱，本地不再有第二个
+	} else {
+		key, generated, err := vault.LoadKey(cfg.MasterKey, cfg.DataDir)
+		if err != nil {
+			return nil, fmt.Errorf("读取主密钥失败: %w", err)
+		}
+		if generated {
+			log.Printf("已生成主密钥 %s（权限 0600）。丢了它就解不开已保存的密钥；生产环境建议改用 FROGBOT_MASTER_KEY。", filepath.Join(cfg.DataDir, "master.key"))
+		}
+		local, err := vault.Open(cfg.DataDir, key)
+		if err != nil {
+			return nil, err
+		}
+		vlt = local
 	}
 	store.SetRedactor(func(raw []byte) []byte {
 		return vlt.RedactBytes(onefrog.RedactJSONStrings(raw, cfg.Redact))
 	})
 	b := &Bot{cfg: cfg, store: store, vault: vlt, approver: onefrog.NewQueueApprover(), kick: make(chan struct{}, 1),
-		sch: sched{launched: map[string]bool{}}}
-	b.ctx, b.cancel = context.WithCancel(context.Background())
+		sch: sched{launched: map[string]bool{}}, modelOwner: modelOwner}
+	b.profile.Store(profile)
+	if modelOwner != nil {
+		b.slots = modelOwner.slots
+	} else {
+		b.slots = newTaskSlots(cfg.MaxConcurrent)
+	}
+	if modelOwner == nil && cfg.Host == nil { // 嵌入模式的模型由宿主提供
+		if err := b.loadSettings(); err != nil {
+			return nil, fmt.Errorf("读取模型设置失败: %w", err)
+		}
+	}
 
-	guard, err := onefrog.NewGuard(cfg.Rules, cfg.Reviewer, b.approver)
+	reviewer := cfg.Reviewer
+	if reviewer == nil && cfg.ReviewerModel != "" {
+		reviewer = settingsReviewer{bot: b, model: cfg.ReviewerModel}
+	}
+	guard, err := onefrog.NewGuard(cfg.Rules, reviewer, b.approver)
 	if err != nil {
 		return nil, err
 	}
 	guard.Store = approvalStore{store}
 	guard.Secrets = vlt
 	b.guard = guard
-	agent := &onefrog.Agent{Provider: cfg.AgentProvider, Model: cfg.AgentModel, Guard: guard,
-		Memory: b, Sink: onefrog.SinkFunc(b.onAgentEvent)}
+	resolveAgent := func() (onefrog.Provider, string) { return b.resolveModel(false) }
+	agent := &onefrog.Agent{ResolveModel: resolveAgent, Guard: guard, Memory: b, Sink: onefrog.SinkFunc(b.onAgentEvent),
+		// 长任务的对话超过上限时，把旧的步骤压缩成摘要（先让模型写，失败就用机械摘要）。
+		Compactor: &onefrog.AutoCompactor{MaxTokens: cfg.ContextTokens, Summarize: onefrog.SummarizeWith(resolveAgent)}}
 	if cfg.DisableShell || len(cfg.AgentTools) > 0 {
 		var tools []onefrog.Tool
 		for _, tool := range onefrog.DefaultTools() {
@@ -152,18 +198,20 @@ func New(cfg Config) (*Bot, error) {
 	b.chatG, _ = onefrog.NewGuard(onefrog.Rules{}, nil, nil)
 	b.chatG.Secrets = vlt // 聊天层工具的输出同样脱敏；直接引用密钥的只读调用会被拒绝
 	b.chatTool = onefrog.NewRegistry(b.chatTools()...)
-	if err := b.initScheduler(); err != nil {
-		return nil, err
+	if cfg.Host == nil { // 嵌入模式的定时由宿主的自动化负责，不再起第二个调度器
+		if err := b.initScheduler(); err != nil {
+			return nil, err
+		}
 	}
+	b.ctx, b.cancel = context.WithCancel(context.Background())
 	b.recover()
-	if n := store.Skipped(); n > 0 {
-		b.notify("startup skipped unreadable events")
-	}
-	opened = true
+	initialized = true
 	return b, nil
 }
 
 func (b *Bot) Store() *Store { return b.store }
+
+func (b *Bot) ID() string { return b.botProfile().ID }
 
 // Start 启动聊天层和监工的后台循环。
 func (b *Bot) Start() {
@@ -177,18 +225,23 @@ func (b *Bot) Start() {
 	b.wake()
 }
 
-func (b *Bot) Close() {
+func (b *Bot) stop() {
 	b.cancel()
 	b.approver.DenyAll("服务已关闭，审批失效")
+	// Wait for any dispatch that already passed the context check.
+	b.sch.mu.Lock()
+	b.sch.mu.Unlock()
+	b.mgr.CancelAll()
+}
+
+func (b *Bot) Close() {
+	b.stop()
 	if b.sched != nil {
 		b.sched.Stop()
 	}
-	// Synchronize with schedule() so a task cannot start after cancellation.
-	b.sch.mu.Lock()
-	b.mgr.CancelAll()
-	b.sch.mu.Unlock()
-	b.mgr.WaitAll()
 	b.wg.Wait()
+	b.mgr.Drain()
+	b.background.Wait()
 	b.store.Close()
 }
 
@@ -199,9 +252,13 @@ func (b *Bot) enter() (func(), error) {
 	return func() {}, nil
 }
 
-func (b *Bot) goWork(fn func()) {
-	b.wg.Add(1)
-	go func() { defer b.wg.Done(); fn() }()
+// Track callbacks that may outlive a chat turn or agent task.
+func (b *Bot) runBackground(fn func()) {
+	b.background.Add(1)
+	go func() {
+		defer b.background.Done()
+		fn()
+	}()
 }
 
 func (b *Bot) wake() {
@@ -340,25 +397,101 @@ func (b *Bot) AnswerCard(id, answer string, dismiss bool) error {
 func (b *Bot) memoryPath() string { return filepath.Join(b.cfg.DataDir, "memory.md") }
 
 // Recall 实现 onefrog.MemoryProvider。
-func (b *Bot) Recall(context.Context, string, string) (string, error) {
-	data, err := state.ReadFile(b.cfg.Codec, b.memoryPath())
-	if os.IsNotExist(err) {
-		return "", nil
+func (b *Bot) Recall(_ context.Context, _, _ string) (string, error) {
+	private, err := b.readMemory("private")
+	if err != nil {
+		return "", err
 	}
-	return string(data), err
+	if b.coordinator == nil {
+		return private, nil
+	}
+	shared, err := b.coordinator.readSharedMemory()
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(shared) == "" {
+		return private, nil
+	}
+	return "[共享记忆]\n" + shared + "\n[本 Bot 私有记忆]\n" + private, nil
 }
 
-// approvalStore 只用来把审批记录写进事件日志（onefrog.Store 的其余方法不需要）。
+func (b *Bot) readMemory(scope string) (string, error) {
+	if scope == "" || scope == "private" {
+		b.memoryMu.Lock()
+		defer b.memoryMu.Unlock()
+		data, err := state.ReadFile(b.cfg.Codec, b.memoryPath())
+		if errors.Is(err, os.ErrNotExist) {
+			return "", nil
+		}
+		return strings.TrimSpace(string(data)), err
+	}
+	if scope != "shared" {
+		return "", errors.New("scope 必须是 private 或 shared")
+	}
+	if b.coordinator == nil {
+		return "", errors.New("共享记忆仅在多 Bot 模式下可用")
+	}
+	return b.coordinator.readSharedMemory()
+}
+
+func (b *Bot) writeMemory(scope, text, mode string) error {
+	if scope == "" || scope == "private" {
+		b.memoryMu.Lock()
+		defer b.memoryMu.Unlock()
+		return b.writeMemoryFile(b.memoryPath(), text, mode)
+	}
+	if scope != "shared" {
+		return errors.New("scope 必须是 private 或 shared")
+	}
+	if b.coordinator == nil {
+		return errors.New("共享记忆仅在多 Bot 模式下可用")
+	}
+	return b.coordinator.writeSharedMemory(text, mode)
+}
+
+func (b *Bot) writeMemoryFile(path, text, mode string) error {
+	if strings.TrimSpace(text) == "" || len(text) > 20000 {
+		return errors.New("记忆内容不能为空且最多 20000 字节")
+	}
+	if b.cfg.Codec != nil { // 嵌入模式：记忆按宿主加密保存，写入前脱敏
+		return b.writeSealedMemory(path, text, mode)
+	}
+	var content string
+	if mode != "replace" {
+		old, err := os.ReadFile(path)
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		content = string(old)
+	}
+	if mode == "replace" {
+		content = strings.TrimSpace(text) + "\n"
+	} else {
+		content = strings.TrimRight(content, "\n") + "\n- " + strings.TrimSpace(text) + "\n"
+	}
+	if len(content) > 1<<20 {
+		return errors.New("记忆文件最多 1 MiB")
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".memory-*.tmp")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if err = tmp.Chmod(0600); err == nil {
+		_, err = tmp.WriteString(content)
+	}
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
+}
+
+// approvalStore 把审批记录写进事件日志（审批管线只需要这一个持久化接口）。
 type approvalStore struct{ s *Store }
 
-func (a approvalStore) SaveTask(context.Context, onefrog.Task) error { return nil }
-func (a approvalStore) LoadTask(context.Context, string) (onefrog.Task, error) {
-	return onefrog.Task{}, errors.New("not supported")
-}
-func (a approvalStore) SaveEvent(context.Context, onefrog.Event) error { return nil }
-func (a approvalStore) Events(context.Context, string, int64) ([]onefrog.Event, error) {
-	return nil, nil
-}
 func (a approvalStore) SaveApproval(_ context.Context, r onefrog.ApprovalRecord) error {
 	a.s.Append("approval.record", r, true)
 	return nil

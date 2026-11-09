@@ -75,6 +75,9 @@ function toInput(f: Form): AutomationInput {
   return { name: f.name.trim(), prompt: f.prompt.trim(), bot_id: f.bot_id, server_id: f.server_id, schedule, approval_mode: f.approval_mode, enabled: f.enabled };
 }
 
+// Frog Bot（AI 助理）也是自动化的执行者：定时到点时，任务进入当前账号的 Frog Bot 后台队列。
+const FROG_BOT = 'frog-bot';
+
 export default function Automations({ bots, hosts, onOpenSession }: { bots: BotRow[]; hosts: Host[]; onOpenSession: (id: string, botId: string) => void }) {
   const [items, setItems] = useState<Automation[] | null>(null);
   const [error, setError] = useState('');
@@ -95,7 +98,7 @@ export default function Automations({ bots, hosts, onOpenSession }: { bots: BotR
     catch (e) { if (mounted.current) setError(errText(e, '读取自动化失败')); }
   }, []);
   const anyRunning = !!items?.some(a => a.last_status === 'running' || a.last_status === 'waiting');
-  const linked = (items || []).filter(a => a.task_id && (a.last_status === 'running' || a.last_status === 'waiting'));
+  const linked = (items || []).filter(a => a.task_id && a.bot_id !== FROG_BOT && (a.last_status === 'running' || a.last_status === 'waiting'));
   const linkedKey = linked.map(a => a.task_id + ':' + a.last_status).join('|');
   useTaskPoll(linked.length > 0, 5000, async isCurrent => {
     const rows = await Promise.all(linked.map(async a => {
@@ -137,7 +140,7 @@ export default function Automations({ bots, hosts, onOpenSession }: { bots: BotR
     catch (e) { if (mounted.current) setFormError(errText(e, '删除失败')); }
     finally { if (mounted.current) setSaving(false); }
   }
-  const botName = (id: string) => bots.find(b => b.id === id)?.name || '已删除的 Bot';
+  const botName = (id: string) => id === FROG_BOT ? 'Frog Bot（AI 助理）' : bots.find(b => b.id === id)?.name || '已删除的 Bot';
   const hostName = (id: string) => !id ? '不指定服务器' : hosts.find(h => h.id === id)?.name || '已删除的服务器';
   const set = <K extends keyof Form>(key: K, value: Form[K]) => setForm(f => ({ ...f, [key]: value }));
   const list = items || [];
@@ -183,8 +186,8 @@ export default function Automations({ bots, hosts, onOpenSession }: { bots: BotR
       <Field label="名称"><input value={form.name} maxLength={40} onChange={e => set('name', e.target.value)} placeholder="例如：每日磁盘巡检"/></Field>
       <Field label="要 Bot 做的事" hint="写清楚检查什么、发现问题时怎么处理。需要审批的修改不会在后台执行。"><textarea value={form.prompt} rows={5} onChange={e => set('prompt', e.target.value)} placeholder="检查磁盘使用率和失败的 systemd 服务，超过 85% 或有失败服务时说明原因和建议。"/></Field>
       <div className="form-grid automation-form">
-        <Field label="Bot"><select value={form.bot_id} onChange={e => set('bot_id', e.target.value)}>{!enabledBots.some(b => b.id === form.bot_id) && <option value={form.bot_id} disabled>{form.bot_id ? botName(form.bot_id) + '（已停用）' : '选择 Bot'}</option>}{enabledBots.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
-        <Field label="服务器"><select value={form.server_id} onChange={e => set('server_id', e.target.value)}><option value="">不指定服务器</option>{form.server_id && !hosts.some(h => h.id === form.server_id) && <option value={form.server_id} disabled>已删除的服务器</option>}{hosts.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}</select></Field>
+        <Field label="Bot"><select value={form.bot_id} onChange={e => { set('bot_id', e.target.value); if (e.target.value === FROG_BOT) set('server_id', ''); }}><option value={FROG_BOT}>Frog Bot（AI 助理）</option>{form.bot_id !== FROG_BOT && !enabledBots.some(b => b.id === form.bot_id) && <option value={form.bot_id} disabled>{form.bot_id ? botName(form.bot_id) + '（已停用）' : '选择 Bot'}</option>}{enabledBots.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
+        <Field label="服务器"><select value={form.server_id} disabled={form.bot_id === FROG_BOT} title={form.bot_id === FROG_BOT ? 'Frog Bot 需要操作服务器时会逐条请你确认' : undefined} onChange={e => set('server_id', e.target.value)}><option value="">不指定服务器</option>{form.server_id && !hosts.some(h => h.id === form.server_id) && <option value={form.server_id} disabled>已删除的服务器</option>}{hosts.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}</select></Field>
         <Field label="频率"><select value={form.kind} onChange={e => set('kind', e.target.value as AutomationKind)}>{kinds.map(k => <option key={k.id} value={k.id}>{k.label}</option>)}</select></Field>
         {form.kind === 'interval' && <Field label="间隔（分钟）" hint="15 分钟到 7 天"><input type="number" min={15} max={10080} step={1} value={form.minutes} onChange={e => set('minutes', e.target.value)}/></Field>}
         {form.kind === 'daily' && <Field label="时间"><input type="time" value={form.time} onChange={e => set('time', e.target.value)}/></Field>}

@@ -126,14 +126,14 @@ func run() {
 		log.Fatalf("OF_CHANNEL must be stable or beta, got %q", cfg.Channel)
 	}
 	updates := &update.Checker{
-		Repo:             cfg.UpdateRepo,
-		Channel:          channel,
-		Current:          version.Version,
-		EnvDisabled:      !cfg.UpdateCheck,
-		SettingsDisabled: func() bool { return settings.Snapshot().UpdateCheckDisabled },
-		SettingsChannel:  func() string { return settings.Snapshot().UpdateChannel },
+		Repo:               cfg.UpdateRepo,
+		Channel:            channel,
+		Current:            version.Version,
+		EnvDisabled:        !cfg.UpdateCheck,
+		SettingsDisabled:   func() bool { return settings.Snapshot().UpdateCheckDisabled },
+		SettingsChannel:    func() string { return settings.Snapshot().UpdateChannel },
 		SettingsAutoUpdate: func() bool { return settings.Snapshot().AutoUpdate },
-		HTTP:             &http.Client{Timeout: 15 * time.Second},
+		HTTP:               &http.Client{Timeout: 15 * time.Second},
 	}
 	if !update.ValidRepo(updates.Repo) && updates.Repo != "" {
 		log.Fatalf("OF_UPDATE_REPO must look like owner/name, got %q", updates.Repo)

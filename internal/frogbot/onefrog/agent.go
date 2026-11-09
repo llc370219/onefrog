@@ -19,9 +19,9 @@ var (
 type Agent struct {
 	Provider      Provider
 	Model         string
+	ResolveModel  func() (Provider, string) // 可选；每次任务启动时读取一次配置
 	Tools         *Registry
 	Guard         *Guard
-	Store         Store          // 可选
 	Memory        MemoryProvider // 可选
 	Compactor     Compactor      // 可选
 	Sink          EventSink      // 可选
@@ -144,9 +144,6 @@ func (a *Agent) Run(ctx context.Context, t Task) (Result, error) {
 	defer func() { a.mu.Lock(); delete(a.steer, t.ID); delete(a.pause, t.ID); a.mu.Unlock() }()
 
 	em := &emitter{a: a, t: t}
-	if a.Store != nil {
-		_ = a.Store.SaveTask(ctx, t)
-	}
 	em.emit(EvTaskStarted, map[string]any{"input": t.Input, "policy": t.Policy, "workspace": t.Workspace})
 	stopHB := em.heartbeat(a.Heartbeat)
 	defer stopHB()
@@ -170,6 +167,14 @@ func (a *Agent) Run(ctx context.Context, t Task) (Result, error) {
 			return finish(StatusCancelled, "", context.Canceled)
 		}
 		return finish(StatusFailed, "", err)
+	}
+
+	provider, model := a.Provider, a.Model
+	if a.ResolveModel != nil {
+		provider, model = a.ResolveModel()
+	}
+	if provider == nil {
+		return fail(errors.New("请先在「应用设置 → 模型连接」保存接口地址和模型"))
 	}
 
 	msgs, err := a.initialMessages(ctx, t)
@@ -203,7 +208,7 @@ func (a *Agent) Run(ctx context.Context, t Task) (Result, error) {
 		if pc.isRequested() { // Pause 恰好发生在上面检查之后
 			lcancel()
 		}
-		reply, err := a.Provider.Chat(lctx, ChatRequest{Model: a.Model, Messages: msgs, Tools: tools.Specs(),
+		reply, err := provider.Chat(lctx, ChatRequest{Model: model, Messages: msgs, Tools: tools.Specs(),
 			OnReasoning: func(d string) { em.emit(EvThinkingDelta, map[string]any{"text": d}) }},
 			func(d string) { em.emit(EvTextDelta, map[string]any{"text": d}) })
 		pc.setLLM(nil)
@@ -315,7 +320,7 @@ func Truncate(s string, n int) string {
 	return strings.ToValidUTF8(s[:head]+fmt.Sprintf("\n…[省略 %d 字节]…\n", len(s)-head-tail)+s[len(s)-tail:], "")
 }
 
-// emitter 给事件编号，并同时写入 Store 和 Sink（加锁保证顺序）。
+// emitter 给事件编号后交给 Sink（加锁保证顺序）。
 type emitter struct {
 	a   *Agent
 	t   Task
@@ -328,9 +333,6 @@ func (e *emitter) emit(typ EventType, data any) {
 	defer e.mu.Unlock()
 	e.seq++
 	ev := Event{Seq: e.seq, TaskID: e.t.ID, BotID: e.t.BotID, Type: typ, Time: time.Now(), Data: data}
-	if e.a.Store != nil {
-		_ = e.a.Store.SaveEvent(context.Background(), ev)
-	}
 	if e.a.Sink != nil {
 		e.a.Sink.Emit(ev)
 	}

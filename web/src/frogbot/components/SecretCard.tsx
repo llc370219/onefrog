@@ -1,10 +1,11 @@
 import { Eye, EyeOff, KeyRound, Lock, ShieldCheck, X } from 'lucide-react';
 import { useState } from 'react';
-import { api, type SecretReq } from '../api';
+import { useActiveBot, type SecretReq } from '../api';
 
 // SecretCard：请用户保存一个密钥。值只通过 POST /api/secrets 发给后端加密保存，
 // 不会进入聊天记录、事件流或模型上下文；卡片里也不会再显示它。
 export default function SecretCard({ req }: { req: SecretReq }) {
+  const { api } = useActiveBot();
   const [value, setValue] = useState('');
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -58,7 +59,7 @@ export default function SecretCard({ req }: { req: SecretReq }) {
             className="grid size-7 shrink-0 place-items-center rounded-full text-fg4 hover:bg-s2 hover:text-fg">{show ? <EyeOff size={15} /> : <Eye size={15} />}</button>
         </div>
         <p className="mt-2 flex items-start gap-1.5 text-[11.5px] leading-relaxed text-fg4">
-          <Lock size={11} className="mt-[3px] shrink-0" />直接加密保存在本机，不会进入聊天记录，助理也看不到；使用时只按名字引用，每次都会先请你确认。
+          <Lock size={11} className="mt-[3px] shrink-0" />直接加密保存到 OneFrog 密钥保险箱，不会进入聊天记录，助理也看不到；使用时只按名字引用，每次都会先请你确认。
         </p>
         {err && <p className="mt-2 text-xs text-danger">{err}</p>}
         <div className="mt-3 flex flex-wrap gap-2">

@@ -108,7 +108,7 @@ const (
 	EvCheckpoint        EventType = "task.checkpoint" // 每步结束后的对话快照，用于暂停/重启后恢复
 )
 
-// Event 可以直接 JSON 序列化，用于 SSE 推送或写入数据库。Seq 在同一任务内递增。
+// Event 可以直接 JSON 序列化，用于 SSE 推送或写入事件日志。Seq 在同一任务内递增。
 type Event struct {
 	Seq    int64     `json:"seq"`
 	TaskID string    `json:"task_id"`
@@ -130,23 +130,10 @@ type SinkFunc func(Event)
 
 func (f SinkFunc) Emit(e Event) { f(e) }
 
-// MultiSink 把事件同时发给多个接收者。
-type MultiSink []EventSink
+// ---------- 扩展点 ----------
 
-func (m MultiSink) Emit(e Event) {
-	for _, s := range m {
-		s.Emit(e)
-	}
-}
-
-// ---------- 预留给 Onefrog 的扩展点 ----------
-
-// Store 负责持久化。Onefrog 里可以换成 Postgres 实现。
-type Store interface {
-	SaveTask(ctx context.Context, t Task) error
-	LoadTask(ctx context.Context, id string) (Task, error)
-	SaveEvent(ctx context.Context, e Event) error
-	Events(ctx context.Context, taskID string, afterSeq int64) ([]Event, error)
+// ApprovalRecorder 保存审批记录（审计用）。frog bot 把它写进事件日志。
+type ApprovalRecorder interface {
 	SaveApproval(ctx context.Context, r ApprovalRecord) error
 }
 

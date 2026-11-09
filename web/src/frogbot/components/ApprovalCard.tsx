@@ -1,9 +1,9 @@
 import { Check, ShieldAlert, ShieldCheck, ShieldX, TimerOff } from 'lucide-react';
 import { useState } from 'react';
-import { api, type Approval } from '../api';
+import { useActiveBot, type Approval } from '../api';
 
 const riskLabel: Record<string, string> = { danger: '高风险', exec: '执行命令', write: '写入文件', read: '只读' };
-const toolLabel: Record<string, string> = { shell: '执行命令', run_onefrog_command: '执行远程命令', write_file: '写入文件', edit_file: '修改文件', read_file: '读取文件', list_dir: '查看目录', grep: '搜索', delete_secret: '删除密钥' };
+const toolLabel: Record<string, string> = { shell: '执行命令', run_onefrog_command: '在服务器上执行命令', schedule_create: '创建定时计划', schedule_pause: '暂停定时计划', schedule_resume: '恢复定时计划', schedule_delete: '删除定时计划', schedule_update: '修改定时计划', write_file: '写入文件', edit_file: '修改文件', read_file: '读取文件', list_dir: '查看目录', grep: '搜索', delete_secret: '删除密钥' };
 
 // refs 把 {{secret:NAME}} 占位符高亮出来：卡片上永远只显示名字，不显示值。
 function refs(text: unknown) {
@@ -15,7 +15,7 @@ function refs(text: unknown) {
 function Detail({ a }: { a: Approval }) {
   const g = a.args as Record<string, string>;
   const box = 'mt-3 max-h-64 overflow-auto rounded-xl border border-line bg-code px-3.5 py-2.5 font-mono text-[12.5px] leading-relaxed whitespace-pre-wrap break-all';
-  if (a.tool_name === 'run_onefrog_command') return <pre className={box}>服务器：{g.server_id}{'\n'}$ {refs(g.command)}</pre>;
+  if (a.tool_name === 'run_onefrog_command') return <pre className={box}><span className="select-none text-fg4">服务器 {g.server_id}{'\n'}$ </span>{refs(g.command)}</pre>;
   if (a.tool_name === 'shell') return <pre className={box}><span className="select-none text-fg4">$ </span>{refs(g.command)}</pre>;
   if (a.tool_name === 'delete_secret') return <pre className={box}>删除密钥 <span className="secret-ref">{g.name}</span>（删除后无法恢复）</pre>;
   if (a.tool_name === 'edit_file') return (
@@ -32,6 +32,7 @@ function Detail({ a }: { a: Approval }) {
 }
 
 export default function ApprovalCard({ a, taskTitle, fromChat }: { a: Approval; taskTitle?: string; fromChat?: boolean }) {
+  const { api } = useActiveBot();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const decide = async (d: 'once' | 'session' | 'deny') => {

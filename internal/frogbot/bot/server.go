@@ -3,10 +3,16 @@ package bot
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
+	"mime"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -33,10 +39,49 @@ import (
 //	POST /api/secrets/requests/{id}/cancel   取消密钥卡片（= 拒绝提供）
 func (b *Bot) Handler(webDir string) http.Handler {
 	mux := http.NewServeMux()
+	if !b.Embedded() { // 嵌入模式：模型设置和版本更新都由宿主管理
+		mux.HandleFunc("GET /api/settings", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, b.GetSettings(), nil)
+		})
+		mux.HandleFunc("POST /api/settings", func(w http.ResponseWriter, r *http.Request) {
+			payload, err := readAPISettings(w, r)
+			if err != nil {
+				writeJSON(w, nil, err)
+				return
+			}
+			saved, err := b.SaveSettings(payload)
+			writeJSON(w, saved, err)
+		})
+		mux.HandleFunc("POST /api/settings/models", func(w http.ResponseWriter, r *http.Request) {
+			p, err := readAPISettings(w, r)
+			if err != nil {
+				writeJSON(w, nil, err)
+				return
+			}
+			models, err := b.FetchRemoteModels(r.Context(), p)
+			writeJSON(w, map[string]any{"models": models}, err)
+		})
+		mux.HandleFunc("POST /api/settings/test", func(w http.ResponseWriter, r *http.Request) {
+			p, err := readAPISettings(w, r)
+			if err != nil {
+				writeJSON(w, nil, err)
+				return
+			}
+			latency, err := b.TestConnection(r.Context(), p)
+			writeJSON(w, map[string]any{"latency_ms": latency}, err)
+		})
+		mux.HandleFunc("GET /api/update", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-store")
+			status, err := checkUpdate(r.Context(), releaseClient, latestReleaseAPI, currentVersion())
+			writeJSON(w, status, err)
+		})
+	}
 	mux.HandleFunc("GET /api/info", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{"name": b.cfg.Name, "chat_model": b.cfg.ChatModel, "agent_model": b.cfg.AgentModel,
+		_, chatModel := b.resolveModel(true)
+		_, agentModel := b.resolveModel(false)
+		writeJSON(w, map[string]any{"name": b.botProfile().Name, "chat_model": chatModel, "agent_model": agentModel,
 			"policy": b.cfg.Policy, "demo": b.cfg.Demo, "max_concurrent": b.cfg.MaxConcurrent,
-			"stall_sec": int(b.cfg.StallTimeout.Seconds()), "timezone": "Asia/Shanghai"}, nil)
+			"stall_sec": int(b.cfg.StallTimeout.Seconds()), "timezone": "Asia/Shanghai", "version": currentVersion(), "embedded": b.Embedded()}, nil)
 	})
 	mux.HandleFunc("POST /api/messages", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -132,43 +177,45 @@ func (b *Bot) Handler(webDir string) http.Handler {
 	mux.HandleFunc("POST /api/secrets/requests/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]bool{"ok": true}, b.CancelSecret(r.PathValue("id")))
 	})
-	mux.HandleFunc("GET /api/schedules", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, b.Schedules(), nil)
-	})
-	mux.HandleFunc("GET /api/schedules/{id}", func(w http.ResponseWriter, r *http.Request) {
-		p, err := b.findSchedule(r.PathValue("id"))
-		if err != nil {
-			writeJSON(w, nil, err)
-			return
-		}
-		writeJSON(w, p.Public(), nil)
-	})
-	mux.HandleFunc("POST /api/schedules/{id}/{action}", func(w http.ResponseWriter, r *http.Request) {
-		id, action := r.PathValue("id"), r.PathValue("action")
-		p, err := b.findSchedule(id)
-		if err != nil {
-			writeJSON(w, nil, err)
-			return
-		}
-		switch action {
-		case "pause":
-			p2, err := b.sched.SetEnabled(p.ID, false)
-			writeJSON(w, p2.Public(), err)
-		case "resume":
-			p2, err := b.sched.SetEnabled(p.ID, true)
-			writeJSON(w, p2.Public(), err)
-		case "run":
-			c, err := b.sched.RunNow(p.ID)
-			writeJSON(w, map[string]any{"claim": c, "task_id": c.TaskID}, err)
-		case "delete":
-			writeJSON(w, map[string]bool{"ok": true}, b.sched.Remove(p.ID))
-		default:
-			writeJSON(w, nil, fmt.Errorf("未知操作 %s（pause|resume|run|delete）", action))
-		}
-	})
+	if !b.Embedded() { // 嵌入模式：定时计划在宿主的「自动化」里
+		mux.HandleFunc("GET /api/schedules", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, b.Schedules(), nil)
+		})
+		mux.HandleFunc("GET /api/schedules/{id}", func(w http.ResponseWriter, r *http.Request) {
+			p, err := b.findSchedule(r.PathValue("id"))
+			if err != nil {
+				writeJSON(w, nil, err)
+				return
+			}
+			writeJSON(w, p.Public(), nil)
+		})
+		mux.HandleFunc("POST /api/schedules/{id}/{action}", func(w http.ResponseWriter, r *http.Request) {
+			id, action := r.PathValue("id"), r.PathValue("action")
+			p, err := b.findSchedule(id)
+			if err != nil {
+				writeJSON(w, nil, err)
+				return
+			}
+			switch action {
+			case "pause":
+				p2, err := b.sched.SetEnabled(p.ID, false)
+				writeJSON(w, p2.Public(), err)
+			case "resume":
+				p2, err := b.sched.SetEnabled(p.ID, true)
+				writeJSON(w, p2.Public(), err)
+			case "run":
+				c, err := b.sched.RunNow(p.ID)
+				writeJSON(w, map[string]any{"claim": c, "task_id": c.TaskID}, err)
+			case "delete":
+				writeJSON(w, map[string]bool{"ok": true}, b.sched.Remove(p.ID))
+			default:
+				writeJSON(w, nil, fmt.Errorf("未知操作 %s（pause|resume|run|delete）", action))
+			}
+		})
+	}
 	mux.HandleFunc("GET /api/stream", b.serveStream)
 	if webDir != "" {
-		mux.Handle("/", spa(webDir))
+		mux.Handle("/", spa(os.DirFS(webDir)))
 	}
 	return mux
 }
@@ -186,7 +233,10 @@ func (b *Bot) serveStream(w http.ResponseWriter, r *http.Request) {
 	if v := r.URL.Query().Get("after"); v != "" && last == 0 {
 		last, _ = strconv.ParseInt(v, 10, 64)
 	}
+	b.turnMu.Lock()
 	live, unsub := b.store.Subscribe() // 先订阅再补发历史，避免漏事件
+	busy := b.turnCancel != nil
+	b.turnMu.Unlock()
 	defer unsub()
 	send := func(e Event) {
 		if e.Seq > 0 {
@@ -205,7 +255,8 @@ func (b *Bot) serveStream(w http.ResponseWriter, r *http.Request) {
 		}
 		send(e)
 	}
-	send(Event{Kind: "replay.done", Time: time.Now(), Data: json.RawMessage("{}")})
+	busyData, _ := json.Marshal(map[string]bool{"busy": busy})
+	send(Event{Kind: "replay.done", Time: time.Now(), Data: busyData})
 	flusher.Flush()
 	ping := time.NewTicker(20 * time.Second)
 	defer ping.Stop()
@@ -224,25 +275,93 @@ func (b *Bot) serveStream(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		case <-r.Context().Done():
 			return
+		case <-b.ctx.Done():
+			return
 		}
 	}
 }
 
-func spa(dir string) http.Handler {
-	files := http.FileServer(http.Dir(dir))
+// spa 提供前端文件；找不到的路径都回退到 index.html（前端路由）。
+func spa(web fs.FS) http.Handler {
+	files := http.FileServer(http.FS(web))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		index := filepath.Join(dir, "index.html")
-		if _, err := os.Stat(index); err != nil {
+		if _, err := fs.Stat(web, "index.html"); err != nil {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			fmt.Fprintln(w, "前端还没构建：cd web && npm install && npm run build（开发时用 npm run dev）")
 			return
 		}
-		if _, err := os.Stat(filepath.Join(dir, filepath.Clean("/"+r.URL.Path))); err != nil {
-			http.ServeFile(w, r, index)
+		// fs.FS 在所有平台（包括 Windows）上都用 / 分隔路径。
+		name := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
+		if st, err := fs.Stat(web, name); name == "" || err != nil || st.IsDir() {
+			w.Header().Set("Cache-Control", "no-cache")
+			http.ServeFileFS(w, r, web, "index.html")
 			return
+		}
+		if strings.HasPrefix(name, "assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		}
 		files.ServeHTTP(w, r)
 	})
+}
+
+func absPath(p string) string {
+	if a, err := filepath.Abs(p); err == nil {
+		return a
+	}
+	return p
+}
+
+func isLoopbackHost(h string) bool {
+	if h == "localhost" || strings.HasSuffix(h, ".localhost") {
+		return true
+	}
+	ip := net.ParseIP(strings.Trim(h, "[]"))
+	return ip != nil && ip.IsLoopback()
+}
+
+func hostname(hostport string) string {
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		return h
+	}
+	return strings.Trim(hostport, "[]")
+}
+
+// LocalOnly 是本机模式的保护：没有登录功能，所以只接受发往本机地址的请求（挡住 DNS 重绑定），
+// 并拒绝来自其他网站的写操作（挡住 CSRF，比如恶意网页偷偷替你点「批准」）。
+func LocalOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isLoopbackHost(hostname(r.Host)) {
+			http.Error(w, "frog bot 本机模式只允许从本机访问（http://127.0.0.1 或 http://localhost）。要远程使用请用服务器模式：frogbot -server", http.StatusForbidden)
+			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			if o := r.Header.Get("Origin"); o != "" {
+				u, err := url.Parse(o)
+				if err != nil || !isLoopbackHost(hostname(u.Host)) {
+					http.Error(w, "拒绝跨站请求", http.StatusForbidden)
+					return
+				}
+			} else if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+				http.Error(w, "拒绝跨站请求", http.StatusForbidden)
+				return
+			}
+		}
+		w.Header().Set("X-Frame-Options", "DENY")
+		next.ServeHTTP(w, r)
+	})
+}
+
+func readAPISettings(w http.ResponseWriter, r *http.Request) (APISettings, error) {
+	var s APISettings
+	// Cross-origin HTML forms must not be able to change or probe credentials.
+	media, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if media != "application/json" {
+		return s, fmt.Errorf("请求必须使用 JSON")
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&s); err != nil {
+		return s, fmt.Errorf("请求格式不正确: %w", err)
+	}
+	return s, nil
 }
 
 func writeJSON(w http.ResponseWriter, v any, err error) {

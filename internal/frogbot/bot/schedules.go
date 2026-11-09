@@ -131,7 +131,7 @@ func (b *Bot) scheduleMutate(op string, args json.RawMessage, apply func() (stri
 			return apply()
 		},
 	}
-	task := onefrog.Task{ID: onefrog.NewID("chat"), BotID: b.cfg.Name, Input: "聊天层变更定时计划",
+	task := onefrog.Task{ID: onefrog.NewID("chat"), BotID: b.botProfile().ID, Input: "聊天层变更定时计划",
 		Workspace: b.cfg.Workspace, Policy: b.cfg.ChatPolicy}
 	v, _ := b.guard.Classify(task, tool, args)
 	switch v.Decision {
@@ -140,7 +140,7 @@ func (b *Bot) scheduleMutate(op string, args json.RawMessage, apply func() (stri
 	case onefrog.Allow:
 		return apply()
 	}
-	b.goWork(func() {
+	b.runBackground(func() {
 		release, err := b.enter()
 		if err != nil {
 			return

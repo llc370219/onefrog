@@ -162,9 +162,9 @@ type Rules struct {
 type Guard struct {
 	Reviewer        Reviewer
 	Approver        Approver
-	Store           Store
-	ApprovalTimeout time.Duration // 等用户多久，默认 10 分钟
-	GrantTTL        time.Duration // 批准记录有效期，默认 30 分钟
+	Store           ApprovalRecorder // 可选：保存审批记录
+	ApprovalTimeout time.Duration    // 等用户多久，默认 10 分钟
+	GrantTTL        time.Duration    // 批准记录有效期，默认 30 分钟
 	Now             func() time.Time
 	Secrets         Secrets // 可选：密钥库，负责 {{secret:NAME}} 替换和输出脱敏
 

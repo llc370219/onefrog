@@ -1,8 +1,9 @@
 import { Check, X } from 'lucide-react';
 import { useState } from 'react';
-import { api, type Card } from '../api';
+import { useActiveBot, type Card } from '../api';
 
 export default function OptionCard({ card }: { card: Card }) {
+  const { api } = useActiveBot();
   const [busy, setBusy] = useState(false);
   const pending = card.status === 'pending';
   const act = async (fn: () => Promise<unknown>) => { setBusy(true); try { await fn(); } finally { setBusy(false); } };

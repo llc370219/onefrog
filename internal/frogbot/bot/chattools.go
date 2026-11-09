@@ -241,7 +241,7 @@ func (b *Bot) chatWrite(tool onefrog.Tool, args json.RawMessage) (string, error)
 	if len(args) > quickMaxWrite {
 		return "", errors.New("改动太大，聊天层只做小改动，请用 start_task")
 	}
-	task := onefrog.Task{ID: onefrog.NewID("chat"), BotID: b.cfg.Name, Input: "聊天层直接修改文件",
+	task := onefrog.Task{ID: onefrog.NewID("chat"), BotID: b.botProfile().ID, Input: "聊天层直接修改文件",
 		Workspace: b.cfg.Workspace, Policy: b.cfg.ChatPolicy}
 	v, _ := b.guard.Classify(task, tool, args)
 	switch v.Decision {
@@ -250,7 +250,7 @@ func (b *Bot) chatWrite(tool onefrog.Tool, args json.RawMessage) (string, error)
 	case onefrog.Allow:
 		return b.execWrite(tool, args)
 	}
-	b.goWork(func() {
+	b.runBackground(func() {
 		release, err := b.enter()
 		if err != nil {
 			return

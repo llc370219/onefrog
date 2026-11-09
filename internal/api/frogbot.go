@@ -17,6 +17,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"onefrog/internal/automation"
 	"onefrog/internal/bot"
 	frog "onefrog/internal/frogbot/bot"
 	kernel "onefrog/internal/frogbot/onefrog"
@@ -37,13 +38,38 @@ type FrogBots struct {
 	mu        sync.Mutex
 	closeOnce sync.Once
 	instances map[string]http.Handler
+	byOwner   map[string]*frog.Bot
 	bots      []*frog.Bot
+	vault     *panelVault
+	autos     *automation.Book
 }
 
 func NewFrogBots(dir string, key []byte, agent *bot.Agent, gate *maintenance.Gate) *FrogBots {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &FrogBots{dir: dir, key: append([]byte(nil), key...), agent: agent, gate: gate,
-		ctx: ctx, cancel: cancel, instances: make(map[string]http.Handler)}
+		ctx: ctx, cancel: cancel, instances: make(map[string]http.Handler), byOwner: make(map[string]*frog.Bot),
+		vault: &panelVault{st: agent.Store, box: agent.Box}}
+}
+
+// SetAutomations connects Frog Bot's schedule tools to OneFrog automations.
+// Call it before the first instance starts.
+func (f *FrogBots) SetAutomations(book *automation.Book) {
+	f.mu.Lock()
+	f.autos = book
+	f.mu.Unlock()
+}
+
+// bot returns the account's Frog Bot, opening it on first use.
+func (f *FrogBots) bot(owner string) (*frog.Bot, error) {
+	if _, err := f.handler(owner); err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if b := f.byOwner[owner]; b != nil {
+		return b, nil
+	}
+	return nil, errors.New("Frog Bot 未启动")
 }
 
 func (f *FrogBots) StopStreams() { f.cancel() }
@@ -106,22 +132,23 @@ func (f *FrogBots) handler(owner string) (http.Handler, error) {
 		return nil, err
 	}
 	mac := hmac.New(sha256.New, f.key)
-	mac.Write([]byte("onefrog/frog-bot/vault/" + owner))
-	vaultKey := mac.Sum(nil)
-	mac = hmac.New(sha256.New, f.key)
 	mac.Write([]byte("onefrog/frog-bot/state/" + owner))
 	codec, err := secret.New(mac.Sum(nil))
 	if err != nil {
 		return nil, err
 	}
+	host := &frog.Host{Vault: f.vault}
+	if f.autos != nil {
+		host.Automations = frogAutomations{book: f.autos, owner: owner}
+	}
 	cfg := frog.Config{
-		Codec: codec,
-		Name:  "Frog Bot", DataDir: dir, Workspace: filepath.Join(dir, "workspace"),
-		MasterKey:     hex.EncodeToString(vaultKey),
+		Host: host, Codec: codec,
+		Name: "Frog Bot", DataDir: dir, Workspace: filepath.Join(dir, "workspace"),
 		ChatProvider:  bot.FrogProvider{Agent: f.agent, Owner: owner},
 		AgentProvider: bot.FrogProvider{Agent: f.agent, Owner: owner, Worker: true},
 		Policy:        kernel.PolicyUntrusted, DisableShell: true, Enter: f.gate.Enter,
-		AgentTools: f.hostTools(owner), Redact: func(text string) string { return f.agent.RedactServiceOutput(f.ctx, text) },
+		MaxConcurrent: 2,
+		AgentTools:    f.hostTools(owner), Redact: func(text string) string { return f.agent.RedactServiceOutput(f.ctx, text) },
 	}
 	b, err := frog.New(cfg)
 	if err != nil {
@@ -129,6 +156,7 @@ func (f *FrogBots) handler(owner string) (http.Handler, error) {
 	}
 	h := b.Handler("")
 	f.instances[owner] = h
+	f.byOwner[owner] = b
 	f.bots = append(f.bots, b)
 	b.Start()
 	return h, nil
@@ -194,8 +222,22 @@ func (s *Server) frogBotAPI(c *gin.Context) {
 		fail(c, 503, "Frog Bot 启动失败")
 		return
 	}
+	// The page shows exactly one Frog Bot per account. Its API lives under
+	// /bots/frog-bot/ so the upstream chat UI works unchanged.
+	path := c.Param("path")
+	if path == "/bots" && c.Request.Method == http.MethodGet {
+		c.Header("Cache-Control", "private, no-store")
+		c.JSON(http.StatusOK, []gin.H{{"id": FrogBotID, "name": "Frog Bot", "instructions": "", "avatarSlot": -1}})
+		return
+	}
+	rest, ok := strings.CutPrefix(path, "/bots/"+FrogBotID+"/")
+	if !ok || rest == "" {
+		fail(c, http.StatusNotFound, "接口不存在")
+		return
+	}
+	path = "/" + rest
 	ctx := c.Request.Context()
-	if c.Param("path") == "/stream" {
+	if path == "/stream" {
 		// Reauthenticate on reconnect, including after logout or password change.
 		bounded, cancel := context.WithTimeout(ctx, time.Minute)
 		defer cancel()
@@ -204,7 +246,7 @@ func (s *Server) frogBotAPI(c *gin.Context) {
 		ctx = bounded
 	}
 	r := c.Request.Clone(ctx)
-	r.URL.Path = "/api" + c.Param("path")
+	r.URL.Path = "/api" + path
 	r.URL.RawPath = ""
 	c.Header("Cache-Control", "private, no-store")
 	h.ServeHTTP(c.Writer, r)

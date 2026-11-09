@@ -1,12 +1,14 @@
+import { botAvatarById } from './BotAvatar';
 import { Pencil, RefreshCw, SmilePlus } from 'lucide-react';
 import { useState } from 'react';
-import { api, type Msg } from '../api';
+import { useActiveBot, type Msg } from '../api';
 import { localTime } from '../lib/format';
 import { CopyButton } from './Markdown';
 
 export const EMOJIS = ['👍', '❤️', '😄', '🎉', '🤔', '👀'];
 
 export function Reactions({ m }: { m: Msg }) {
+  const { api, bot } = useActiveBot();
   if (!m.reactions?.length) return null;
   return (
     <div className={`mt-1 flex gap-1 ${m.role === 'user' ? 'justify-end' : ''}`}>
@@ -14,7 +16,7 @@ export function Reactions({ m }: { m: Msg }) {
         <button key={r.by} onClick={() => r.by === 'user' && api.react(m.id, r.emoji).catch(() => {})} disabled={r.by !== 'user'}
           title={r.by === 'user' ? '你的回应（点一下取消）' : '回应'} aria-label={`${r.by === 'user' ? '你' : '助理'}回应了 ${r.emoji}`}
           className={`flex items-center gap-1 rounded-full border px-1.5 py-px text-[13px] leading-5 ${r.by === 'user' ? 'border-accent/40 bg-accent-soft' : 'border-line bg-s1'}`}>
-          {r.emoji}{r.by === 'bot' && <img src="/frog-bot.png" alt="" className="size-3.5 rounded-full" />}
+          {r.emoji}{r.by === 'bot' && <img src={botAvatarById(bot.id, bot.avatarSlot)} alt="" className="size-3.5 rounded-full" />}
         </button>
       ))}
     </div>
@@ -23,6 +25,7 @@ export function Reactions({ m }: { m: Msg }) {
 
 // 每条消息下面的小工具：时间、复制、表情回应、重新生成（最后一条回复）、编辑（最后一条用户消息）
 export default function MessageActions({ m, canRegenerate, canEdit, onError }: { m: Msg; canRegenerate?: boolean; canEdit?: boolean; onError: (e: string) => void }) {
+  const { api } = useActiveBot();
   const [picker, setPicker] = useState(false);
   const mine = m.reactions?.find((r) => r.by === 'user')?.emoji;
   return (

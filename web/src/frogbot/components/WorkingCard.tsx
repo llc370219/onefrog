@@ -1,6 +1,6 @@
 import { AlertTriangle, ArrowUpToLine, Check, ChevronDown, CircleSlash, FilePen, FileText, FolderOpen, Hourglass, Loader2, Pause, Play, RotateCcw, Search, ShieldAlert, Square, SquareTerminal, Wrench, X } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
-import { api, type Step, type Task, type TaskAction } from '../api';
+import { useActiveBot, type Step, type Task, type TaskAction } from '../api';
 import { ago, describe, dur, elapsedOf, nowDoing, useNow } from '../lib/format';
 import Artifact from './Artifact';
 import { inline } from './Markdown';
@@ -8,11 +8,12 @@ import { inline } from './Markdown';
 const icons: Record<string, typeof Wrench> = { read_file: FileText, write_file: FilePen, edit_file: FilePen, list_dir: FolderOpen, grep: Search, shell: SquareTerminal };
 export const QUIET_MS = 15_000; // 这么久没有新动作，就明确告诉用户"还在工作"
 
-export function act(id: string, a: TaskAction) { api.task(id, a).catch((e) => alert((e as Error).message)); }
+function act(api: ReturnType<typeof useActiveBot>['api'], id: string, a: TaskAction) { api.task(id, a).catch((e) => alert((e as Error).message)); }
 
 export function TaskButtons({ t, pos, small }: { t: Task; pos?: number; small?: boolean }) {
+  const { api } = useActiveBot();
   const B = ({ a, label, icon, danger }: { a: TaskAction; label: string; icon: ReactNode; danger?: boolean }) => (
-    <button onClick={(e) => { e.stopPropagation(); act(t.id, a); }} aria-label={label} title={label}
+    <button onClick={(e) => { e.stopPropagation(); act(api, t.id, a); }} aria-label={label} title={label}
       className={`flex items-center gap-1 rounded-full border border-line2 ${small ? 'size-7 justify-center' : 'h-7 px-2.5'} text-[12px] text-fg2 transition hover:bg-s2 ${danger ? 'hover:border-danger/50 hover:text-danger' : 'hover:text-fg'}`}>
       {icon}{!small && <span>{label}</span>}
     </button>
@@ -43,6 +44,7 @@ export function statusLine(t: Task, now: number, pos?: number): { icon: ReactNod
 }
 
 export default function WorkingCard({ task: t, pos, stallMs }: { task: Task; pos?: number; stallMs: number }) {
+  const { api } = useActiveBot();
   const running = t.status === 'running';
   const live = running || t.status === 'queued';
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
@@ -75,8 +77,8 @@ export default function WorkingCard({ task: t, pos, stallMs }: { task: Task; pos
           ? <div className="flex flex-wrap items-center gap-2 border-t border-line bg-warn-soft px-4 py-2.5 text-[12.5px] text-warn">
               <AlertTriangle size={14} className="shrink-0" />
               <span className="min-w-0 flex-1">已经 {ago(quiet).replace('前', '')}没有新进展了。可能在等一个很慢的命令，也可能卡住了。</span>
-              <button onClick={() => act(t.id, 'cancel')} className="rounded-full border border-warn/40 px-2.5 py-0.5 hover:bg-s1">停止</button>
-              <button onClick={async () => { await api.task(t.id, 'cancel').catch(() => {}); setTimeout(() => act(t.id, 'retry'), 400); }} className="rounded-full border border-warn/40 px-2.5 py-0.5 hover:bg-s1">停止并重试</button>
+              <button onClick={() => act(api, t.id, 'cancel')} className="rounded-full border border-warn/40 px-2.5 py-0.5 hover:bg-s1">停止</button>
+              <button onClick={async () => { await api.task(t.id, 'cancel').catch(() => {}); setTimeout(() => act(api, t.id, 'retry'), 400); }} className="rounded-full border border-warn/40 px-2.5 py-0.5 hover:bg-s1">停止并重试</button>
             </div>
           : <div className="flex items-center gap-2 border-t border-line px-4 py-2 text-[12.5px] text-fg3">
               <span className="typing scale-75"><i /><i /><i /></span>仍在工作…（上次动作 {ago(quiet)}，进程正常{now - t.lastBeat < 40_000 ? '' : '，等待响应'}）

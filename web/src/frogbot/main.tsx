@@ -7,6 +7,7 @@ import '@fontsource/ibm-plex-mono/400.css';
 import './index.css';
 import App from './App';
 
+// 主题跟随 OneFrog 面板：面板（同源的另一个页面）切换主题时同步过来。
 window.addEventListener('storage', (event) => {
   if (event.key !== 'onefrog-theme') return;
   if (event.newValue === 'light' || event.newValue === 'dark') document.documentElement.dataset.theme = event.newValue;

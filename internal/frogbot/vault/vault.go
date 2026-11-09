@@ -161,6 +161,15 @@ func (v *Vault) now() time.Time {
 	return time.Now()
 }
 
+// The API credential is not part of the tool-accessible secret catalog.
+func (v *Vault) SealAPIKey(key string) (string, error) {
+	return v.encrypt("settings:api-key", key)
+}
+
+func (v *Vault) OpenAPIKey(sealed string) (string, error) {
+	return v.decrypt("settings:api-key", sealed)
+}
+
 func (v *Vault) encrypt(name, plain string) (string, error) {
 	nonce := make([]byte, v.aead.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
@@ -201,6 +210,7 @@ func (v *Vault) save() error {
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		return err
 	}
+	_ = os.Remove(v.path)
 	return os.Rename(tmp, v.path)
 }
 
@@ -370,11 +380,15 @@ func (v *Vault) RedactBytes(b []byte) []byte {
 }
 
 // rebuild 重新生成脱敏替换表，调用方持锁。
-func (v *Vault) rebuild() {
+func (v *Vault) rebuild() { v.repl = NewReplacer(v.plain) }
+
+// NewReplacer 为一组密钥（名字 → 明文）生成脱敏替换表：原文及常见编码都替换成 [secret:NAME]。
+// 没有可替换内容时返回 nil。嵌入宿主用它对接宿主自己的保险箱。
+func NewReplacer(plain map[string]string) *strings.Replacer {
 	type pair struct{ from, to string }
 	var pairs []pair
 	seen := map[string]bool{}
-	for name, val := range v.plain {
+	for name, val := range plain {
 		tag := "[secret:" + name + "]"
 		for _, f := range Variants(val) {
 			if !seen[f] {
@@ -384,8 +398,7 @@ func (v *Vault) rebuild() {
 		}
 	}
 	if len(pairs) == 0 {
-		v.repl = nil
-		return
+		return nil
 	}
 	// 长的先匹配，避免短变体把长变体切碎
 	sort.Slice(pairs, func(i, j int) bool {
@@ -398,7 +411,7 @@ func (v *Vault) rebuild() {
 	for _, p := range pairs {
 		args = append(args, p.from, p.to)
 	}
-	v.repl = strings.NewReplacer(args...)
+	return strings.NewReplacer(args...)
 }
 
 // Variants 返回一个密钥值需要被抹掉的各种形式：原文、JSON 转义、URL 编码、hex、

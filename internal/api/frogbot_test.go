@@ -105,7 +105,7 @@ func TestFrogBotChatDispatchesAndGatesRemoteCommand(t *testing.T) {
 		return &http.Client{Jar: jar, Timeout: 8 * time.Second}
 	}
 	client, other := newClient(), newClient()
-	base := server.URL + "/api/frog-bot"
+	base := server.URL + "/api/frog-bot/bots/frog-bot"
 	res, err := other.Get(base + "/info")
 	if err != nil {
 		t.Fatal(err)

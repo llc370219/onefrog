@@ -80,7 +80,9 @@ func (o *OpenAI) post(ctx context.Context, payload []byte) (*http.Response, erro
 			return nil, err
 		}
 		hr.Header.Set("Content-Type", "application/json")
-		hr.Header.Set("Authorization", "Bearer "+o.APIKey)
+		if o.APIKey != "" {
+			hr.Header.Set("Authorization", "Bearer "+o.APIKey)
+		}
 		for k, v := range o.Headers {
 			hr.Header.Set(k, v)
 		}

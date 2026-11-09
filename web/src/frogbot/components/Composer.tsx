@@ -1,6 +1,6 @@
 import { ArrowUp, FileText, Loader2, Paperclip, Pencil, Square, Upload, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, isImage, type Attachment } from '../api';
+import { useActiveBot, isImage, type Attachment } from '../api';
 import { sizeOf } from '../lib/format';
 
 type Pending = { key: string; name: string; size: number; mime: string; preview?: string; att?: Attachment; error?: string };
@@ -15,7 +15,8 @@ export default function Composer({ name, connected, chatBusy, working, lastUser,
   onEdit: (id: string, t: string) => Promise<void>;
   onStopReply: () => void; onStopAll: () => void;
 }) {
-  const key = `frogbot-draft:${name}`;
+  const { api, bot } = useActiveBot();
+  const key = `frogbot-draft:bot:${bot.id}`;
   const [text, setText] = useState(() => localStorage.getItem(key) || '');
   const [files, setFiles] = useState<Pending[]>([]);
   const [editing, setEditing] = useState<string | null>(null);
@@ -23,8 +24,12 @@ export default function Composer({ name, connected, chatBusy, working, lastUser,
   const [drag, setDrag] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
   const picker = useRef<HTMLInputElement>(null);
+  const previews = useRef(new Set<string>());
 
-  useEffect(() => { const t = localStorage.getItem(key); if (t && !text) setText(t); }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const urls = previews.current;
+    return () => { urls.forEach((url) => URL.revokeObjectURL(url)); urls.clear(); };
+  }, []);
   useEffect(() => { if (editing) return; if (text) localStorage.setItem(key, text); else localStorage.removeItem(key); }, [text, key, editing]);
   useEffect(() => {
     const el = ref.current;
@@ -36,13 +41,14 @@ export default function Composer({ name, connected, chatBusy, working, lastUser,
   const add = useCallback((list: FileList | File[]) => {
     for (const f of Array.from(list)) {
       const p: Pending = { key: Math.random().toString(36).slice(2), name: f.name || 'pasted.png', size: f.size, mime: f.type, preview: f.type.startsWith('image/') ? URL.createObjectURL(f) : undefined };
+      if (p.preview) previews.current.add(p.preview);
       setFiles((xs) => [...xs, p]);
       api.upload(f).then(
         (att) => setFiles((xs) => xs.map((x) => (x.key === p.key ? { ...x, att } : x))),
         (e) => setFiles((xs) => xs.map((x) => (x.key === p.key ? { ...x, error: (e as Error).message } : x))),
       );
     }
-  }, []);
+  }, [api]);
 
   // 整个页面都能拖文件进来
   useEffect(() => {
@@ -61,6 +67,9 @@ export default function Composer({ name, connected, chatBusy, working, lastUser,
   const ready = files.filter((f) => f.att).map((f) => f.att!);
   const canSend = connected && !sending && !uploading && (text.trim().length > 0 || ready.length > 0);
 
+  const release = (file: Pending) => {
+    if (file.preview && previews.current.delete(file.preview)) URL.revokeObjectURL(file.preview);
+  };
   const send = async () => {
     if (!canSend) return;
     const t = text.trim();
@@ -68,7 +77,9 @@ export default function Composer({ name, connected, chatBusy, working, lastUser,
     try {
       if (editing) await onEdit(editing, t);
       else await onSend(t, ready);
-      setText(''); setFiles([]); setEditing(null); localStorage.removeItem(key);
+      files.forEach(release);
+      setText(''); setFiles([]); setEditing(null);
+      if (ref.current || localStorage.getItem(key) === text) localStorage.removeItem(key);
     } catch { /* 错误由外层显示，草稿保留 */ } finally { setSending(false); ref.current?.focus(); }
   };
   const startEdit = () => { if (!lastUser) return; setEditing(lastUser.id); setText(lastUser.text); requestAnimationFrame(() => { const el = ref.current; if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }); };
@@ -108,7 +119,7 @@ export default function Composer({ name, connected, chatBusy, working, lastUser,
                   <div className="truncate text-[12.5px] font-medium text-fg">{f.att?.name || f.name}</div>
                   <div className={`truncate text-[11px] ${f.error ? 'text-danger' : 'text-fg4'}`}>{f.error ? '上传失败：' + f.error : f.att ? sizeOf(f.size) : <span className="inline-flex items-center gap-1"><Loader2 size={10} className="animate-spin" />上传中</span>}</div>
                 </div>
-                <button onClick={() => setFiles((xs) => xs.filter((x) => x.key !== f.key))} aria-label={`移除 ${f.name}`} className="absolute right-1 top-1 grid size-5 place-items-center rounded-full bg-canvas/80 text-fg3 hover:text-fg"><X size={12} /></button>
+                <button onClick={() => { release(f); setFiles((xs) => xs.filter((x) => x.key !== f.key)); }} aria-label={`移除 ${f.name}`} className="absolute right-1 top-1 grid size-5 place-items-center rounded-full bg-canvas/80 text-fg3 hover:text-fg"><X size={12} /></button>
               </li>
             ))}
           </ul>

@@ -5,7 +5,7 @@ import ApprovalCard from './components/ApprovalCard';
 import Artifact from './components/Artifact';
 import Composer from './components/Composer';
 import Header, { Avatar } from './components/Header';
-import Markdown from './components/Markdown';
+import { AssistantBubbles } from './components/Markdown';
 import MessageActions, { Reactions } from './components/MessageActions';
 import OptionCard from './components/OptionCard';
 import SecretCard from './components/SecretCard';
@@ -21,13 +21,14 @@ export default function App() {
   const [schedules, setSchedules] = useSchedules(s.ready);
   // SSE 里的计划变更合并进本地列表
   useEffect(() => {
-    if (s.ready) setSchedules(Object.values(s.schedules));
-  }, [s.ready, s.schedules, setSchedules]);
+    const list = Object.values(s.schedules);
+    if (list.length) setSchedules(list);
+  }, [s.schedules, setSchedules]);
   const [info, setInfo] = useState<Info>({ name: 'Frog', chat_model: '', agent_model: '', policy: '', demo: false });
   const [error, setError] = useState('');
   const [notify, setNotify] = useState(() => localStorage.getItem(NOTIFY_KEY) === '1' && typeof Notification !== 'undefined' && Notification.permission === 'granted');
   const [unread, setUnread] = useState(0);
-  useEffect(() => { api.info().then(setInfo).catch((e: Error) => setError(e.message)); }, []);
+  useEffect(() => { api.info().then(setInfo).catch(() => {}); }, []);
 
   const tasks = Object.values(s.tasks);
   const running = tasks.filter((t) => t.status === 'running');
@@ -52,7 +53,7 @@ export default function App() {
     seen.current = s.news;
     if (delta <= 0 || !document.hidden) return;
     setUnread((n) => n + delta);
-    if (notify) try { new Notification(info.name, { body: s.lastNews.slice(0, 140), icon: '/frog-bot.png', tag: 'frogbot' }); } catch { /* 浏览器不支持 */ }
+    if (notify) try { new Notification(info.name, { body: s.lastNews.slice(0, 140), icon: '/frog.png', tag: 'frogbot' }); } catch { /* 浏览器不支持 */ }
   }, [s.news]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const v = () => { if (!document.hidden) setUnread(0); };
@@ -119,7 +120,7 @@ export default function App() {
           {s.busy && (
             <AssistantRow>
               {s.thinking && <ThinkingBlock live text={s.thinking} startedAt={s.thinkStart} endedAt={s.thinkEnd || undefined} />}
-              {s.streaming ? <div className="md caret"><Markdown text={s.streaming} /></div>
+              {s.streaming ? <AssistantBubbles text={s.streaming} streaming />
                 : !(s.thinking && !s.thinkEnd) && <div className="flex items-center gap-2 pt-1.5"><span className="typing"><i /><i /><i /></span>{s.toolLabel && <span className="text-[12.5px] text-fg4">{s.toolLabel.replace(/^(查看了|读取了|搜索了|请求|派出了|写入了|停止了|暂停了|恢复了|排上了)/, (m) => '正在' + m.replace('了', ''))}…</span>}</div>}
             </AssistantRow>
           )}
@@ -178,7 +179,7 @@ function Message({ m, canRegenerate, canEdit, onError }: { m: Msg; canRegenerate
     <AssistantRow>
       <div className="group">
         {m.thinking && <ThinkingBlock text={m.thinking} ms={m.thinking_ms} />}
-        {m.text && <div className="md"><Markdown text={m.text} /></div>}
+        {m.text && <AssistantBubbles text={m.text} />}
         {m.files && m.files.length > 0 && <div className="mt-2"><Files files={m.files} /></div>}
         {m.tools && m.tools.length > 0 && (
           <div className="mt-1.5 flex flex-wrap gap-1.5">
@@ -208,18 +209,18 @@ const Indented = ({ children }: { children: ReactNode }) => <div className="sm:p
 function Welcome({ name, onPick }: { name: string; onPick: (t: string) => void }) {
   const ideas = [
     { icon: FolderSearch, title: '整理工作区', text: '看看工作区里有什么，写一份 notes.md 总结' },
-    { icon: SquareTerminal, title: '写一个示例', text: '在工作区写一个 hello.go 示例' },
+    { icon: SquareTerminal, title: '写代码并运行', text: '写一个 hello.go 并运行它' },
     { icon: ListTodo, title: '先记个待办', text: '帮我记个待办：明天整理 README，先别开始' },
     { icon: ListTodo, title: '定个提醒', text: '帮我创建一个明天上午 9 点的单次提醒：整理 README' },
   ];
   return (
-    <div className="rise flex flex-col items-center px-2 pt-8 text-center sm:pt-[9vh]">
+    <div className="rise flex flex-col items-center px-2 pt-[9vh] text-center">
       <Avatar size={72} />
       <h1 className="mt-5 font-serif text-[30px] font-semibold tracking-tight">你好，我是 {name}</h1>
       <p className="mt-2 max-w-md text-[14.5px] leading-relaxed text-fg3">
         直接聊天，或者把事情交给我。耗时的活在后台做，你随时可以继续说话、插队、暂停；有风险的操作会先问你。
       </p>
-      <div className="mt-6 grid w-full max-w-2xl grid-cols-2 gap-2.5 sm:mt-8 lg:grid-cols-4">
+      <div className="mt-8 grid w-full max-w-2xl gap-2.5 sm:grid-cols-3">
         {ideas.map(({ icon: Icon, title, text }) => (
           <button key={text} onClick={() => onPick(text)} className="group flex flex-col gap-1.5 rounded-2xl border border-line bg-s1 p-4 text-left transition hover:-translate-y-px hover:border-accent/40 hover:shadow-[0_6px_20px_-12px_var(--shadow)]">
             <Icon size={18} className="text-accent" />

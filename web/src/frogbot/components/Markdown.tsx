@@ -109,6 +109,140 @@ export default function Markdown({ text }: { text: string }) {
   })}</>;
 }
 
+export function splitSentences(text: string): string[] {
+  if (!text) return [];
+  const tokens: string[] = [];
+  let cur = '';
+  let inCode = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    cur += ch;
+    if (ch === '`') {
+      inCode = !inCode;
+    }
+    if (inCode) continue;
+
+    if (ch === '\n') {
+      if (cur.trim()) tokens.push(cur.trim());
+      cur = '';
+    } else if (ch === '。' || ch === '！' || ch === '？') {
+      if (i + 1 < text.length && (text[i + 1] === '”' || text[i + 1] === '"' || text[i + 1] === '’' || text[i + 1] === "'")) {
+        cur += text[++i];
+      }
+      if (cur.trim()) tokens.push(cur.trim());
+      cur = '';
+    } else if (ch === '!' || ch === '?') {
+      if (i + 1 === text.length || /\s/.test(text[i + 1])) {
+        if (cur.trim()) tokens.push(cur.trim());
+        cur = '';
+      }
+    }
+  }
+  if (cur.trim()) tokens.push(cur.trim());
+  return tokens;
+}
+
+export function AssistantBubbles({ text, streaming }: { text: string; streaming?: boolean }) {
+  const blocks = parseBlocks(text);
+  if (!blocks.length && streaming) {
+    return (
+      <div className="bot-bubble">
+        <span className="caret-inline" />
+      </div>
+    );
+  }
+
+  type BubbleItem =
+    | { kind: 'sentence'; text: string }
+    | { kind: 'code'; lang: string; text: string }
+    | { kind: 'heading'; level: number; text: string }
+    | { kind: 'list'; ordered: boolean; start: number; items: string[] }
+    | { kind: 'quote'; rows: string[] }
+    | { kind: 'hr' };
+
+  const items: BubbleItem[] = [];
+  for (const b of blocks) {
+    if (b.kind === 'p') {
+      const sents = splitSentences(b.rows.join('\n'));
+      if (sents.length === 0 && b.rows.length > 0) {
+        items.push({ kind: 'sentence', text: b.rows.join(' ') });
+      } else {
+        for (const s of sents) {
+          items.push({ kind: 'sentence', text: s });
+        }
+      }
+    } else if (b.kind === 'code') {
+      items.push({ kind: 'code', lang: b.lang, text: b.text });
+    } else if (b.kind === 'h') {
+      items.push({ kind: 'heading', level: b.level, text: b.text });
+    } else if (b.kind === 'ul') {
+      items.push({ kind: 'list', ordered: false, start: 1, items: b.items });
+    } else if (b.kind === 'ol') {
+      items.push({ kind: 'list', ordered: true, start: b.start, items: b.items });
+    } else if (b.kind === 'quote') {
+      items.push({ kind: 'quote', rows: b.rows });
+    } else if (b.kind === 'hr') {
+      items.push({ kind: 'hr' });
+    }
+  }
+
+  return (
+    <div className="flex flex-col items-start gap-1.5">
+      {items.map((it, idx) => {
+        const isLast = idx === items.length - 1;
+        if (it.kind === 'sentence') {
+          return (
+            <div key={idx} className="bot-bubble">
+              <div className="md">
+                <p className={isLast && streaming ? 'caret' : ''}>{inline(it.text)}</p>
+              </div>
+            </div>
+          );
+        }
+        if (it.kind === 'code') {
+          return (
+            <div key={idx} className="w-full max-w-[95%] sm:max-w-[90%] my-0.5">
+              <CodeBlock lang={it.lang} text={it.text} />
+            </div>
+          );
+        }
+        if (it.kind === 'heading') {
+          return (
+            <div key={idx} className="bot-bubble font-semibold">
+              <div className="md">
+                <p className={'md-h md-h' + Math.min(it.level, 3) + (isLast && streaming ? ' caret' : '')}>{inline(it.text)}</p>
+              </div>
+            </div>
+          );
+        }
+        if (it.kind === 'list') {
+          return (
+            <div key={idx} className="bot-bubble">
+              <div className="md">
+                {it.ordered ? (
+                  <ol start={it.start}>{it.items.map((row, n) => <li key={n}>{lines(row.split('\n'))}</li>)}</ol>
+                ) : (
+                  <ul>{it.items.map((row, n) => <li key={n}>{lines(row.split('\n'))}</li>)}</ul>
+                )}
+              </div>
+            </div>
+          );
+        }
+        if (it.kind === 'quote') {
+          return (
+            <div key={idx} className="bot-bubble">
+              <div className="md">
+                <blockquote>{lines(it.rows)}</blockquote>
+              </div>
+            </div>
+          );
+        }
+        return <hr key={idx} className="w-full my-2 border-line" />;
+      })}
+    </div>
+  );
+}
+
 export function CopyButton({ text, label = '复制', className = '' }: { text: string; label?: string; className?: string }) {
   const [ok, setOk] = useState(false);
   return (

@@ -99,6 +99,8 @@ type State struct {
 	// UpdateChannel is "stable" or "beta" when chosen in Settings.
 	// Empty follows OF_CHANNEL from the installer.
 	UpdateChannel string `json:"update_channel,omitempty"`
+	// AutoUpdate enables automatic upgrade when a newer release is detected.
+	AutoUpdate bool `json:"auto_update,omitempty"`
 }
 
 type Input struct {
@@ -187,7 +189,7 @@ func (m *Manager) Save(in Input) (State, error) {
 	// (OF_LOCAL_WORKSPACE_ROOTS / OF_LOCAL_COMMAND_EXECUTION). It is loaded at
 	// boot and can never be widened from the settings API, the model or a task:
 	// settings saves simply do not carry it.
-	next := diskState{State: State{DisabledBots: disabled, Default: in.Default, Worker: in.Worker, BotRoutes: in.BotRoutes, Approval: in.Approval, Execution: in.Execution, Providers: []Provider{}, UpdateCheckDisabled: m.data.State.UpdateCheckDisabled, UpdateChannel: m.data.State.UpdateChannel}, Keys: map[string]string{}}
+	next := diskState{State: State{DisabledBots: disabled, Default: in.Default, Worker: in.Worker, BotRoutes: in.BotRoutes, Approval: in.Approval, Execution: in.Execution, Providers: []Provider{}, UpdateCheckDisabled: m.data.State.UpdateCheckDisabled, UpdateChannel: m.data.State.UpdateChannel, AutoUpdate: m.data.State.AutoUpdate}, Keys: map[string]string{}}
 	seen := map[string]bool{}
 	for _, req := range in.Providers {
 		p := req.Provider
@@ -601,6 +603,19 @@ func (m *Manager) SetUpdateChannel(channel string) error {
 	defer m.mu.Unlock()
 	next := diskState{State: clone(m.data.State), Keys: m.data.Keys}
 	next.State.UpdateChannel = channel
+	if err := m.persist(next); err != nil {
+		return err
+	}
+	m.data = next
+	return nil
+}
+
+// SetAutoUpdate enables or disables automatic upgrade when a new release is available.
+func (m *Manager) SetAutoUpdate(enabled bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	next := diskState{State: clone(m.data.State), Keys: m.data.Keys}
+	next.State.AutoUpdate = enabled
 	if err := m.persist(next); err != nil {
 		return err
 	}

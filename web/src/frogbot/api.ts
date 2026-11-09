@@ -32,6 +32,7 @@ export type Schedule = {
   next_run?: string; next_run_local?: string; last_run?: string; last_run_local?: string;
   last_status?: string; last_task_id?: string; at_local?: string;
 };
+export type StoredSecret = { id: string; name: string; description: string; created_at: string; updated_at: string };
 
 export type State = {
   items: Item[]; msgs: Record<string, Msg>; tasks: Record<string, Task>; approvals: Record<string, Approval>; schedules: Record<string, Schedule>;
@@ -247,6 +248,7 @@ export type TaskAction = 'pause' | 'resume' | 'cancel' | 'retry' | 'top' | 'up';
 
 export const api = {
   info: (): Promise<Info> => get('/api/frog-bot/info'),
+  secrets: (): Promise<StoredSecret[]> => get('/api/secrets'),
   send: (text: string, files: Attachment[] = []) => post('/api/frog-bot/messages', { text, files }),
   stop: () => post('/api/frog-bot/stop'),
   stopReply: () => post('/api/frog-bot/stop?scope=reply'),

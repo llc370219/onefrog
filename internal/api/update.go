@@ -53,10 +53,11 @@ func (s *Server) updateApply(c *gin.Context) {
 
 func (s *Server) putUpdateSetting(c *gin.Context) {
 	var req struct {
-		Enabled *bool   `json:"enabled"`
-		Channel *string `json:"channel"`
+		Enabled    *bool   `json:"enabled"`
+		Channel    *string `json:"channel"`
+		AutoUpdate *bool   `json:"auto_update"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || (req.Enabled == nil && req.Channel == nil) {
+	if err := c.ShouldBindJSON(&req); err != nil || (req.Enabled == nil && req.Channel == nil && req.AutoUpdate == nil) {
 		fail(c, http.StatusBadRequest, "请求无效")
 		return
 	}
@@ -78,7 +79,19 @@ func (s *Server) putUpdateSetting(c *gin.Context) {
 			return
 		}
 	}
+	if req.AutoUpdate != nil {
+		if err := s.Settings.SetAutoUpdate(*req.AutoUpdate); err != nil {
+			fail(c, http.StatusInternalServerError, "保存失败")
+			return
+		}
+	}
 	status := s.Updates.Status()
+	if req.AutoUpdate != nil && *req.AutoUpdate && status.Available && status.CanApply && !(status.HelperStale && strings.Contains(status.Latest, "-beta.")) {
+		go func() {
+			time.Sleep(500 * time.Millisecond)
+			_, _ = s.Updates.Apply()
+		}()
+	}
 	if req.Channel != nil && status.Enabled {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
 		defer cancel()

@@ -111,6 +111,8 @@ type Status struct {
 	// CanApply is true when the upgrade directory is writable, so the panel
 	// can ask the host helper to upgrade. It does not mean Docker is reachable.
 	CanApply bool `json:"can_apply"`
+	// AutoUpdate is true when automatic upgrade on new releases is enabled in Settings.
+	AutoUpdate bool `json:"auto_update"`
 	// HelperStale is true when this install's host helper is older than the
 	// one that can switch the image between latest and beta. One-click upgrade
 	// to a beta tag is refused in that case.
@@ -240,14 +242,17 @@ type Checker struct {
 	// SettingsChannel reports the channel chosen in Settings. Empty means
 	// follow Channel, which comes from OF_CHANNEL.
 	SettingsChannel func() string
+	// SettingsAutoUpdate reports whether auto-upgrade is enabled in Settings.
+	SettingsAutoUpdate func() bool
 	Interval        time.Duration
 	Now             func() time.Time
 
-	mu          sync.Mutex
-	latest      *release
-	checkedAt   time.Time
-	lastAttempt time.Time
-	lastErr     string
+	mu              sync.Mutex
+	latest          *release
+	checkedAt       time.Time
+	lastAttempt     time.Time
+	lastErr         string
+	lastAutoApplied string
 }
 
 func (c *Checker) repo() string {
@@ -333,6 +338,9 @@ func (c *Checker) Status() Status {
 		s.Available = s.Enabled && Newer(c.latest.Tag, c.Current)
 	}
 	s.CanApply = canApply
+	if c.SettingsAutoUpdate != nil {
+		s.AutoUpdate = c.SettingsAutoUpdate()
+	}
 	dir := upgradeDir()
 	// The install-time channel, not the Settings override. A stable install
 	// whose helper never rewrites the image tag cannot move onto beta.
@@ -377,7 +385,11 @@ func (c *Checker) CheckNow(ctx context.Context) (Status, error) {
 		return c.Status(), ErrTooSoon
 	}
 	err := c.check(ctx)
-	return c.Status(), err
+	status := c.Status()
+	if err == nil && status.Available {
+		c.maybeAutoApply(status)
+	}
+	return status, err
 }
 
 // check fetches the latest release once and updates the cache.
@@ -507,8 +519,29 @@ func (c *Checker) Run(ctx context.Context) {
 				log.Printf("update check: %v", err)
 			} else if s := c.Status(); s.Available {
 				log.Printf("update available: %s -> %s (%s)", s.Current, s.Latest, s.URL)
+				c.maybeAutoApply(s)
 			}
 		}
 		timer.Reset(interval)
+	}
+}
+
+func (c *Checker) maybeAutoApply(s Status) {
+	if !s.AutoUpdate || !s.CanApply || !safeReleaseTag(s.Latest) {
+		return
+	}
+	if strings.Contains(s.Latest, "-beta.") && s.HelperStale {
+		return
+	}
+	c.mu.Lock()
+	if c.lastAutoApplied == s.Latest {
+		c.mu.Unlock()
+		return
+	}
+	c.lastAutoApplied = s.Latest
+	c.mu.Unlock()
+	log.Printf("update: auto-applying release %s", s.Latest)
+	if _, err := c.Apply(); err != nil {
+		log.Printf("update: auto-apply failed: %v", err)
 	}
 }

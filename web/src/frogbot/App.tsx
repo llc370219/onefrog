@@ -1,10 +1,10 @@
-import { Eye, FolderSearch, ListTodo, Sparkles, SquareTerminal, WifiOff } from 'lucide-react';
+import { Eye, FolderSearch, ListTodo, SquareTerminal, WifiOff } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, isImage, isOpen, useBot, type Attachment, type Info, type Msg, type State } from './api';
 import ApprovalCard from './components/ApprovalCard';
 import Artifact from './components/Artifact';
 import Composer from './components/Composer';
-import Header, { Avatar } from './components/Header';
+import { Avatar } from './components/Header';
 import { AssistantBubbles } from './components/Markdown';
 import MessageActions, { Reactions } from './components/MessageActions';
 import OptionCard from './components/OptionCard';
@@ -13,6 +13,9 @@ import TaskDock from './components/TaskDock';
 import ScheduleDock, { useSchedules } from './components/ScheduleDock';
 import ThinkingBlock from './components/ThinkingBlock';
 import WorkingCard from './components/WorkingCard';
+import Sidebar from './components/Sidebar';
+import SettingsDialog from './components/SettingsDialog';
+import TopActions from './components/TopActions';
 
 const NOTIFY_KEY = 'frogbot-notify';
 
@@ -25,6 +28,20 @@ export default function App() {
     if (list.length) setSchedules(list);
   }, [s.schedules, setSchedules]);
   const [info, setInfo] = useState<Info>({ name: 'Frog', chat_model: '', agent_model: '', policy: '', demo: false });
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [activeBotId, setActiveBotId] = useState(() => localStorage.getItem('frogbot-active-bot') || 'grok-ref');
+  const [activeBotName, setActiveBotName] = useState(() => localStorage.getItem('frogbot-active-bot-name') || 'Grok Bot项目借鉴');
+
+  const handleSelectBot = (id: string, name: string) => {
+    setActiveBotId(id);
+    setActiveBotName(name);
+    localStorage.setItem('frogbot-active-bot', id);
+    localStorage.setItem('frogbot-active-bot-name', name);
+  };
+  const handleNewChat = () => {
+    document.getElementById('composer')?.focus();
+  };
+
   const [error, setError] = useState('');
   const [notify, setNotify] = useState(() => localStorage.getItem(NOTIFY_KEY) === '1' && typeof Notification !== 'undefined' && Notification.permission === 'granted');
   const [unread, setUnread] = useState(0);
@@ -35,25 +52,21 @@ export default function App() {
   const queued = tasks.filter((t) => t.status === 'queued').sort((a, b) => a.prio - b.prio);
   const pos = useMemo(() => Object.fromEntries(queued.map((t, i) => [t.id, i + 1])), [queued.map((t) => t.id).join()]); // eslint-disable-line react-hooks/exhaustive-deps
   const waiting = Object.values(s.approvals).filter((a) => a.status === 'pending').length;
-  const secretWaiting = Object.values(s.msgs).some((m) => m.secret?.status === 'pending');
+  // const secretWaiting = Object.values(s.msgs).some((m) => m.secret?.status === 'pending');
   const working = running.length + queued.length > 0;
-  const status = waiting ? `等你确认 ${waiting} 个操作` : secretWaiting ? '等你填写密钥'
-    : running.length ? `正在处理 ${running.length} 个任务${queued.length ? `，${queued.length} 个排队` : ''}`
-    : queued.length ? `${queued.length} 个任务排队中`
-    : s.busy ? (s.thinking && !s.thinkEnd ? '正在思考…' : '正在回复…') : '在线';
   const stallMs = Math.min(((info.stall_sec || 720) * 1000) / 2, 180_000);
 
   // 标签页标题：在工作时带一个标记；页面在后台时累计未读
   useEffect(() => {
-    document.title = `${unread ? `(${unread}) ` : ''}${waiting ? '⚠ ' : working || s.busy ? '● ' : ''}${info.name}`;
-  }, [unread, working, s.busy, waiting, info.name]);
+    document.title = `${unread ? `(${unread}) ` : ''}${waiting ? '⚠ ' : working || s.busy ? '● ' : ''}${activeBotName || info.name}`;
+  }, [unread, working, s.busy, waiting, activeBotName, info.name]);
   const seen = useRef(0);
   useEffect(() => {
     const delta = s.news - seen.current;
     seen.current = s.news;
     if (delta <= 0 || !document.hidden) return;
     setUnread((n) => n + delta);
-    if (notify) try { new Notification(info.name, { body: s.lastNews.slice(0, 140), icon: '/frog.png', tag: 'frogbot' }); } catch { /* 浏览器不支持 */ }
+    if (notify) try { new Notification(activeBotName || info.name, { body: s.lastNews.slice(0, 140), icon: '/frog.png', tag: 'frogbot' }); } catch { /* 浏览器不支持 */ }
   }, [s.news]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const v = () => { if (!document.hidden) setUnread(0); };
@@ -105,35 +118,57 @@ export default function App() {
   const editId = !s.busy && lastUser ? lastUser.id : '';
 
   return (
-    <div className="flex h-full flex-col">
-      <Header name={info.name} status={status} working={working || s.busy} demo={info.demo} connected={s.connected || !s.ready} notify={notify} onNotify={toggleNotify} />
-      {!s.connected && s.ready && (
-        <div className="flex items-center justify-center gap-2 border-b border-line bg-s2 px-4 py-1.5 text-[12.5px] text-fg3" role="status">
-          <WifiOff size={13} />连接中断，正在重新连接。任务在服务器上照常进行，连上后会自动补齐。
+    <div className="flex h-screen w-screen overflow-hidden bg-canvas text-fg">
+      {/* 只有左侧状态栏：参考图一样式，图标使用 onefrog bot 库，只留 Bots 列表，设置在左下角 */}
+      <Sidebar
+        activeBotId={activeBotId}
+        onSelectBot={handleSelectBot}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onNewChat={handleNewChat}
+      />
+
+      {/* 右侧主工作区：删除了上面的状态栏，只有右上角黑白切换与通知图标 */}
+      <div className="flex flex-1 flex-col h-full min-w-0 overflow-hidden relative">
+        <TopActions notify={notify} onNotify={toggleNotify} />
+
+        {!s.connected && s.ready && (
+          <div className="flex items-center justify-center gap-2 border-b border-line bg-s2 px-4 py-1.5 text-[12.5px] text-fg3" role="status">
+            <WifiOff size={13} />连接中断，正在重新连接。任务在服务器上照常进行，连上后会自动补齐。
+          </div>
+        )}
+
+        <div ref={scroller} onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }} className="flex-1 overflow-y-auto">
+          <main className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-4 pb-8 pt-8" aria-live="off">
+            {s.ready && s.items.length === 0 && <Welcome name={activeBotName || info.name} onPick={(t) => send(t).catch(() => {})} />}
+            {!s.ready && <div className="flex justify-center pt-[20vh]"><span className="typing"><i /><i /><i /></span></div>}
+            <Timeline s={s} pos={pos} stallMs={stallMs} regenId={regenId} editId={editId} onError={setError} />
+            {s.busy && (
+              <AssistantRow>
+                {s.thinking && <ThinkingBlock live text={s.thinking} startedAt={s.thinkStart} endedAt={s.thinkEnd || undefined} />}
+                {s.streaming ? <AssistantBubbles text={s.streaming} streaming />
+                  : !(s.thinking && !s.thinkEnd) && <div className="flex items-center gap-2 pt-1.5"><span className="typing"><i /><i /><i /></span>{s.toolLabel && <span className="text-[12.5px] text-fg4">{s.toolLabel.replace(/^(查看了|读取了|搜索了|请求|派出了|写入了|停止了|暂停了|恢复了|排上了)/, (m) => '正在' + m.replace('了', ''))}…</span>}</div>}
+              </AssistantRow>
+            )}
+          </main>
         </div>
-      )}
-      <div ref={scroller} onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }} className="flex-1 overflow-y-auto">
-        <main className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-4 pb-8 pt-6" aria-live="off">
-          {s.ready && s.items.length === 0 && <Welcome name={info.name} onPick={(t) => send(t).catch(() => {})} />}
-          {!s.ready && <div className="flex justify-center pt-[20vh]"><span className="typing"><i /><i /><i /></span></div>}
-          <Timeline s={s} pos={pos} stallMs={stallMs} regenId={regenId} editId={editId} onError={setError} />
-          {s.busy && (
-            <AssistantRow>
-              {s.thinking && <ThinkingBlock live text={s.thinking} startedAt={s.thinkStart} endedAt={s.thinkEnd || undefined} />}
-              {s.streaming ? <AssistantBubbles text={s.streaming} streaming />
-                : !(s.thinking && !s.thinkEnd) && <div className="flex items-center gap-2 pt-1.5"><span className="typing"><i /><i /><i /></span>{s.toolLabel && <span className="text-[12.5px] text-fg4">{s.toolLabel.replace(/^(查看了|读取了|搜索了|请求|派出了|写入了|停止了|暂停了|恢复了|排上了)/, (m) => '正在' + m.replace('了', ''))}…</span>}</div>}
-            </AssistantRow>
-          )}
-        </main>
+
+        <div className="dock relative">
+          <ScheduleDock schedules={schedules} onChange={setSchedules} onError={setError} />
+          <TaskDock tasks={tasks} pos={pos} />
+          {error && <p className="mx-auto mb-1.5 max-w-3xl px-4 text-center text-xs text-danger" role="alert">{error}<button onClick={() => setError('')} className="ml-2 text-fg4 underline">知道了</button></p>}
+          <Composer name={activeBotName || info.name} connected={s.connected} chatBusy={s.busy} working={working}
+            lastUser={editId && lastUser ? { id: lastUser.id, text: lastUser.text } : undefined}
+            onSend={send} onEdit={edit} onStopReply={() => api.stopReply().catch(() => {})} onStopAll={stopAll} />
+        </div>
       </div>
-      <div className="dock relative">
-        <ScheduleDock schedules={schedules} onChange={setSchedules} onError={setError} />
-        <TaskDock tasks={tasks} pos={pos} />
-        {error && <p className="mx-auto mb-1.5 max-w-3xl px-4 text-center text-xs text-danger" role="alert">{error}<button onClick={() => setError('')} className="ml-2 text-fg4 underline">知道了</button></p>}
-        <Composer name={info.name} connected={s.connected} chatBusy={s.busy} working={working}
-          lastUser={editId && lastUser ? { id: lastUser.id, text: lastUser.text } : undefined}
-          onSend={send} onEdit={edit} onStopReply={() => api.stopReply().catch(() => {})} onStopAll={stopAll} />
-      </div>
+
+      <SettingsDialog
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        info={info}
+        notify={notify}
+        onToggleNotify={toggleNotify}
+      />
     </div>
   );
 }
@@ -175,31 +210,38 @@ function Message({ m, canRegenerate, canEdit, onError }: { m: Msg; canRegenerate
       </div>
     );
   }
+  const details = (
+    <>
+      {m.files && m.files.length > 0 && <div className="mt-2"><Files files={m.files} /></div>}
+      {m.tools && m.tools.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {m.tools.map((t) => <span key={t} className="inline-flex items-center gap-1 rounded-full bg-s2 px-2 py-0.5 text-[11.5px] text-fg3"><Eye size={11} className="text-fg4" />{t}</span>)}
+        </div>
+      )}
+      {m.card && <div className={m.text ? 'mt-3' : ''}><OptionCard card={m.card} /></div>}
+      {m.secret && <div className={m.text ? 'mt-3' : ''}><SecretCard req={m.secret} /></div>}
+    </>
+  );
   return (
-    <AssistantRow>
-      <div className="group">
-        {m.thinking && <ThinkingBlock text={m.thinking} ms={m.thinking_ms} />}
-        {m.text && <AssistantBubbles text={m.text} />}
-        {m.files && m.files.length > 0 && <div className="mt-2"><Files files={m.files} /></div>}
-        {m.tools && m.tools.length > 0 && (
-          <div className="mt-1.5 flex flex-wrap gap-1.5">
-            {m.tools.map((t) => <span key={t} className="inline-flex items-center gap-1 rounded-full bg-s2 px-2 py-0.5 text-[11.5px] text-fg3"><Eye size={11} className="text-fg4" />{t}</span>)}
-          </div>
-        )}
-        {m.card && <div className={m.text ? 'mt-3' : ''}><OptionCard card={m.card} /></div>}
-        {m.secret && <div className={m.text ? 'mt-3' : ''}><SecretCard req={m.secret} /></div>}
+    <AssistantRow footer={
+      <>
+        {m.text && details}
         <Reactions m={m} />
         {(m.text || m.card) && <MessageActions m={m} canRegenerate={canRegenerate} onError={onError} />}
-      </div>
+      </>
+    }>
+      {m.thinking && <ThinkingBlock text={m.thinking} ms={m.thinking_ms} />}
+      {m.text ? <AssistantBubbles text={m.text} /> : details}
     </AssistantRow>
   );
 }
 
-function AssistantRow({ children }: { children: ReactNode }) {
+function AssistantRow({ children, footer }: { children: ReactNode; footer?: ReactNode }) {
   return (
-    <div className="rise flex gap-3">
-      <div className="pt-0.5"><Avatar size={28} /></div>
-      <div className="min-w-0 flex-1 pt-0.5">{children}</div>
+    <div className="rise group grid grid-cols-[auto_minmax(0,1fr)] gap-x-3">
+      <div className="self-end pt-0.5"><Avatar size={28} /></div>
+      <div className="pt-0.5">{children}</div>
+      {footer && <div className="col-start-2">{footer}</div>}
     </div>
   );
 }
@@ -218,18 +260,18 @@ function Welcome({ name, onPick }: { name: string; onPick: (t: string) => void }
       <Avatar size={72} />
       <h1 className="mt-5 font-serif text-[30px] font-semibold tracking-tight">你好，我是 {name}</h1>
       <p className="mt-2 max-w-md text-[14.5px] leading-relaxed text-fg3">
-        直接聊天，或者把事情交给我。耗时的活在后台做，你随时可以继续说话、插队、暂停；有风险的操作会先问你。
+        一个能直接在工作区里写代码、跑命令、管服务器的 AI 助理。你可以随便提要求，复杂的事我会拆成任务后台做。
       </p>
-      <div className="mt-8 grid w-full max-w-2xl gap-2.5 sm:grid-cols-3">
-        {ideas.map(({ icon: Icon, title, text }) => (
-          <button key={text} onClick={() => onPick(text)} className="group flex flex-col gap-1.5 rounded-2xl border border-line bg-s1 p-4 text-left transition hover:-translate-y-px hover:border-accent/40 hover:shadow-[0_6px_20px_-12px_var(--shadow)]">
-            <Icon size={18} className="text-accent" />
-            <span className="text-[13.5px] font-medium text-fg">{title}</span>
-            <span className="text-[12.5px] leading-snug text-fg3 group-hover:text-fg2">{text}</span>
+      <div className="mt-8 grid w-full max-w-xl grid-cols-1 gap-2.5 sm:grid-cols-2">
+        {ideas.map((id) => (
+          <button key={id.title} onClick={() => onPick(id.text)}
+            className="group flex flex-col items-start rounded-2xl border border-line bg-s1 p-4 text-left transition hover:border-line2 hover:bg-s2 hover:shadow-xs">
+            <span className="grid size-8 place-items-center rounded-xl bg-s2 text-fg2 transition group-hover:bg-s1"><id.icon size={16} /></span>
+            <span className="mt-3 text-[14.5px] font-medium text-fg">{id.title}</span>
+            <span className="mt-1 text-xs text-fg3">{id.text}</span>
           </button>
         ))}
       </div>
-      <p className="mt-6 flex items-center gap-1.5 text-[12px] text-fg4"><Sparkles size={12} />可以粘贴图片或拖文件进来</p>
     </div>
   );
 }

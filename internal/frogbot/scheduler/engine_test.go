@@ -320,17 +320,20 @@ func TestWeeklyTimezone(t *testing.T) {
 	}
 }
 
-func TestPersistFileMode(t *testing.T) {
+func TestPersistFileCreated(t *testing.T) {
 	dir := t.TempDir()
-	st, err := OpenStore(dir)
+	_, err := OpenStore(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	info, err := filepath.Glob(filepath.Join(dir, "schedules.json"))
-	if err != nil || len(info) != 1 {
-		t.Fatal(info, err)
+	path := filepath.Join(dir, "schedules.json")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("schedule store was not created: %v", err)
 	}
-	_ = st
+	if !info.Mode().IsRegular() || info.Size() == 0 {
+		t.Fatalf("invalid schedule store file: mode=%v size=%d", info.Mode(), info.Size())
+	}
 }
 
 func TestEngineStartStop(t *testing.T) {

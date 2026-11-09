@@ -42,7 +42,7 @@ func TestUpdateStatusAndToggle(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(web, "index.html"), []byte("<html>index</html>"), 0o600)
 	_ = os.WriteFile(filepath.Join(web, "favicon.ico"), []byte("ICO"), 0o600)
 	_ = os.WriteFile(filepath.Join(web, "manifest.webmanifest"), []byte(`{"name":"OneFrog"}`), 0o600)
-	checker := &update.Checker{Current: "v0.1.1", API: gh.URL, SettingsDisabled: func() bool { return settings.Snapshot().UpdateCheckDisabled }, SettingsChannel: func() string { return settings.Snapshot().UpdateChannel }}
+	checker := &update.Checker{Current: "v0.1.1", API: gh.URL, SettingsDisabled: func() bool { return settings.Snapshot().UpdateCheckDisabled }, SettingsChannel: func() string { return settings.Snapshot().UpdateChannel }, SettingsAutoUpdate: func() bool { return settings.Snapshot().AutoUpdate }}
 	app := &Server{Store: mem, Box: box, Settings: settings, Updates: checker, WebDir: web, Agent: &bot.Agent{Store: mem, Box: box, SSH: &fakeSSH{}}}
 	srv := httptest.NewServer(app.Handler())
 	defer srv.Close()
@@ -84,6 +84,19 @@ func TestUpdateStatusAndToggle(t *testing.T) {
 	putJSON(t, client, srv.URL+"/api/settings/update", map[string]string{"channel": "beta"}, 200, &s)
 	if s.Channel != "beta" || s.Latest != "v0.1.31-beta.1" || !s.Available || settings.Snapshot().UpdateChannel != "beta" {
 		t.Fatalf("beta channel %+v", s)
+	}
+	putJSON(t, client, srv.URL+"/api/settings/update", map[string]bool{"auto_update": true}, 200, &s)
+	if !s.AutoUpdate || !settings.Snapshot().AutoUpdate {
+		t.Fatalf("auto update toggle on %+v", s)
+	}
+	getJSON(t, client, srv.URL+"/api/settings", &state)
+	putJSON(t, client, srv.URL+"/api/settings", state, 200, nil)
+	if !settings.Snapshot().AutoUpdate {
+		t.Fatal("saving settings reset auto update")
+	}
+	putJSON(t, client, srv.URL+"/api/settings/update", map[string]bool{"auto_update": false}, 200, &s)
+	if s.AutoUpdate || settings.Snapshot().AutoUpdate {
+		t.Fatalf("auto update toggle off %+v", s)
 	}
 	getJSON(t, client, srv.URL+"/api/settings", &state)
 	putJSON(t, client, srv.URL+"/api/settings", state, 200, nil)

@@ -161,6 +161,8 @@ export type UpdateStatus = {
   install_dir?: string;
   project?: string;
   can_apply?: boolean;
+  /** True when automatic upgrade is enabled. */
+  auto_update?: boolean;
   /** True when the host helper cannot switch a stable install onto a beta image. */
   helper_stale?: boolean;
 };
@@ -269,6 +271,7 @@ export const api = {
   async applyUpdate():Promise<{ok:boolean;version:string;message:string}>{return call("/api/update/apply",{method:"POST",body:"{}"});},
   async setUpdateCheck(enabled:boolean):Promise<UpdateStatus>{return call("/api/settings/update",{method:"PUT",body:JSON.stringify({enabled})});},
   async setUpdateChannel(channel:'stable'|'beta'):Promise<UpdateStatus>{return call("/api/settings/update",{method:"PUT",body:JSON.stringify({channel})});},
+  async setAutoUpdate(auto_update:boolean):Promise<UpdateStatus>{return call("/api/settings/update",{method:"PUT",body:JSON.stringify({auto_update})});},
   async approvalMode():Promise<{mode:ApprovalMode;effective_mode:ApprovalMode;choice_required:boolean}>{return call("/api/settings/approval");},
   async setApprovalMode(mode:ApprovalMode):Promise<{mode:ApprovalMode}>{return call("/api/settings/approval",{method:"PUT",body:JSON.stringify({mode})});},
   async me():Promise<Profile> {

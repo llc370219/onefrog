@@ -2737,3 +2737,9 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+Frog Bot integration
+--------------------
+Portions of the chat UI and runtime were imported from llc370219/frog-bot,
+revision 314a84f14a811fcf92e15d91411a1458fc34c2b9. See the upstream
+ATTRIBUTION.md for materials previously adapted from OneFrog v0.1.31.

@@ -35,6 +35,7 @@ import (
 
 type Server struct {
 	Migration     *Migration
+	FrogBots      *FrogBots
 	Services      *services.Scanner
 	ServiceWatch  *services.Watch
 	OAuth         *providerlogin.Manager
@@ -183,6 +184,8 @@ func (s *Server) Handler() http.Handler {
 	authed.POST("/backup/export", s.backupExport)
 	authed.POST("/backup/restore", s.backupRestore)
 	authed.GET("/auth/me", s.me)
+	authed.GET("/frog-bot/*path", s.frogBotAPI)
+	authed.POST("/frog-bot/*path", s.frogBotAPI)
 	authed.PUT("/auth/profile", s.updateProfile)
 	authed.GET("/monitor", s.monitorView)
 	authed.GET("/services", s.serviceViews)
@@ -282,6 +285,12 @@ func (s *Server) Handler() http.Handler {
 	if s.WebDir != "" {
 		if info, err := os.Stat(s.WebDir); err == nil && info.IsDir() {
 			r.Static("/assets", s.WebDir+"/assets")
+			r.StaticFile("/frog-bot.png", filepath.Join(s.WebDir, "frog-bot.png"))
+			r.GET("/frog-bot.html", s.requireAuth, s.requireFreshCredentials, func(c *gin.Context) {
+				c.Header("X-Frame-Options", "SAMEORIGIN")
+				c.Header("Content-Security-Policy", strings.Replace(contentSecurityPolicy, "frame-ancestors 'none'", "frame-ancestors 'self'", 1))
+				c.File(filepath.Join(s.WebDir, "frog-bot.html"))
+			})
 			for _, name := range rootFiles {
 				if _, err := os.Stat(filepath.Join(s.WebDir, name)); err == nil {
 					r.StaticFile("/"+name, filepath.Join(s.WebDir, name))

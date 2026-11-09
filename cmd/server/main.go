@@ -210,7 +210,12 @@ func run() {
 	app.Tasks = runner
 	log.Printf("listening on %s", cfg.Addr)
 	// Handler attaches the shared inventory scanner before polling starts.
+	app.FrogBots = api.NewFrogBots(filepath.Join(cfg.DataDir, "frog-bot"), cfg.MasterKey, app.Agent, gate)
+	defer app.FrogBots.Close()
 	handler := app.Handler()
+	if err := app.FrogBots.Restore(); err != nil {
+		log.Printf("Frog Bot 恢复失败：%v", err)
+	}
 	go watch.Run(ctx)
 	go autos.Run(ctx)
 	go runner.Run(ctx)
@@ -232,6 +237,7 @@ func run() {
 		}
 	case <-reload:
 		cancel()
+		app.FrogBots.StopStreams()
 		stop, stopCancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer stopCancel()
 		if err := srv.Shutdown(stop); err != nil {

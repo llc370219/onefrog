@@ -1,0 +1,94 @@
+@import "tailwindcss";
+
+/* 配色沿用 Onefrog v0.1.31 正式版：暖色中性底 + 青蛙绿强调色。 */
+:root{color-scheme:light;
+--canvas:#faf9f5;--s1:#ffffff;--s2:#f3f1ea;--s3:#e9e6dc;--composer:#ffffff;--bubble:#efece3;--code-bg:#f1efe7;
+--fg:#1a1915;--fg2:#3d3c37;--fg3:#69675f;--fg4:#8c8a81;--ink:#1f1e1a;
+--line:color-mix(in srgb,var(--ink) 10%,transparent);--line2:color-mix(in srgb,var(--ink) 16%,transparent);
+--accent:#2f7d52;--accent-hover:#256843;--on-accent:#ffffff;--accent-soft:color-mix(in srgb,#2f7d52 10%,transparent);
+--ok:#2f7d52;--warn:#9a6410;--warn-soft:color-mix(in srgb,#bba21e 14%,transparent);--danger:#b4433a;--danger-soft:color-mix(in srgb,#b4433a 10%,transparent);
+--shadow:rgb(64 56 40/.10)}
+:root[data-theme=dark]{color-scheme:dark;
+--canvas:#262624;--s1:#2b2a27;--s2:#30302d;--s3:#3a3935;--composer:#30302d;--bubble:#1c1b1a;--code-bg:#1b1a19;
+--fg:#f5f4ef;--fg2:#c4c2b9;--fg3:#9e9c94;--fg4:#7e7c75;--ink:#faf9f5;
+--line:color-mix(in srgb,var(--ink) 8%,transparent);--line2:color-mix(in srgb,var(--ink) 13%,transparent);
+--accent:#62b486;--accent-hover:#77c497;--on-accent:#0f1a13;--accent-soft:color-mix(in srgb,#62b486 14%,transparent);
+--ok:#7fcc9d;--warn:#deb36d;--warn-soft:color-mix(in srgb,#deb36d 12%,transparent);--danger:#e9918a;--danger-soft:color-mix(in srgb,#e9918a 12%,transparent);
+--shadow:rgb(0 0 0/.35)}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){color-scheme:dark;
+--canvas:#262624;--s1:#2b2a27;--s2:#30302d;--s3:#3a3935;--composer:#30302d;--bubble:#1c1b1a;--code-bg:#1b1a19;
+--fg:#f5f4ef;--fg2:#c4c2b9;--fg3:#9e9c94;--fg4:#7e7c75;--ink:#faf9f5;
+--line:color-mix(in srgb,var(--ink) 8%,transparent);--line2:color-mix(in srgb,var(--ink) 13%,transparent);
+--accent:#62b486;--accent-hover:#77c497;--on-accent:#0f1a13;--accent-soft:color-mix(in srgb,#62b486 14%,transparent);
+--ok:#7fcc9d;--warn:#deb36d;--warn-soft:color-mix(in srgb,#deb36d 12%,transparent);--danger:#e9918a;--danger-soft:color-mix(in srgb,#e9918a 12%,transparent);
+--shadow:rgb(0 0 0/.35)}}
+
+@theme inline {
+  --color-canvas: var(--canvas); --color-s1: var(--s1); --color-s2: var(--s2); --color-s3: var(--s3);
+  --color-composer: var(--composer); --color-bubble: var(--bubble); --color-code: var(--code-bg);
+  --color-fg: var(--fg); --color-fg2: var(--fg2); --color-fg3: var(--fg3); --color-fg4: var(--fg4);
+  --color-line: var(--line); --color-line2: var(--line2);
+  --color-accent: var(--accent); --color-accent-hover: var(--accent-hover); --color-on-accent: var(--on-accent); --color-accent-soft: var(--accent-soft);
+  --color-ok: var(--ok); --color-warn: var(--warn); --color-warn-soft: var(--warn-soft); --color-danger: var(--danger); --color-danger-soft: var(--danger-soft);
+  --font-sans: Inter, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-serif: ui-serif, "Iowan Old Style", Georgia, "Songti SC", "Noto Serif CJK SC", serif;
+}
+
+html,body,#root{height:100%}
+body{margin:0;background:var(--canvas);color:var(--fg);font-family:var(--font-sans);-webkit-font-smoothing:antialiased;font-synthesis:none}
+::selection{background:var(--accent-soft)}
+
+/* Markdown（复用 Onefrog 的安全渲染器） */
+.md{line-height:1.7;font-size:15px;color:var(--fg);overflow-wrap:anywhere}
+.md>*:first-child{margin-top:0}.md>*:last-child{margin-bottom:0}
+.md p{margin:.55em 0}
+.md ul,.md ol{margin:.5em 0;padding-left:1.4em}.md ul{list-style:disc}.md ol{list-style:decimal}.md li{margin:.2em 0}
+.md a{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
+.md code{font-family:var(--font-mono);font-size:.86em;background:var(--code-bg);border:1px solid var(--line);border-radius:5px;padding:.08em .35em}
+.md pre{background:var(--code-bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px;overflow-x:auto;margin:.7em 0}
+.md pre code{background:none;border:0;padding:0;font-size:13px;line-height:1.6}
+.md blockquote{margin:.6em 0;padding-left:12px;border-left:3px solid var(--line2);color:var(--fg3)}
+.md .md-h{font-family:var(--font-serif);font-weight:600;margin:.9em 0 .4em}.md .md-h1{font-size:1.25em}.md .md-h2{font-size:1.12em}
+.md hr{border:0;border-top:1px solid var(--line);margin:1em 0}
+
+/* 动效 */
+@keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse-dot{animation:pulse-dot 1.4s ease-in-out infinite}
+@keyframes typing{0%,80%,100%{transform:translateY(0);opacity:.4}40%{transform:translateY(-3px);opacity:1}}
+.typing i{display:inline-block;width:6px;height:6px;border-radius:9px;background:var(--fg4);margin-right:4px;animation:typing 1.2s infinite}
+.typing i:nth-child(2){animation-delay:.15s}.typing i:nth-child(3){animation-delay:.3s}
+@keyframes shimmer{0%{transform:translateX(-100%)}100%{transform:translateX(300%)}}
+.progress-line{position:relative;height:2px;overflow:hidden;background:var(--line)}
+.progress-line::after{content:"";position:absolute;inset:0;width:35%;background:linear-gradient(90deg,transparent,var(--accent),transparent);animation:shimmer 1.6s ease-in-out infinite}
+@keyframes rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.rise{animation:rise .22s ease-out}
+.caret::after{content:"";display:inline-block;width:7px;height:1em;margin-left:2px;vertical-align:-2px;background:var(--accent);border-radius:2px;animation:pulse-dot 1s infinite}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}}
+
+/* 思考块 */
+.shimmer{background:linear-gradient(90deg,var(--fg3) 0%,var(--fg3) 35%,var(--fg) 50%,var(--fg3) 65%,var(--fg3) 100%);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:shimmer-text 1.8s linear infinite}
+.think-fade{-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 22px);mask-image:linear-gradient(to bottom,transparent 0,#000 22px)}
+.caret-inline{display:inline-block;width:6px;height:6px;margin-left:4px;border-radius:9px;background:var(--fg4);vertical-align:middle;animation:pulse-dot 1s ease-in-out infinite}
+.secret-ref{font-family:var(--font-mono);background:var(--accent-soft);color:var(--accent);border-radius:5px;padding:0 .3em}
+
+/* ---------- 第 4 轮：工作状态、输入框、消息工具 ---------- */
+@keyframes shimmer-text{0%{background-position:100% 0}100%{background-position:-100% 0}}
+.shimmer-text{background:linear-gradient(90deg,var(--fg4) 0%,var(--fg4) 35%,var(--fg) 50%,var(--fg4) 65%,var(--fg4) 100%);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:shimmer-text 1.8s linear infinite}
+@keyframes orb{0%{transform:scale(.85);box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 45%,transparent)}70%{transform:scale(1);box-shadow:0 0 0 6px transparent}100%{transform:scale(.85);box-shadow:0 0 0 0 transparent}}
+.working-orb{display:inline-block;width:9px;height:9px;border-radius:99px;background:var(--accent);animation:orb 1.6s ease-out infinite}
+.working-dot{animation:pulse-dot 1.4s ease-in-out infinite}
+.icon-btn{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;color:var(--fg4);transition:background .15s,color .15s}
+.icon-btn:hover{background:var(--s2);color:var(--fg)}
+.msg-actions{opacity:0;transition:opacity .15s;margin-top:2px;min-height:26px;margin-bottom:-8px}
+.group:hover .msg-actions,.msg-actions:focus-within,.msg-actions:has([aria-expanded=true]){opacity:1}
+@media (hover:none){.msg-actions{opacity:1}}
+.code-wrap{margin:.7em 0;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--code-bg)}
+.code-wrap pre{margin:0!important;border:0!important;border-radius:0!important}
+.code-bar{display:flex;align-items:center;justify-content:space-between;padding:2px 6px 2px 12px;font-family:var(--font-mono);font-size:11.5px;color:var(--fg4);border-bottom:1px solid var(--line)}
+.code-copy{display:grid;place-items:center;width:26px;height:26px;border-radius:6px;color:var(--fg4)}.code-copy:hover{background:var(--s3);color:var(--fg)}
+.dock{background:linear-gradient(to bottom,transparent,var(--canvas) 18px);padding-top:6px}
+@keyframes flash{0%{box-shadow:0 0 0 0 var(--accent)}100%{box-shadow:0 0 0 8px transparent}}
+.flash{animation:flash 1s ease-out 1}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:8px}
+textarea:focus-visible{outline:none}

@@ -18,6 +18,8 @@ import (
 // this server never grants, so a forged form or fetch from another site fails.
 const CSRFHeader = "X-OneFrog-CSRF"
 
+const frogUploadPath = "/api/frog-bot/uploads"
+
 const contentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
 	"img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; " +
 	"base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
@@ -58,7 +60,7 @@ func requireCSRF(c *gin.Context) {
 		return
 	}
 	mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if mt == "application/json" || (mt == "multipart/form-data" && (r.URL.Path == "/api/attachments" || r.URL.Path == "/api/backup/restore")) {
+	if mt == "application/json" || (mt == "multipart/form-data" && (r.URL.Path == "/api/attachments" || r.URL.Path == frogUploadPath || r.URL.Path == "/api/backup/restore")) {
 		c.Next()
 		return
 	}
@@ -188,7 +190,7 @@ func trustedProxies(raw string) []string {
 
 // limitBody caps request bodies for routes that do not set their own limit.
 func limitBody(c *gin.Context) {
-	if c.Request.Body != nil && c.Request.URL.Path != "/api/attachments" && c.Request.URL.Path != "/api/backup/restore" && c.Request.URL.Path != "/api/migration/receive" {
+	if c.Request.Body != nil && c.Request.URL.Path != "/api/attachments" && c.Request.URL.Path != frogUploadPath && c.Request.URL.Path != "/api/backup/restore" && c.Request.URL.Path != "/api/migration/receive" {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4<<20)
 	}
 	c.Next()

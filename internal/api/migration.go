@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -96,6 +97,11 @@ func (s *Server) migrationResume(c *gin.Context) {
 		m.finish("failed", "恢复运行失败")
 		fail(c, 500, "恢复运行失败")
 		return
+	}
+	if s.FrogBots != nil {
+		if err := s.FrogBots.Restore(); err != nil {
+			log.Printf("Frog Bot 恢复失败：%v", err)
+		}
 	}
 	m.mu.Lock()
 	m.code = ""
@@ -482,7 +488,7 @@ func (s *Server) migrationGate(c *gin.Context) {
 		return
 	}
 	path := c.Request.URL.Path
-	if path == "/api/health" || strings.HasPrefix(path, "/api/migration/") || path == "/api/backup/export" || path == "/api/backup/restore" || path == "/api/auth/login" || path == "/api/auth/logout" || path == "/api/auth/me" || path == "/api/settings" && c.Request.Method == "GET" || path == "/api/bots" && c.Request.Method == "GET" {
+	if path == "/api/frog-bot/stream" && c.Request.Method == http.MethodGet || path == "/api/health" || strings.HasPrefix(path, "/api/migration/") || path == "/api/backup/export" || path == "/api/backup/restore" || path == "/api/auth/login" || path == "/api/auth/logout" || path == "/api/auth/me" || path == "/api/settings" && c.Request.Method == "GET" || path == "/api/bots" && c.Request.Method == "GET" {
 		c.Next()
 		return
 	}

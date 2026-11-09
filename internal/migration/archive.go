@@ -46,7 +46,48 @@ func allowed(name string) bool {
 		return true
 	}
 	parts := strings.Split(name, "/")
+	if len(parts) >= 3 && frogAccountPath(parts[:2]) {
+		switch parts[2] {
+		case "stream.jsonl", "memory.md", "schedules.json", "secrets.json":
+			return len(parts) == 3
+		case "checkpoints":
+			return len(parts) == 4 && strings.HasSuffix(parts[3], ".json") && safeFrogPathPart(parts[3])
+		case "workspace":
+			if len(parts) < 4 {
+				return false
+			}
+			for _, part := range parts[3:] {
+				if !safeFrogPathPart(part) {
+					return false
+				}
+			}
+			return true
+		}
+	}
 	return len(parts) == 2 && (parts[0] == "chats" || parts[0] == "uploads") && strings.HasSuffix(parts[1], ".enc") && !strings.HasPrefix(parts[1], ".") && !strings.ContainsAny(parts[1], "\\:")
+}
+
+func safeFrogPathPart(part string) bool {
+	return filepath.IsLocal(part) && part != "." && part != ".." &&
+		!strings.HasSuffix(part, ".") && !strings.HasSuffix(part, " ") &&
+		!strings.ContainsAny(part, "\\:\x00")
+}
+
+func frogAccountPath(parts []string) bool {
+	if len(parts) != 2 || parts[0] != "frog-bot" || parts[1] == "" || len(parts[1]) > 256 {
+		return false
+	}
+	raw, err := hex.DecodeString(parts[1])
+	return err == nil && hex.EncodeToString(raw) == parts[1]
+}
+
+func frogBackupDir(rel string) bool {
+	if rel == "frog-bot" {
+		return true
+	}
+	parts := strings.Split(rel, "/")
+	return len(parts) >= 2 && frogAccountPath(parts[:2]) &&
+		(len(parts) == 2 || parts[2] == "workspace" || len(parts) == 3 && parts[2] == "checkpoints")
 }
 
 func ReadFiles(dir string, key []byte) (map[string][]byte, error) {
@@ -65,7 +106,7 @@ func ReadFiles(dir string, key []byte) (map[string][]byte, error) {
 		}
 		rel = filepath.ToSlash(rel)
 		if e.IsDir() {
-			if rel != "chats" && rel != "uploads" {
+			if rel != "chats" && rel != "uploads" && !frogBackupDir(rel) {
 				return filepath.SkipDir
 			}
 			return nil

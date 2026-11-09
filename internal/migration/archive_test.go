@@ -97,3 +97,34 @@ func TestTransferProofBoundToPayloadAndPurpose(t *testing.T) {
 		t.Fatal("proof not bound")
 	}
 }
+
+func TestFrogBotBackupIncludesStateAndWorkspace(t *testing.T) {
+	dir := t.TempDir()
+	const account = "frog-bot/757365722d31/"
+	names := []string{account + "stream.jsonl", account + "memory.md", account + "schedules.json",
+		account + "secrets.json", account + "checkpoints/task_1.json", account + "workspace/uploads/input.txt"}
+	for _, name := range append(append([]string{}, names...), account+"schedules.json.tmp", account+"master.key") {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(name), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files, err := ReadFiles(dir, bytes.Repeat([]byte{1}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range names {
+		if string(files[name]) != name {
+			t.Errorf("backup is missing %s", name)
+		}
+	}
+	for _, name := range []string{account + "schedules.json.tmp", account + "master.key",
+		account + "workspace/../../outside", account + "workspace/C:/outside", "frog-bot/bogus/stream.jsonl"} {
+		if _, ok := files[name]; ok || allowed(name) {
+			t.Errorf("unexpected backup path %s", name)
+		}
+	}
+}

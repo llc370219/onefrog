@@ -5,7 +5,7 @@ import { ago, describe, dur, elapsedOf, nowDoing, useNow } from '../lib/format';
 import Artifact from './Artifact';
 import { inline } from './Markdown';
 
-const icons: Record<string, typeof Wrench> = { read_file: FileText, write_file: FilePen, edit_file: FilePen, list_dir: FolderOpen, grep: Search, shell: SquareTerminal };
+const icons: Record<string, typeof Wrench> = { read_file: FileText, write_file: FilePen, edit_file: FilePen, list_dir: FolderOpen, grep: Search, shell: SquareTerminal, run_command: SquareTerminal };
 export const QUIET_MS = 15_000; // 这么久没有新动作，就明确告诉用户"还在工作"
 
 function act(api: ReturnType<typeof useActiveBot>['api'], id: string, a: TaskAction) { api.task(id, a).catch((e) => alert((e as Error).message)); }

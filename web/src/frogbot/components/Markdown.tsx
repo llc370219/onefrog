@@ -146,7 +146,7 @@ export function AssistantBubbles({ text, streaming }: { text: string; streaming?
   const blocks = parseBlocks(text);
   if (!blocks.length && streaming) {
     return (
-      <div className="bot-bubble">
+      <div className="as-bubble">
         <span className="caret-inline" />
       </div>
     );
@@ -192,7 +192,7 @@ export function AssistantBubbles({ text, streaming }: { text: string; streaming?
         const isLast = idx === items.length - 1;
         if (it.kind === 'sentence') {
           return (
-            <div key={idx} className="bot-bubble">
+            <div key={idx} className="as-bubble">
               <div className="md">
                 <p className={isLast && streaming ? 'caret' : ''}>{inline(it.text)}</p>
               </div>
@@ -208,7 +208,7 @@ export function AssistantBubbles({ text, streaming }: { text: string; streaming?
         }
         if (it.kind === 'heading') {
           return (
-            <div key={idx} className="bot-bubble font-semibold">
+            <div key={idx} className="as-bubble font-semibold">
               <div className="md">
                 <p className={'md-h md-h' + Math.min(it.level, 3) + (isLast && streaming ? ' caret' : '')}>{inline(it.text)}</p>
               </div>
@@ -217,7 +217,7 @@ export function AssistantBubbles({ text, streaming }: { text: string; streaming?
         }
         if (it.kind === 'list') {
           return (
-            <div key={idx} className="bot-bubble">
+            <div key={idx} className="as-bubble">
               <div className="md">
                 {it.ordered ? (
                   <ol start={it.start}>{it.items.map((row, n) => <li key={n}>{lines(row.split('\n'))}</li>)}</ol>
@@ -230,7 +230,7 @@ export function AssistantBubbles({ text, streaming }: { text: string; streaming?
         }
         if (it.kind === 'quote') {
           return (
-            <div key={idx} className="bot-bubble">
+            <div key={idx} className="as-bubble">
               <div className="md">
                 <blockquote>{lines(it.rows)}</blockquote>
               </div>
@@ -249,7 +249,7 @@ export function CopyButton({ text, label = '复制', className = '' }: { text: s
     <button
       onClick={() => { navigator.clipboard?.writeText(text).then(() => { setOk(true); setTimeout(() => setOk(false), 1400); }, () => {}); }}
       aria-label={ok ? '已复制' : label} title={ok ? '已复制' : label}
-      className={className || 'icon-btn'}
+      className={className || 'as-icon-btn'}
     >{ok ? <Check size={14} className="text-ok" /> : <Copy size={14} />}</button>
   );
 }

@@ -301,6 +301,8 @@ func (a *Agent) runTool(ctx context.Context, t Task, tools *Registry, em *emitte
 	if v := g.Check(ctx, t, tool, call.Args, em.emit); v.Decision != Allow {
 		return result(DeniedMessage(v), false, true)
 	}
+	ctx = context.WithValue(ctx, taskIDKey{}, t.ID)
+	ctx = context.WithValue(ctx, askerKey{}, g.asker(ctx, t, em.emit))
 	out, err := g.Execute(ctx, tool, ToolEnv{Workspace: t.Workspace, TaskID: t.ID}, call.Args)
 	if err != nil {
 		return result(strings.TrimSpace("error: "+err.Error()+"\n"+out), true, false)

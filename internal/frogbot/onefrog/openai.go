@@ -129,8 +129,24 @@ func parseStream(ctx context.Context, r io.Reader, onText func(string)) (Message
 	return parseStreamR(ctx, r, onText, nil)
 }
 
+// Usage 是流式响应末尾的 token 用量（接口没有返回时为 nil）。
+type Usage struct {
+	Input, Output, Total int64
+}
+
+// ParseStream 解析 OpenAI 兼容的 SSE 流（宿主自己发请求时复用）：文字、思考、工具调用和用量。
+func ParseStream(ctx context.Context, r io.Reader, onText, onReason func(string)) (Message, *Usage, error) {
+	var u *Usage
+	m, err := parseStreamU(ctx, r, onText, onReason, func(x Usage) { u = &x })
+	return m, u, err
+}
+
 // parseStreamR 同上，另外把 reasoning_content / reasoning 字段和 <think>…</think> 里的内容交给 onReason。
 func parseStreamR(ctx context.Context, r io.Reader, onText, onReason func(string)) (Message, error) {
+	return parseStreamU(ctx, r, onText, onReason, nil)
+}
+
+func parseStreamU(ctx context.Context, r io.Reader, onText, onReason func(string), onUsage func(Usage)) (Message, error) {
 	var split thinkSplitter
 	var text strings.Builder
 	emitText := func(s string) {
@@ -172,12 +188,24 @@ func parseStreamR(ctx context.Context, r io.Reader, onText, onReason func(string
 			Error *struct {
 				Message string `json:"message"`
 			} `json:"error"`
+			Usage *struct {
+				Prompt     int64 `json:"prompt_tokens"`
+				Completion int64 `json:"completion_tokens"`
+				Total      int64 `json:"total_tokens"`
+			} `json:"usage"`
 		}
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			continue
 		}
 		if chunk.Error != nil {
 			return Message{}, fmt.Errorf("模型接口错误: %s", chunk.Error.Message)
+		}
+		if chunk.Usage != nil && onUsage != nil {
+			total := chunk.Usage.Total
+			if total == 0 {
+				total = chunk.Usage.Prompt + chunk.Usage.Completion
+			}
+			onUsage(Usage{Input: chunk.Usage.Prompt, Output: chunk.Usage.Completion, Total: total})
 		}
 		if len(chunk.Choices) == 0 {
 			continue

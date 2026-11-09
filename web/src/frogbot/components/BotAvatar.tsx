@@ -1,47 +1,17 @@
-// 224 black-line doodle avatars in /assets/bot-avatars:
-// bean figures (001-096), cat, frog and ghost (32 each).
-export const BOT_AVATAR_COUNT = 224;
+import type { BotProfile } from '../api';
 
-export const avatarURL = (n: number) =>
-  `/assets/bot-avatars/avatar-${String(n + 1).padStart(3, '0')}.webp`;
+// 头像和 OneFrog「Bot」页一致：由页面按 Bot 列表算好放进 profile.avatar。
+const fallback = '/assets/bot-avatars/avatar-001.webp';
 
-export function slot(id: string): number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 0x01000193);
-  return (h >>> 0) % BOT_AVATAR_COUNT;
-}
+export const avatarOf = (bot: Pick<BotProfile, 'avatar'>) => bot.avatar || fallback;
 
-export function botAvatarById(id: string, fallbackSlot?: number): string {
-  if (fallbackSlot !== undefined && fallbackSlot < 0) return '/frog-bot.png'; // OneFrog 里的 Frog Bot 用自己的图标
-  const n = fallbackSlot !== undefined ? fallbackSlot % BOT_AVATAR_COUNT : slot(id);
-  return avatarURL(n);
-}
-
-export function BotAvatar({
-  id,
-  slotIndex,
-  className = '',
-  size = 28,
-}: {
-  id: string;
-  slotIndex?: number;
-  className?: string;
-  size?: number;
-}) {
-  const src = botAvatarById(id, slotIndex);
+export function BotAvatar({ bot, className = '', size = 28 }: { bot: Pick<BotProfile, 'avatar'>; className?: string; size?: number }) {
   return (
     <span
-      className={`inline-grid place-items-center shrink-0 overflow-hidden rounded-xl bg-white dark:bg-neutral-800 ring-1 ring-line2 shadow-2xs ${className}`}
+      className={`inline-grid place-items-center shrink-0 overflow-hidden rounded-xl bg-s1 ring-1 ring-line2 shadow-2xs ${className}`}
       style={{ width: size, height: size }}
     >
-      <img
-        src={src}
-        alt=""
-        loading="lazy"
-        decoding="async"
-        draggable={false}
-        className="size-[84%] object-contain"
-      />
+      <img src={avatarOf(bot)} alt="" loading="lazy" decoding="async" draggable={false} className="size-[84%] object-contain" />
     </span>
   );
 }

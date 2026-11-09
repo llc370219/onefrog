@@ -180,6 +180,7 @@ type ApprovalRec struct {
 	Args             json.RawMessage
 	Status           string // pending | allow | deny | expired
 	Scope, Reason    string
+	OnceOnly         bool
 	CreatedAt        time.Time
 }
 
@@ -615,7 +616,7 @@ func (s *Store) applyAgent(e Event) {
 	case onefrog.EvApprovalRequested:
 		var r onefrog.ApprovalRequest
 		if json.Unmarshal(ev.Data, &r) == nil {
-			s.approvals[r.ID] = &ApprovalRec{ID: r.ID, TaskID: ev.TaskID, Tool: r.ToolName, Args: r.Args, Status: "pending", Reason: r.Reason, CreatedAt: e.Time}
+			s.approvals[r.ID] = &ApprovalRec{ID: r.ID, TaskID: ev.TaskID, Tool: r.ToolName, Args: r.Args, Status: "pending", Reason: r.Reason, OnceOnly: r.OnceOnly, CreatedAt: e.Time}
 			if t != nil {
 				t.Awaiting++
 			}

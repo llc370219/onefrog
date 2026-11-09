@@ -163,6 +163,12 @@ func normalizeBaseURL(raw string) (string, error) {
 }
 
 func (b *Bot) resolveModel(chat bool) (onefrog.Provider, string) {
+	if b.cfg.Host != nil { // 嵌入模式：每个 Bot 的模型由宿主按 Bot 提供
+		if chat {
+			return b.cfg.ChatProvider, b.cfg.ChatModel
+		}
+		return b.cfg.AgentProvider, b.cfg.AgentModel
+	}
 	if b.modelOwner != nil {
 		return b.modelOwner.resolveModel(chat)
 	}

@@ -12,7 +12,6 @@ export default defineConfig({
     // React rarely changes between releases; keeping it in its own chunk lets
     // browsers reuse the cached copy after an upgrade.
     rollupOptions: {
-      input: { panel: "index.html", frogBot: "frog-bot.html" },
       output: {
         manualChunks(id) {
           if (/[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) return "react";

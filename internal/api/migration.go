@@ -488,7 +488,7 @@ func (s *Server) migrationGate(c *gin.Context) {
 		return
 	}
 	path := c.Request.URL.Path
-	if path == "/api/frog-bot/stream" && c.Request.Method == http.MethodGet || path == "/api/health" || strings.HasPrefix(path, "/api/migration/") || path == "/api/backup/export" || path == "/api/backup/restore" || path == "/api/auth/login" || path == "/api/auth/logout" || path == "/api/auth/me" || path == "/api/settings" && c.Request.Method == "GET" || path == "/api/bots" && c.Request.Method == "GET" {
+	if isFrogStream(path) && c.Request.Method == http.MethodGet || path == "/api/health" || strings.HasPrefix(path, "/api/migration/") || path == "/api/backup/export" || path == "/api/backup/restore" || path == "/api/auth/login" || path == "/api/auth/logout" || path == "/api/auth/me" || path == "/api/settings" && c.Request.Method == "GET" || path == "/api/bots" && c.Request.Method == "GET" {
 		c.Next()
 		return
 	}
@@ -499,4 +499,15 @@ func (s *Server) migrationGate(c *gin.Context) {
 	}
 	defer done()
 	c.Next()
+}
+
+// isFrogStream matches the AI assistant's event streams, which only read and
+// take the migration gate themselves while opening.
+func isFrogStream(path string) bool {
+	rest, ok := strings.CutPrefix(path, "/api/frog-bot/bots/")
+	if !ok {
+		return false
+	}
+	id, sub, _ := strings.Cut(rest, "/")
+	return id != "" && sub == "stream"
 }

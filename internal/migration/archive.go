@@ -47,24 +47,53 @@ func allowed(name string) bool {
 	}
 	parts := strings.Split(name, "/")
 	if len(parts) >= 3 && frogAccountPath(parts[:2]) {
-		switch parts[2] {
-		case "stream.jsonl", "memory.md", "schedules.json", "secrets.json":
-			return len(parts) == 3
-		case "checkpoints":
-			return len(parts) == 4 && strings.HasSuffix(parts[3], ".json") && safeFrogPathPart(parts[3])
-		case "workspace":
-			if len(parts) < 4 {
-				return false
-			}
-			for _, part := range parts[3:] {
-				if !safeFrogPathPart(part) {
-					return false
-				}
-			}
-			return true
+		rest := parts[2:]
+		switch rest[0] {
+		case "scope.json", "shared-memory.md":
+			// Account-wide: servers picked per assistant, memory shared by its bots.
+			return len(rest) == 1
+		case "bots":
+			// Data of the other bots' runtimes (the leader uses the account dir).
+			return len(rest) >= 3 && botID(rest[1]) && frogRuntimeFile(rest[2:])
+		case "workspace-bots":
+			return len(rest) >= 3 && botID(rest[1]) && safeFrogPath(rest[2:])
 		}
+		return frogRuntimeFile(rest)
 	}
 	return len(parts) == 2 && (parts[0] == "chats" || parts[0] == "uploads") && strings.HasSuffix(parts[1], ".enc") && !strings.HasPrefix(parts[1], ".") && !strings.ContainsAny(parts[1], "\\:")
+}
+
+// frogRuntimeFile matches the files of one assistant runtime, relative to its
+// data dir.
+func frogRuntimeFile(parts []string) bool {
+	switch parts[0] {
+	case "stream.jsonl", "memory.md", "schedules.json", "secrets.json":
+		return len(parts) == 1
+	case "checkpoints":
+		return len(parts) == 2 && strings.HasSuffix(parts[1], ".json") && safeFrogPathPart(parts[1])
+	case "workspace":
+		return len(parts) >= 2 && safeFrogPath(parts[1:])
+	}
+	return false
+}
+
+func safeFrogPath(parts []string) bool {
+	for _, part := range parts {
+		if !safeFrogPathPart(part) {
+			return false
+		}
+	}
+	return true
+}
+
+// botID matches an assistant runtime id ("bot_" + 16 hex).
+func botID(s string) bool {
+	rest, ok := strings.CutPrefix(s, "bot_")
+	if !ok || len(rest) != 16 {
+		return false
+	}
+	_, err := hex.DecodeString(rest)
+	return err == nil
 }
 
 func safeFrogPathPart(part string) bool {
@@ -86,8 +115,20 @@ func frogBackupDir(rel string) bool {
 		return true
 	}
 	parts := strings.Split(rel, "/")
-	return len(parts) >= 2 && frogAccountPath(parts[:2]) &&
-		(len(parts) == 2 || parts[2] == "workspace" || len(parts) == 3 && parts[2] == "checkpoints")
+	if len(parts) < 2 || !frogAccountPath(parts[:2]) {
+		return false
+	}
+	rest := parts[2:]
+	runtimeDir := func(p []string) bool {
+		return len(p) == 0 || p[0] == "workspace" || len(p) == 1 && p[0] == "checkpoints"
+	}
+	switch {
+	case len(rest) >= 1 && rest[0] == "bots":
+		return len(rest) == 1 || botID(rest[1]) && runtimeDir(rest[2:])
+	case len(rest) >= 1 && rest[0] == "workspace-bots":
+		return len(rest) == 1 || botID(rest[1])
+	}
+	return runtimeDir(rest)
 }
 
 func ReadFiles(dir string, key []byte) (map[string][]byte, error) {

@@ -34,6 +34,10 @@ type BotProfile struct {
 	Name         string `json:"name"`
 	Instructions string `json:"instructions"`
 	AvatarSlot   int    `json:"avatarSlot"`
+	// 以下只在嵌入宿主时使用：宿主里的 Bot ID、职责简介、是否主控。
+	HostID string `json:"hostId,omitempty"`
+	Role   string `json:"role,omitempty"`
+	Leader bool   `json:"leader,omitempty"`
 }
 
 func (b *Bot) botProfile() BotProfile {
@@ -47,6 +51,7 @@ func (b *Bot) botProfile() BotProfile {
 // for the default Bot so existing data and API clients keep working.
 type Bots struct {
 	mu       sync.RWMutex
+	base     Config // 打开新 Bot 用的配置（宿主按 Bot 定制之前）
 	main     *Bot
 	workRoot string
 	profiles []BotProfile
@@ -73,7 +78,7 @@ func OpenBots(cfg Config) (*Bots, error) {
 	if err != nil {
 		return nil, err
 	}
-	bs := &Bots{main: main, workRoot: workspace + "-bots", profiles: []BotProfile{main.botProfile()},
+	bs := &Bots{base: cfg, main: main, workRoot: workspace + "-bots", profiles: []BotProfile{main.botProfile()},
 		runtimes: map[string]*Bot{defaultBotID: main}, handlers: map[string]*botEndpoint{defaultBotID: {Handler: main.Handler("")}}}
 	main.coordinator = bs
 	raw, err := os.ReadFile(bs.path())
@@ -124,7 +129,7 @@ func validateProfiles(profiles []BotProfile) error {
 }
 
 func (bs *Bots) open(p BotProfile) (*Bot, error) {
-	cfg := bs.main.cfg
+	cfg := bs.base
 	cfg.Name = p.Name
 	cfg.DataDir = filepath.Join(cfg.DataDir, "bots", p.ID)
 	cfg.Workspace = filepath.Join(bs.workRoot, p.ID)
@@ -426,6 +431,12 @@ func (bs *Bots) Handler(ui fs.FS) http.Handler {
 		}
 		writeJSON(w, p, err)
 	}
+	if bs.Hosted() {
+		// 嵌入宿主：Bot 在宿主的「Bot」页里管理。
+		save = func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, nil, errors.New("请在 OneFrog「Bot」页新建、修改或停用 Bot"))
+		}
+	}
 	mux.HandleFunc("POST /api/bots", save)
 	mux.HandleFunc("PATCH /api/bots/{id}", save)
 	mux.HandleFunc("GET /api/bots/{id}/paths", func(w http.ResponseWriter, r *http.Request) {
@@ -441,6 +452,10 @@ func (bs *Bots) Handler(ui fs.FS) http.Handler {
 		writeJSON(w, map[string]string{"data_dir": data, "workspace": ws}, nil)
 	})
 	mux.HandleFunc("DELETE /api/bots/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if bs.Hosted() {
+			writeJSON(w, nil, errors.New("请在 OneFrog「Bot」页新建、修改或停用 Bot"))
+			return
+		}
 		err := bs.remove(r.PathValue("id"), r.URL.Query().Get("purge") == "1")
 		if errors.Is(err, fs.ErrNotExist) {
 			w.WriteHeader(http.StatusNotFound)

@@ -277,12 +277,8 @@ func (s *Server) Handler() http.Handler {
 	if s.WebDir != "" {
 		if info, err := os.Stat(s.WebDir); err == nil && info.IsDir() {
 			r.Static("/assets", s.WebDir+"/assets")
-			r.StaticFile("/frog-bot.png", filepath.Join(s.WebDir, "frog-bot.png"))
-			r.GET("/frog-bot.html", s.requireAuth, s.requireFreshCredentials, func(c *gin.Context) {
-				c.Header("X-Frame-Options", "SAMEORIGIN")
-				c.Header("Content-Security-Policy", strings.Replace(contentSecurityPolicy, "frame-ancestors 'none'", "frame-ancestors 'self'", 1))
-				c.File(filepath.Join(s.WebDir, "frog-bot.html"))
-			})
+			// The AI assistant used to be a separate framed page; it is now part of the panel.
+			r.GET("/frog-bot.html", func(c *gin.Context) { c.Redirect(http.StatusFound, "/") })
 			for _, name := range rootFiles {
 				if _, err := os.Stat(filepath.Join(s.WebDir, name)); err == nil {
 					r.StaticFile("/"+name, filepath.Join(s.WebDir, name))

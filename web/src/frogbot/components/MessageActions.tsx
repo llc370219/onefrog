@@ -1,4 +1,4 @@
-import { botAvatarById } from './BotAvatar';
+import { avatarOf } from './BotAvatar';
 import { Pencil, RefreshCw, SmilePlus } from 'lucide-react';
 import { useState } from 'react';
 import { useActiveBot, type Msg } from '../api';
@@ -16,7 +16,7 @@ export function Reactions({ m }: { m: Msg }) {
         <button key={r.by} onClick={() => r.by === 'user' && api.react(m.id, r.emoji).catch(() => {})} disabled={r.by !== 'user'}
           title={r.by === 'user' ? '你的回应（点一下取消）' : '回应'} aria-label={`${r.by === 'user' ? '你' : '助理'}回应了 ${r.emoji}`}
           className={`flex items-center gap-1 rounded-full border px-1.5 py-px text-[13px] leading-5 ${r.by === 'user' ? 'border-accent/40 bg-accent-soft' : 'border-line bg-s1'}`}>
-          {r.emoji}{r.by === 'bot' && <img src={botAvatarById(bot.id, bot.avatarSlot)} alt="" className="size-3.5 rounded-full" />}
+          {r.emoji}{r.by === 'bot' && <img src={avatarOf(bot)} alt="" className="size-3.5 rounded-full" />}
         </button>
       ))}
     </div>
@@ -33,10 +33,10 @@ export default function MessageActions({ m, canRegenerate, canEdit, onError }: {
       <span className="px-1 text-[11.5px] tabular-nums" title={new Date(m.created_at).toLocaleString()}>{localTime(m.created_at)}</span>
       {m.text && <CopyButton text={m.text} label="复制这条消息" />}
       {m.role === 'assistant' && (
-        <button onClick={() => setPicker(!picker)} aria-label="添加表情回应" aria-expanded={picker} title="回应" className="icon-btn"><SmilePlus size={14} /></button>
+        <button onClick={() => setPicker(!picker)} aria-label="添加表情回应" aria-expanded={picker} title="回应" className="as-icon-btn"><SmilePlus size={14} /></button>
       )}
-      {canRegenerate && <button onClick={() => api.regenerate().catch((e) => onError((e as Error).message))} aria-label="重新生成这条回复" title="重新生成" className="icon-btn"><RefreshCw size={14} /></button>}
-      {canEdit && <button onClick={() => window.dispatchEvent(new Event('frogbot:edit-last'))} aria-label="编辑这条消息" title="编辑并重新发送（↑）" className="icon-btn"><Pencil size={14} /></button>}
+      {canRegenerate && <button onClick={() => api.regenerate().catch((e) => onError((e as Error).message))} aria-label="重新生成这条回复" title="重新生成" className="as-icon-btn"><RefreshCw size={14} /></button>}
+      {canEdit && <button onClick={() => window.dispatchEvent(new Event('frogbot:edit-last'))} aria-label="编辑这条消息" title="编辑并重新发送（↑）" className="as-icon-btn"><Pencil size={14} /></button>}
       {picker && (
         <div className="rise absolute bottom-8 left-0 z-10 flex gap-0.5 rounded-full border border-line bg-s1 p-1 shadow-[0_8px_24px_-10px_var(--shadow)]" role="menu">
           {EMOJIS.map((e) => (

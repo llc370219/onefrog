@@ -77,7 +77,8 @@ func TestFrogBotSchedulesAreOneFrogAutomations(t *testing.T) {
 	f := NewFrogBots(t.TempDir(), key, agent, nil)
 	defer f.Close()
 	f.SetAutomations(book)
-	autos := frogAutomations{book: book, owner: "u1"}
+	main := func() string { return "" }
+	autos := frogAutomations{book: book, owner: "u1", hostID: main, main: true}
 	it, err := autos.Create(frogDraft("daily"))
 	if err != nil {
 		t.Fatal(err)
@@ -86,10 +87,10 @@ func TestFrogBotSchedulesAreOneFrogAutomations(t *testing.T) {
 	if len(all) != 1 || all[0].BotID != FrogBotID || all[0].OwnerID != "u1" || !all[0].Enabled {
 		t.Fatalf("automation = %+v", all)
 	}
-	if list, _ := (frogAutomations{book: book, owner: "u2"}).List(); len(list) != 0 {
+	if list, _ := (frogAutomations{book: book, owner: "u2", hostID: main, main: true}).List(); len(list) != 0 {
 		t.Fatal("another account sees this plan")
 	}
-	if _, err := (frogAutomations{book: book, owner: "u2"}).SetEnabled(it.ID, false); err == nil {
+	if _, err := (frogAutomations{book: book, owner: "u2", hostID: main, main: true}).SetEnabled(it.ID, false); err == nil {
 		t.Fatal("another account paused this plan")
 	}
 	if got, err := autos.SetEnabled(it.ID, false); err != nil || got.Enabled {
@@ -99,23 +100,27 @@ func TestFrogBotSchedulesAreOneFrogAutomations(t *testing.T) {
 	s := &Server{FrogBots: f}
 	runner := s.wrapAutomationRunner(nil)
 	run := all[0]
+	run.ApprovalMode = "plan"
 	id1, sid, err := runner.Submit(context.Background(), run, "run-1")
-	if err != nil || id1 == "" || sid != FrogBotID {
+	if err != nil || id1 == "" || sid != FrogBotID+":main" {
 		t.Fatalf("submit: %q %q %v", id1, sid, err)
 	}
 	id2, _, err := runner.Submit(context.Background(), run, "run-1")
 	if err != nil || id2 != id1 {
 		t.Fatalf("retry of the same firing must adopt the same task: %q vs %q (%v)", id2, id1, err)
 	}
-	b, _ := f.bot("u1")
-	if st := b.TaskState(id1); !st.Found {
-		t.Fatal("task not created in the owner's Frog Bot")
+	acct, _ := f.account("u1")
+	if st := acct.bots.Runtime("main").TaskState(id1); !st.Found {
+		t.Fatal("task not created in the owner's leader runtime")
 	}
-	if other, _ := f.bot("u2"); other.TaskState(id1).Found {
+	if acct.scope.mode(id1) != "plan" {
+		t.Fatal("the automation's approval mode must follow its run")
+	}
+	if other, _ := f.account("u2"); other.bots.Runtime("main").TaskState(id1).Found {
 		t.Fatal("task leaked into another account")
 	}
 	obs, err := runner.Observe(context.Background(), run, id1)
-	if err != nil || obs.SessionID != FrogBotID {
+	if err != nil || obs.SessionID != FrogBotID+":main" {
 		t.Fatalf("observe: %+v %v", obs, err)
 	}
 	if err := autos.Delete(it.ID); err != nil || len(book.List()) != 0 {
@@ -136,11 +141,12 @@ func TestFrogBotListEndpoint(t *testing.T) {
 	agent := &bot.Agent{Store: mem, Box: box}
 	f := NewFrogBots(t.TempDir(), key, agent, nil)
 	defer f.Close()
-	h, err := f.handler("u1")
+	acct, err := f.account("u1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/api/settings", "/api/schedules", "/api/update"} {
+	h := acct.handler
+	for _, path := range []string{"/api/settings", "/api/bots/main/schedules", "/api/update", "/api/bots/main/paths"} {
 		rec := httptest.NewRecorder()
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		h.ServeHTTP(rec, httptest.NewRequest("GET", path, nil).WithContext(ctx))

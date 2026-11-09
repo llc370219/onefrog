@@ -52,11 +52,23 @@ export function describe(tool: string, args: Record<string, unknown>): { verb: s
       const k = kinds.find(([re]) => re.test(c));
       return { verb: k ? k[1] : '执行命令', target: c.length > 60 ? c.slice(0, 57) + '…' : c };
     }
+    case 'run_command': {
+      const c = (a.command || '').trim();
+      return { verb: `在 ${a.server_id || '服务器'} 上执行`, target: c.length > 60 ? c.slice(0, 57) + '…' : c };
+    }
+    case 'list_onefrog_servers': return { verb: '查看服务器列表', target: '' };
+    case 'inspect_services': return { verb: '查看服务', target: a.server_id || '' };
+    case 'connect_server': return { verb: '接入服务器', target: a.name || a.host || '' };
+    case 'install_probe': return { verb: '安装探针', target: a.server_id || '' };
+    case 'panel': return { verb: '调整面板', target: a.action || '' };
+    case 'manage_modules': return { verb: '管理模块', target: a.module_id || a.action || '' };
+    case 'manage_module_record': return { verb: '维护模块数据', target: a.action || '' };
+    case 'generate_secret': return { verb: '生成密钥', target: a.name || '' };
     default: return { verb: tool, target: '' };
   }
 }
 
-export const stepText = (s: Step) => { const d = describe(s.tool, s.args); return `${d.verb}${d.target && s.tool !== 'shell' ? ' ' + d.target : ''}`; };
+export const stepText = (s: Step) => { const d = describe(s.tool, s.args); return `${d.verb}${d.target && s.tool !== 'shell' && s.tool !== 'run_command' ? ' ' + d.target : ''}`; };
 
 // 任务"已经干了多久"：之前各段累计 + 当前这段
 export const elapsedOf = (t: Task, now: number) => (t.duration ?? t.activeMs + (t.started ? now - t.started : 0));

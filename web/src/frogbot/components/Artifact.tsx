@@ -23,8 +23,8 @@ export default function Artifact({ path, size, mime, compact }: { path: string; 
         <div className="truncate text-[13px] font-medium text-fg">{name}</div>
         <div className="truncate text-[11.5px] text-fg4">{path}{size ? ` · ${sizeOf(size)}` : ''}</div>
       </div>
-      <a href={api.fileURL(path)} target="_blank" rel="noreferrer" aria-label={`打开 ${name}`} title="打开" className="icon-btn"><ExternalLink size={14} /></a>
-      <a href={api.fileURL(path, true)} aria-label={`下载 ${name}`} title="下载" className="icon-btn"><Download size={14} /></a>
+      <a href={api.fileURL(path)} target="_blank" rel="noreferrer" aria-label={`打开 ${name}`} title="打开" className="as-icon-btn"><ExternalLink size={14} /></a>
+      <a href={api.fileURL(path, true)} aria-label={`下载 ${name}`} title="下载" className="as-icon-btn"><Download size={14} /></a>
     </div>
   );
 }

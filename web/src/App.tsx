@@ -24,12 +24,12 @@ import { HistoryPage, Modules, Secrets } from './pages/Resources';
 import Assets from './pages/Assets';
 import Develop, { CustomModulePage } from './pages/Develop';
 import Automations from './pages/Automations';
+import Assistant from './frogbot/Assistant';
+import { botAvatar } from './lib/botAvatar';
 
 type View = 'panel' | 'frog-bot' | 'servers' | 'agents' | 'secrets' | 'modules' | 'history';
 type Dialog = 'account' | 'settings' | 'modules' | 'server' | 'secret' | 'rotate' | 'agent' | 'rollback' | null;
 const navigation = [{id:'panel',label:'面板',icon:LayoutDashboard}, {id:'frog-bot',label:'AI 助理',icon:MessageSquare}, {id:'modules',label:'模块',icon:Blocks}, {id:'servers',label:'服务器',icon:Server}, {id:'agents',label:'Bot',icon:Bot}, {id:'secrets',label:'密钥保险箱',icon:KeyRound}, {id:'history',label:'变更记录',icon:History}] as const;
-// Frog Bot keeps its composer draft in this key (web/src/frogbot/components/Composer.tsx).
-const FROG_DRAFT_KEY = 'frogbot-draft:bot:frog-bot';
 const emptyForm = {name:'',host:'',role:'',value:'',port:'22',username:'root',auth_type:'password',description:'',system_prompt:'',secret_mode:'manual',gen_length:'32',gen_charset:'alnum'};
 type SecretForm = typeof emptyForm;
 const secretCharsets = [['alnum','大小写字母和数字'],['symbols','字母、数字和安全符号'],['hex','十六进制'],['base64url','Base64URL'],['digits','纯数字']] as const;
@@ -79,7 +79,9 @@ export default function App() {
   // tasks' controls stay interactive while one is in flight.
   const taskBusyRef = useRef<Map<string,string>>(new Map());
   const [taskBusy,setTaskBusy] = useState<string[]>([]);
-  const [frogFrame,setFrogFrame] = useState(0);
+  // What the AI assistant page should open: a bot and/or a composer draft.
+  const [chatOpen,setChatOpen] = useState<{bot?:string;draft?:{text:string;n:number}}>({});
+  const avatarFor = useCallback((id:string)=>botAvatar(bots,id),[bots]);
   // A module change asked for on a custom module page, handed to the builder.
   const [developSeed,setDevelopSeed] = useState<{text:string;n:number}>();
   const [compact,setCompact] = useState(() => window.matchMedia('(max-width:760px)').matches); const [updated,setUpdated] = useState('');
@@ -194,8 +196,8 @@ export default function App() {
   /** Module pages hand a check to the 主控 Bot, which runs it on the dashboard card (commands still need approval). */
   function askPanel(text: string, serverId?: string) {go('panel');void runPanel(text, serverId);}
   function openBotByName(_name: string) { go('agents'); }
-  /** Opens AI 助理 (Frog Bot). A text becomes its composer draft; the frame remounts so it reads the new draft. */
-  function openChat(text?: string) {if(text){try{localStorage.setItem(FROG_DRAFT_KEY,text);}catch{/* storage full or blocked */}}setFrogFrame(n=>n+1);go('frog-bot');setMobileNav(false);}
+  /** Opens the AI assistant, optionally on one bot and with a composer draft. */
+  function openChat(text?: string, botId?: string) {setChatOpen(cur=>({bot:botId,draft:text?{text,n:(cur.draft?.n||0)+1}:cur.draft}));go('frog-bot');setMobileNav(false);}
 
   /** Pauses, resumes or cancels a durable task; the runtime owns the actual work. */
   async function taskAction(id:string, action:'pause'|'resume'|'cancel'|'withdraw') {
@@ -323,14 +325,14 @@ export default function App() {
     {pageError && <div className="global-error"><Notice error>{pageError}</Notice><IconButton label="关闭错误提示" onClick={() => setPageError('')}><X size={15}/></IconButton></div>}
     <div className="view-container">
     {view === 'panel' && <Dashboard hosts={hosts} mods={mods} history={history} bots={bots} job={panelJob} tasks={panelTasks} taskBusy={taskBusy} sending={sending} onSelect={setSelected} onRun={runPanel} onAnswer={answerPanel} onProvide={answerPanelSecret} onModules={() => open('modules')} onSettings={openSettings} onServers={() => go('servers')} onBots={() => go('agents')} onHistory={openHistory} onAssets={() => {setActiveModule('assets'); go('modules');}} onOpenModule={(id,serverId) => {if(id==='services')openServices(serverId);else {setActiveModule(id); go('modules');}}} onTaskAction={taskAction} onTaskApproval={taskApproval}/>}
-    {view === 'frog-bot' && <iframe key={frogFrame} className="frog-bot-frame" title="Frog Bot AI 助理" src="/frog-bot.html"/>}
+    {view === 'frog-bot' && <Assistant hostBots={bots} avatar={avatarFor} openBot={chatOpen.bot} draft={chatOpen.draft} onManageBots={() => go('agents')}/>}
     {view === 'servers' && <Servers addedServer={addedServer} hosts={hosts} selected={selected} onSelect={setSelected} onAdd={() => open('server')} onTest={testServer} testing={testing} onChat={() => openChat()} onOpenServices={openServices} onOpenAsset={openAssetForServer} onOpenHistory={name => openHistory('all', name)} onChanged={load}/>}
-    {view === 'agents' && <Bots bots={bots} onAdd={()=>open('agent')} onChanged={load}/>}
+    {view === 'agents' && <Bots bots={bots} onAdd={()=>open('agent')} onChanged={load} onChat={id => openChat(undefined, id)}/>}
     {view === 'secrets' && <Secrets secrets={secrets} onAdd={() => open('secret')} onRotate={openRotate} onDelete={removeSecret} onCopyRef={async ref => { try { await navigator.clipboard.writeText(ref); setNotice('已复制密钥引用 ' + ref); } catch { setPageError('复制失败'); } }} onUseInChat={ref => openChat(ref)}/>}
     {view === 'modules' && activeModule === 'services' && <Services hosts={hosts} focusServer={serviceFocus} onServer={openServerById} onAsk={(id,text)=>askPanel(text,id)}/>}
     {view === 'modules' && activeModule === 'assets' && <Assets hosts={hosts} focusServer={assetFocusServer} onConsumedFocus={() => setAssetFocusServer(null)} onOpenServer={openServerById} onChatServer={(id, name) => askPanel('检查服务器 ' + name + '（id=' + id + '）的运行状态和磁盘情况。只做检查，不要改配置。', id)} onAsk={text => askPanel(text)}/>}
     {view === 'modules' && activeModule === 'develop' && <Develop bots={bots} settings={chatConfig} seed={developSeed} onOpenSettings={openSettings} onOpenModule={id => setActiveModule(id)} onChanged={load}/>}
-    {view === 'modules' && activeModule === 'automations' && <Automations bots={bots} hosts={hosts} onOpenAssistant={() => openChat()}/>}
+    {view === 'modules' && activeModule === 'automations' && <Automations bots={bots} hosts={hosts} onOpenAssistant={id => openChat(undefined, id)}/>}
     {view === 'modules' && activeModule !== '' && activeModule !== 'assets' && activeModule !== 'services' && activeModule !== 'develop' && activeModule !== 'automations' && mods.find(m => m.id === activeModule)?.type === 'custom' && <CustomModulePage mod={mods.find(m => m.id === activeModule)!} onBack={() => setActiveModule('develop')} onAskDevelop={text => {setDevelopSeed(cur=>({text,n:(cur?.n||0)+1}));setActiveModule('develop');}} onChanged={load}/>}
     {view === 'modules' && activeModule !== 'assets' && activeModule !== 'services' && activeModule !== 'develop' && activeModule !== 'automations' && mods.find(m => m.id === activeModule)?.type !== 'custom' && <Modules mods={activeModule?mods.filter(m=>m.id===activeModule):mods} onToggle={toggle} pending={switching} onOpen={id => {if(id==='services')openServices();else setActiveModule(id);}}/>}
     {view === 'history' && <HistoryPage history={history} initialFilter={historyFilter.filter} initialQuery={historyFilter.query} onOpenServer={openServerByName} onOpenBot={openBotByName} onUndo={id => {setRollback(id);open('rollback');}}/>}

@@ -79,16 +79,19 @@ const (
 
 // ApprovalRequest 是发给用户的审批请求（前端据此渲染卡片）。
 type ApprovalRequest struct {
-	ID        string          `json:"id"`
-	TaskID    string          `json:"task_id"`
-	BotID     string          `json:"bot_id,omitempty"`
-	ToolName  string          `json:"tool_name"`
-	Args      json.RawMessage `json:"args"`
-	ArgsHash  string          `json:"args_hash"`
-	Risk      Risk            `json:"risk"`
-	Reason    string          `json:"reason"`
-	CreatedAt time.Time       `json:"created_at"`
-	ExpiresAt time.Time       `json:"expires_at"`
+	ID       string          `json:"id"`
+	TaskID   string          `json:"task_id"`
+	BotID    string          `json:"bot_id,omitempty"`
+	ToolName string          `json:"tool_name"`
+	Args     json.RawMessage `json:"args"`
+	ArgsHash string          `json:"args_hash"`
+	Risk     Risk            `json:"risk"`
+	Reason   string          `json:"reason"`
+	// OnceOnly: the host asked for this exact call; the card offers no
+	// "approve for this task" option.
+	OnceOnly  bool      `json:"once_only,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 // UserDecision 是用户点按钮的结果。只能由后端在收到用户本人的点击后产生。
@@ -333,10 +336,10 @@ func (g *Guard) Check(ctx context.Context, t Task, tool Tool, args json.RawMessa
 			v = rv
 		}
 	}
-	return g.askUser(ctx, t, tool.Name(), args, hash, risk, v.Reason, emit)
+	return g.askUser(ctx, t, tool.Name(), args, hash, risk, v.Reason, false, emit)
 }
 
-func (g *Guard) askUser(ctx context.Context, t Task, tool string, args json.RawMessage, hash string, risk Risk, reason string, emit func(EventType, any)) Verdict {
+func (g *Guard) askUser(ctx context.Context, t Task, tool string, args json.RawMessage, hash string, risk Risk, reason string, onceOnly bool, emit func(EventType, any)) Verdict {
 	if t.Policy == PolicyNever || g.Approver == nil {
 		return Verdict{Deny, reason + "（无法询问用户）", "policy"}
 	}
@@ -346,7 +349,7 @@ func (g *Guard) askUser(ctx context.Context, t Task, tool string, args json.RawM
 	}
 	now := g.now()
 	req := ApprovalRequest{ID: NewID("appr"), TaskID: t.ID, BotID: t.BotID, ToolName: tool, Args: args,
-		ArgsHash: hash, Risk: risk, Reason: reason, CreatedAt: now, ExpiresAt: now.Add(timeout)}
+		ArgsHash: hash, Risk: risk, Reason: reason, OnceOnly: onceOnly, CreatedAt: now, ExpiresAt: now.Add(timeout)}
 	emit(EvApprovalRequested, req)
 	actx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -360,7 +363,7 @@ func (g *Guard) askUser(ctx context.Context, t Task, tool string, args json.RawM
 		rec.DecidedBy = "timeout"
 	case d.Approve:
 		rec.Decision = Allow
-		if d.Scope == ScopeSession {
+		if d.Scope == ScopeSession && !onceOnly {
 			rec.Scope = ScopeSession
 		}
 	}

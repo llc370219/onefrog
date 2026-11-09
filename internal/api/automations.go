@@ -31,12 +31,11 @@ func (s *Server) bindAutomation(c *gin.Context) (automation.Automation, bool) {
 	}
 	if in.BotID == FrogBotID {
 		if s.FrogBots == nil {
-			fail(c, http.StatusBadRequest, "Frog Bot 未启用")
+			fail(c, http.StatusBadRequest, "AI 助理未启用")
 			return in, false
 		}
-		// Frog Bot works in its own workspace and reaches servers only through
-		// approved run_onefrog_command calls, so a target server does not apply.
-		in.ServerID = ""
+		// Legacy target: runs on the leader. A server may be named like any
+		// other bot's automation.
 	} else if _, err := s.Store.GetBot(ctx, in.BotID); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			fail(c, http.StatusBadRequest, "Bot 不存在")

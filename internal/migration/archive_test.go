@@ -102,7 +102,10 @@ func TestFrogBotBackupIncludesStateAndWorkspace(t *testing.T) {
 	dir := t.TempDir()
 	const account = "frog-bot/757365722d31/"
 	names := []string{account + "stream.jsonl", account + "memory.md", account + "schedules.json",
-		account + "secrets.json", account + "checkpoints/task_1.json", account + "workspace/uploads/input.txt"}
+		account + "secrets.json", account + "checkpoints/task_1.json", account + "workspace/uploads/input.txt",
+		account + "scope.json", account + "shared-memory.md",
+		account + "bots/bot_0123456789abcdef/stream.jsonl", account + "bots/bot_0123456789abcdef/checkpoints/task_2.json",
+		account + "bots/bot_0123456789abcdef/memory.md", account + "workspace-bots/bot_0123456789abcdef/notes.md"}
 	for _, name := range append(append([]string{}, names...), account+"schedules.json.tmp", account+"master.key") {
 		path := filepath.Join(dir, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
@@ -122,7 +125,9 @@ func TestFrogBotBackupIncludesStateAndWorkspace(t *testing.T) {
 		}
 	}
 	for _, name := range []string{account + "schedules.json.tmp", account + "master.key",
-		account + "workspace/../../outside", account + "workspace/C:/outside", "frog-bot/bogus/stream.jsonl"} {
+		account + "workspace/../../outside", account + "workspace/C:/outside", "frog-bot/bogus/stream.jsonl",
+		account + "bots/../stream.jsonl", account + "bots/evil/stream.jsonl", account + "bots/bot_0123456789abcdef/master.key",
+		account + "workspace-bots/bot_0123456789abcdef/../../x"} {
 		if _, ok := files[name]; ok || allowed(name) {
 			t.Errorf("unexpected backup path %s", name)
 		}

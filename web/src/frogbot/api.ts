@@ -1,15 +1,13 @@
 
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 
-export type BotDraft = { name: string; instructions: string };
-export type BotProfile = BotDraft & { id: string; avatarSlot: number };
-// 嵌入 OneFrog：所有接口都走 OneFrog 的登录和跨站校验（/api/frog-bot/*）。
+// 每个 OneFrog Bot 对应一个助理运行时：hostId 是它在「Bot」页的 ID，主控的运行时 ID 固定是 main。
+export type BotProfile = { id: string; name: string; instructions?: string; hostId?: string; role?: string; leader?: boolean; avatar?: string };
+export type ScopeServer = { id: string; name: string; role?: string; status?: string; selected: boolean; fingerprint_confirmed: boolean };
+// 所有接口都走 OneFrog 的登录和跨站校验（/api/frog-bot/*）。
 const PREFIX = '/api/frog-bot';
 const CSRF = { 'X-OneFrog-CSRF': '1' };
 const botPath = (id: string) => `${PREFIX}/bots/${encodeURIComponent(id)}`;
-
-
-// enabled = 服务器模式（需要登录）；本机模式没有登录。
 
 
 // ---------- 类型（与 Go 后端的事件一一对应） ----------
@@ -35,6 +33,7 @@ export type Task = {
 export type Approval = {
   id: string; task_id: string; tool_name: string; args: Record<string, unknown>; risk: string; reason: string;
   status: 'pending' | 'allow' | 'deny' | 'expired'; scope?: string; created: number;
+  once_only?: boolean; // OneFrog 按风险要求确认的操作：只能批准这一次
 };
 export type Item = { type: 'msg' | 'task' | 'approval'; id: string };
 export type Info = { name: string; chat_model: string; agent_model: string; policy: string; demo: boolean; max_concurrent?: number; stall_sec?: number; timezone?: string; version?: string };
@@ -157,7 +156,7 @@ function applyAgent(s: State, e: AgentEv, persisted: boolean) {
   const at = ts(e.time);
   if (e.type === 'approval.requested') {
     if (!s.approvals[d.id]) { s.items.push({ type: 'approval', id: d.id }); news(s, '有一个操作等你确认'); }
-    s.approvals[d.id] = { id: d.id, task_id: e.task_id, tool_name: d.tool_name, args: d.args || {}, risk: d.risk, reason: d.reason, status: 'pending', created: at };
+    s.approvals[d.id] = { id: d.id, task_id: e.task_id, tool_name: d.tool_name, args: d.args || {}, risk: d.risk, reason: d.reason, status: 'pending', created: at, once_only: !!d.once_only };
     if (t) { t.awaiting++; t.lastEvent = at; }
     return;
   }
@@ -244,7 +243,7 @@ export function useBot(id: string) {
 
 // OneFrog 登录过期（或在别处改了密码）时接口返回 401：让整个面板回到登录页。
 function checkAuth(r: Response) {
-  if (r.status === 401) (window.top ?? window).location.assign('/');
+  if (r.status === 401) window.location.assign('/');
 }
 
 async function post(path: string, body: unknown = {}, method = 'POST') {
@@ -258,7 +257,7 @@ async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
   const r = await fetch(path, { signal });
   checkAuth(r);
   const data = await r.json().catch(() => null);
-  if (!r.ok || data === null) throw new Error(data?.error || '无法读取数据，请确认 Frog Bot 后端已启动');
+  if (!r.ok || data === null) throw new Error(data?.error || '无法读取数据，请稍后重试');
   return data as T;
 }
 
@@ -291,6 +290,9 @@ export function createBotAPI(botID: string) {
     // 密钥值只走这个接口：直接加密落盘，不进聊天记录、事件流或模型上下文
     saveSecret: (requestId: string, value: string) => post(`${base}/secrets`, { request_id: requestId, value }),
     cancelSecret: (requestId: string) => post(`${base}/secrets/requests/${requestId}/cancel`),
+    // 用户为这个 Bot 选中的服务器：上面的普通命令按审批模式直接执行，其他服务器每条命令都要确认
+    scope: (signal?: AbortSignal): Promise<{ servers: ScopeServer[] }> => get(`${base}/scope`, signal),
+    setScope: (servers: string[]): Promise<{ servers: ScopeServer[] }> => post(`${base}/scope`, { servers }),
   };
 }
 

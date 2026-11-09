@@ -59,7 +59,7 @@ export default function SecretCard({ req }: { req: SecretReq }) {
             className="grid size-7 shrink-0 place-items-center rounded-full text-fg4 hover:bg-s2 hover:text-fg">{show ? <EyeOff size={15} /> : <Eye size={15} />}</button>
         </div>
         <p className="mt-2 flex items-start gap-1.5 text-[11.5px] leading-relaxed text-fg4">
-          <Lock size={11} className="mt-[3px] shrink-0" />直接加密保存到 OneFrog 密钥保险箱，不会进入聊天记录，助理也看不到；使用时只按名字引用，每次都会先请你确认。
+          <Lock size={11} className="mt-[3px] shrink-0" />直接加密保存到 OneFrog 密钥保险箱，不会进入聊天记录，助理也看不到；使用时只按名字引用，真实值只在执行时替换。
         </p>
         {err && <p className="mt-2 text-xs text-danger">{err}</p>}
         <div className="mt-3 flex flex-wrap gap-2">

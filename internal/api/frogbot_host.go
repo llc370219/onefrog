@@ -222,8 +222,17 @@ func (v *panelVault) OpenAPIKey(string) (string, error) {
 // ---------- 定时：Frog Bot 的计划就是 OneFrog 的自动化 ----------
 
 type frogAutomations struct {
-	book  *automation.Book
-	owner string
+	book   *automation.Book
+	owner  string
+	hostID func() string // the OneFrog bot this runtime stands for
+	main   bool          // the default runtime also owns legacy "frog-bot" automations
+}
+
+func (a frogAutomations) owns(it automation.Automation) bool {
+	if it.OwnerID != a.owner {
+		return false
+	}
+	return it.BotID == a.hostID() || (a.main && it.BotID == FrogBotID)
 }
 
 func describeSchedule(s automation.Schedule) string {
@@ -259,7 +268,7 @@ func hostAutomation(it automation.Automation) frog.HostAutomation {
 
 func (a frogAutomations) mine(id string) (automation.Automation, error) {
 	it, err := a.book.Get(id)
-	if err != nil || it.BotID != FrogBotID || it.OwnerID != a.owner {
+	if err != nil || !a.owns(it) {
 		return automation.Automation{}, fmt.Errorf("没有找到计划 %s", id)
 	}
 	return it, nil
@@ -268,7 +277,7 @@ func (a frogAutomations) mine(id string) (automation.Automation, error) {
 func (a frogAutomations) List() ([]frog.HostAutomation, error) {
 	var out []frog.HostAutomation
 	for _, it := range a.book.List() {
-		if it.BotID == FrogBotID && it.OwnerID == a.owner {
+		if a.owns(it) {
 			out = append(out, hostAutomation(it))
 		}
 	}
@@ -283,7 +292,11 @@ func clipRunes(s string, n int) string {
 }
 
 func (a frogAutomations) Create(d frog.AutomationDraft) (frog.HostAutomation, error) {
-	in := automation.Automation{Name: clipRunes(d.Title, automation.MaxName), Prompt: d.Prompt, BotID: FrogBotID, Enabled: true}
+	botID := a.hostID()
+	if botID == "" {
+		botID = FrogBotID
+	}
+	in := automation.Automation{Name: clipRunes(d.Title, automation.MaxName), Prompt: d.Prompt, BotID: botID, Enabled: true}
 	clock := fmt.Sprintf("%02d:%02d", d.Hour, d.Minute)
 	switch d.Kind {
 	case "once":
@@ -362,38 +375,102 @@ func frogObservation(st frog.TaskState) automation.Observation {
 	return obs
 }
 
-// wrapAutomationRunner routes Frog Bot automations into the owner's Frog Bot
-// and leaves every other automation on the classic runner.
+// frogTarget finds the runtime that runs an automation: the bot it names,
+// or the leader for legacy "frog-bot" automations. ok is false when the bot
+// is not an AI-assistant bot (disabled, deleted or the module builder), in
+// which case the classic runner keeps it.
+func (f *FrogBots) frogTarget(ctx context.Context, it automation.Automation) (*frogAccount, string, bool) {
+	if f == nil || strings.TrimSpace(it.OwnerID) == "" {
+		return nil, "", false
+	}
+	acct, err := f.account(it.OwnerID)
+	if err != nil {
+		return nil, "", false
+	}
+	if err := f.sync(ctx, acct); err != nil {
+		return nil, "", false
+	}
+	for _, p := range acct.bots.Profiles() {
+		if (it.BotID == FrogBotID && p.ID == "main") || (p.HostID != "" && p.HostID == it.BotID) {
+			return acct, p.ID, true
+		}
+	}
+	return nil, "", false
+}
+
+// frogTask finds the runtime that holds a task, wherever the bot moved.
+func (f *FrogBots) frogTask(it automation.Automation, taskID string) (*frog.Bot, error) {
+	acct, err := f.account(it.OwnerID)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range acct.bots.Profiles() {
+		if rt := acct.bots.Runtime(p.ID); rt != nil {
+			if _, ok := rt.Store().Task(taskID); ok {
+				return rt, nil
+			}
+		}
+	}
+	return nil, errors.New("任务不存在")
+}
+
+func isFrogTask(taskID string) bool { return strings.HasPrefix(taskID, "task_auto") }
+
+// wrapAutomationRunner runs automations in the AI assistant: each run is a
+// background task of the bot the automation names, in its owner's account.
+// Runs that started on the classic runner before the upgrade finish there.
 func (s *Server) wrapAutomationRunner(d *automation.DurableRunner) *automation.DurableRunner {
 	f := s.FrogBots
+	classicSubmit := func(ctx context.Context, it automation.Automation, runID string) (string, string, error) {
+		if d == nil {
+			return "", "", errors.New("自动化执行器未配置")
+		}
+		return d.Submit(ctx, it, runID)
+	}
 	return &automation.DurableRunner{
 		Submit: func(ctx context.Context, it automation.Automation, runID string) (string, string, error) {
-			if it.BotID != FrogBotID {
-				if d == nil {
-					return "", "", errors.New("自动化执行器未配置")
-				}
-				return d.Submit(ctx, it, runID)
+			if strings.TrimSpace(it.TaskID) != "" && !isFrogTask(it.TaskID) {
+				// A classic run was already accepted for this firing: adopt it.
+				return classicSubmit(ctx, it, runID)
 			}
-			b, err := f.bot(it.OwnerID)
-			if err != nil {
+			acct, frogID, ok := f.frogTarget(ctx, it)
+			if !ok {
+				return classicSubmit(ctx, it, runID)
+			}
+			rt := acct.bots.Runtime(frogID)
+			if rt == nil {
+				return "", "", errors.New("Bot 未启动")
+			}
+			taskID := frogTaskID(it, runID)
+			prompt := fmt.Sprintf("【定时任务「%s」· OneFrog 自动化】\n%s", it.Name, it.Prompt)
+			if it.ServerID != "" {
+				if rec, err := f.agent.Store.GetServer(ctx, it.ServerID); err == nil {
+					prompt += fmt.Sprintf("\n\n目标服务器：%s（server_id=%s）。", rec.Name, rec.ID)
+				}
+			}
+			var servers []string
+			if it.ServerID != "" {
+				servers = []string{it.ServerID}
+			}
+			if err := acct.scope.setTask(taskID, servers, it.ApprovalMode); err != nil {
 				return "", "", err
 			}
-			prompt := fmt.Sprintf("【定时任务「%s」· OneFrog 自动化】\n%s", it.Name, it.Prompt)
-			id, err := b.SubmitTask(frogTaskID(it, runID), it.Name, prompt)
-			return id, FrogBotID, err
+			id, err := rt.SubmitTask(taskID, it.Name, prompt)
+			return id, FrogBotID + ":" + frogID, err
 		},
 		Wait: func(ctx context.Context, it automation.Automation, taskID string) (automation.Observation, error) {
-			if it.BotID != FrogBotID {
+			if !isFrogTask(taskID) {
 				return d.Wait(ctx, it, taskID)
-			}
-			b, err := f.bot(it.OwnerID)
-			if err != nil {
-				return automation.Observation{}, err
 			}
 			tick := time.NewTicker(2 * time.Second)
 			defer tick.Stop()
 			for {
-				obs := frogObservation(b.TaskState(taskID))
+				rt, err := f.frogTask(it, taskID)
+				if err != nil {
+					return frogObservation(frog.TaskState{}), nil
+				}
+				obs := frogObservation(rt.TaskState(taskID))
+				obs.SessionID = FrogBotID + ":" + rt.ID()
 				if obs.Done || obs.Waiting {
 					return obs, nil
 				}
@@ -405,17 +482,19 @@ func (s *Server) wrapAutomationRunner(d *automation.DurableRunner) *automation.D
 			}
 		},
 		Observe: func(ctx context.Context, it automation.Automation, taskID string) (automation.Observation, error) {
-			if it.BotID != FrogBotID {
+			if !isFrogTask(taskID) {
 				if d == nil || d.Observe == nil {
 					return automation.Observation{}, errors.New("自动化执行器未配置")
 				}
 				return d.Observe(ctx, it, taskID)
 			}
-			b, err := f.bot(it.OwnerID)
+			rt, err := f.frogTask(it, taskID)
 			if err != nil {
-				return automation.Observation{}, err
+				return frogObservation(frog.TaskState{}), nil
 			}
-			return frogObservation(b.TaskState(taskID)), nil
+			obs := frogObservation(rt.TaskState(taskID))
+			obs.SessionID = FrogBotID + ":" + rt.ID()
+			return obs, nil
 		},
 	}
 }

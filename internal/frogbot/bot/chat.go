@@ -177,7 +177,11 @@ func (b *Bot) runTurn(pending []Message) {
 	if profile.Instructions != "" {
 		prompt += "\n\n职责与工作偏好：\n" + profile.Instructions
 	}
-	if b.cfg.DisableShell {
+	if b.cfg.HostPrompt != nil {
+		if extra := strings.TrimSpace(b.cfg.HostPrompt(profile)); extra != "" {
+			prompt += "\n\n" + extra
+		}
+	} else if b.cfg.DisableShell {
 		prompt += "\n当前工作区与服务器隔离。宿主机 Shell 不可用。对于用户要求操作 OneFrog 服务器的任务，用 start_task 派给后台 Agent，明确目标服务器和意图。后台 Agent 会调用 OneFrog 工具，需用户逐条确认远程命令。"
 	}
 	agent := &onefrog.Agent{Provider: provider, Model: model, Tools: b.chatTool, Guard: b.chatG,
@@ -274,6 +278,18 @@ func (b *Bot) brief() string {
 				extra = "（待办，未开始）"
 			}
 			fmt.Fprintf(&sb, "- %s [%s]%s %s\n", t.ID, t.Status, extra, t.Title)
+		}
+	}
+	if b.coordinator != nil {
+		if others := b.coordinator.others(b.ID()); len(others) > 0 {
+			sb.WriteString("可以协作的其他 Bot（ask_agent / message_agent 用 ID）：\n")
+			for _, p := range others {
+				role := strings.TrimSpace(p.Role)
+				if role == "" {
+					role = strings.TrimSpace(p.Instructions)
+				}
+				fmt.Fprintf(&sb, "- %s「%s」%s\n", p.ID, p.Name, onefrog.Truncate(strings.ReplaceAll(role, "\n", " "), 120))
+			}
 		}
 	}
 	if c, ok := b.store.PendingCard(); ok {
